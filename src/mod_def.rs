@@ -19,8 +19,6 @@ pub use crate::physical::geometry::{
     Polygon, Range,
 };
 
-mod emit;
-pub use emit::EmitOptions;
 mod feedthrough;
 mod instances;
 mod intf;

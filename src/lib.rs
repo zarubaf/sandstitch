@@ -14,13 +14,15 @@ pub use port_slice::{ConvertibleToPortSlice, ConvertibleToPortSliceVec, PortSlic
 mod connection;
 mod mod_def;
 use mod_def::ModDefCore;
+mod emit;
+pub use emit::verilog::EmitOptions;
 mod import;
 pub use import::parameterize::ParameterType;
 pub use import::parameterize::ParameterValue;
 pub use mod_def::{
     BOTTOM_EDGE_INDEX, BoundingBox, CalculatedPlacement, ConvertibleToModDef, Coordinate,
-    EAST_EDGE_INDEX, EdgeOrientation, EmitOptions, LEFT_EDGE_INDEX, Mat3, ModDef, NORTH_EDGE_INDEX,
-    Orientation, PinPlacementError, Placement, Polygon, RIGHT_EDGE_INDEX, Range, SOUTH_EDGE_INDEX,
+    EAST_EDGE_INDEX, EdgeOrientation, LEFT_EDGE_INDEX, Mat3, ModDef, NORTH_EDGE_INDEX, Orientation,
+    PinPlacementError, Placement, Polygon, RIGHT_EDGE_INDEX, Range, SOUTH_EDGE_INDEX,
     TOP_EDGE_INDEX, TrackDefinition, TrackDefinitions, TrackOrientation, WEST_EDGE_INDEX,
 };
 mod physical;
