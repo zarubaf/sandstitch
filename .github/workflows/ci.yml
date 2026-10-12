@@ -71,7 +71,4 @@ jobs:
         run: SLANG_PATH="$RUNNER_TEMP/slang" cargo test --locked
 
       - name: Run clippy
-        run: cargo clippy --all-targets --locked
-        env:
-          # setup-rust-toolchain defaults to RUSTFLAGS=-D warnings; upstream code has known warnings.
-          RUSTFLAGS: ""
+        run: cargo clippy --all-targets --locked -- -D warnings
