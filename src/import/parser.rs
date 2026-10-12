@@ -117,11 +117,7 @@ impl VerilogImport {
         VerilogImport {
             sources: absolute(cfg.sources),
             incdirs: absolute(cfg.incdirs),
-            defines: cfg
-                .defines
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
+            defines: owned_pairs(cfg.defines),
             libfiles: absolute(cfg.libfiles),
             libdirs: absolute(cfg.libdirs),
             libexts: strings(cfg.libexts),

@@ -147,11 +147,15 @@ impl ModDef {
         let mut merged = if verilog_import.parameters.is_empty() {
             IndexMap::new()
         } else {
-            let declared = specialize::overridable_parameters(name, verilog_import, caller)?;
+            // An unknown definition (sources that do not parse) declares
+            // nothing: no `-G` value is applied, and the specialization
+            // reports Slang's errors.
+            let declared = specialize::overridable_parameters(name, verilog_import, caller)?
+                .unwrap_or_default();
             slang_parameter_overrides(
                 name,
                 &verilog_import.parameters,
-                declared.as_deref(),
+                &declared,
                 &overrides,
                 caller,
             )?
@@ -256,13 +260,8 @@ pub(crate) fn plain_import_parameters(
     let declared = slang_rs::extract_overridable_parameters_from_value(value)
         .remove(module)
         .unwrap_or_default();
-    let overrides = slang_parameter_overrides(
-        module,
-        parameters,
-        Some(&declared),
-        &IndexMap::new(),
-        caller,
-    )?;
+    let overrides =
+        slang_parameter_overrides(module, parameters, &declared, &IndexMap::new(), caller)?;
     specialize::validate(module, &overrides, caller)?;
     let definitions = slang_rs::extract_parameter_defs_from_value(value, true)
         .remove(module)
@@ -274,31 +273,43 @@ pub(crate) fn plain_import_parameters(
 /// The Slang `-G` `parameters` not replaced by `explicit`, as overrides: a
 /// decimal integer, a string literal, or a name (`ident` or `pkg::ident`, a
 /// named constant). As in Slang, a `-G` value of a parameter the module does
-/// not declare as overridable (`declared`, if known) is not applied. S0105
-/// for any other value, and for a type parameter (Slang applies `-G` only to
-/// value parameters).
+/// not declare as overridable (`declared`) is not applied. S0105 for any
+/// other value, for a type parameter (Slang applies `-G` only to value
+/// parameters), and for a name set twice (Slang would apply the first).
 fn slang_parameter_overrides(
     module: &str,
     parameters: &[(String, String)],
-    declared: Option<&[(String, ParameterKind)]>,
+    declared: &[(String, ParameterKind)],
     explicit: &IndexMap<String, ParameterValue>,
     caller: &Span,
 ) -> Result<IndexMap<String, ParameterValue>, ImportError> {
     let mut overrides = IndexMap::new();
     let mut diagnostics = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for (name, text) in parameters {
+        if !seen.insert(name) {
+            let mut d = crate::import::typed::error(
+                codes::S0105,
+                format!("unsupported `-G` override for parameter `{name}` of `{module}`"),
+                Label {
+                    span: caller.clone(),
+                    text: format!("`ParserConfig::parameters` sets `{name}` more than once"),
+                },
+            );
+            d.helps.push(format!("set `{name}` once"));
+            diagnostics.push(d);
+            continue;
+        }
         if explicit.contains_key(name) {
             continue;
         }
-        let kind = declared.map(|declared| {
-            declared
-                .iter()
-                .find(|(declared, _)| declared == name)
-                .map(|(_, kind)| *kind)
-        });
+        let kind = declared
+            .iter()
+            .find(|(declared, _)| declared == name)
+            .map(|(_, kind)| *kind);
         match kind {
-            Some(None) => continue,
-            Some(Some(ParameterKind::Type)) => {
+            None => continue,
+            Some(ParameterKind::Type) => {
                 let mut d = crate::import::typed::error(
                     codes::S0105,
                     format!("unsupported `-G` override for parameter `{name}` of `{module}`"),

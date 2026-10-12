@@ -424,14 +424,47 @@ fn unsupported_slang_parameter_reports_s0105() {
         parameters: &[("T", "cfg_pkg::hdr_t")],
         ..config(&paths)
     };
-    let e = ModDef::try_from_verilog_with_config("child", &cfg)
-        .err()
-        .unwrap();
+    let (result, line) = (ModDef::try_from_verilog_with_config("child", &cfg), line!());
+    let e = result.err().unwrap();
     assert_eq!(e.diagnostics.0[0].code, codes::S0105, "{e}");
-    let e = ModDef::try_from_verilog_parameterized("child", &cfg, &[("N", 3)])
-        .err()
-        .unwrap();
+    assert_eq!(primary_line(&e), (file!().to_string(), line));
+    let (result, line) = (
+        ModDef::try_from_verilog_parameterized("child", &cfg, &[("N", 3)]),
+        line!(),
+    );
+    let e = result.err().unwrap();
     assert_eq!(e.diagnostics.0[0].code, codes::S0105, "{e}");
+    assert_eq!(primary_line(&e), (file!().to_string(), line - 1));
+}
+
+#[test]
+fn duplicate_slang_parameter_reports_s0105() {
+    // Slang applies the first `W`; emitting either silently could miswire.
+    let sources = Sources::new(&[CHILD]);
+    let paths = sources.paths();
+    let cfg = ParserConfig {
+        parameters: &[("N", "4"), ("N", "6")],
+        ..config(&paths)
+    };
+    let (result, line) = (ModDef::try_from_verilog_with_config("child", &cfg), line!());
+    let e = result.err().unwrap();
+    assert_eq!(e.diagnostics.0.len(), 1, "{e}");
+    let d = &e.diagnostics.0[0];
+    assert_eq!(d.code, codes::S0105, "{e}");
+    assert_eq!(
+        d.primary.text,
+        "`ParserConfig::parameters` sets `N` more than once"
+    );
+    assert_eq!(primary_line(&e), (file!().to_string(), line));
+
+    let hdr = [("T", ty("cfg_pkg::hdr_t"))];
+    let (result, line) = (
+        ModDef::try_from_verilog_parameterized("child", &cfg, &hdr),
+        line!(),
+    );
+    let e = result.err().unwrap();
+    assert_eq!(e.diagnostics.0[0].code, codes::S0105, "{e}");
+    assert_eq!(primary_line(&e), (file!().to_string(), line - 1));
 }
 
 #[test]

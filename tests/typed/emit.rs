@@ -831,10 +831,33 @@ fn manifest_lists_library_search() {
             ..Default::default()
         },
     );
+    // A second import with the same library search, spelled absolute.
+    let src2 = dir.path().join("uses_leaf2.sv");
+    std::fs::write(
+        &src2,
+        "module uses_leaf2 (input logic y);\n  leaf u_leaf (.a(y));\nendmodule\n",
+    )
+    .unwrap();
+    let sources2 = [src2.to_str().unwrap()];
+    let m2 = ModDef::from_verilog_with_config(
+        "uses_leaf2",
+        &ParserConfig {
+            sources: &sources2,
+            libdirs: &[lib.to_str().unwrap()],
+            libexts: &[".sv"],
+            libfiles: &[libfile.to_str().unwrap()],
+            ignore_unknown_modules: false,
+            ..Default::default()
+        },
+    );
     let top = ModDef::new("top");
     top.instantiate(&m, Some("u"), None).get_port("x").tieoff(0);
+    top.instantiate(&m2, Some("u2"), None)
+        .get_port("y")
+        .tieoff(0);
     let manifest = top.manifest();
-    assert_eq!(manifest.sources, vec![src.clone()]);
+    // Listed once each.
+    assert_eq!(manifest.sources, vec![src.clone(), src2.clone()]);
     assert_eq!(manifest.libdirs, vec![lib.clone()]);
     assert_eq!(manifest.libfiles, vec![libfile.clone()]);
     assert_eq!(manifest.libexts, vec![".sv".to_string()]);
