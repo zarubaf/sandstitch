@@ -372,14 +372,23 @@ pub(crate) fn interface_ports_of_definition(
     module: &str,
     cfg: &ParserConfig,
 ) -> Option<Vec<slang_rs::InterfacePort>> {
-    let value = elaborate_definition(module, cfg)?;
+    let (value, succeeded) = elaborate_definition(module, cfg)?;
+    if !succeeded {
+        return None;
+    }
     slang_rs::extract_interface_ports_from_value(&value).remove(module)
 }
 
 /// Elaborates the definition of `module` as the only top, with
 /// `--allow-toplevel-iface-ports` so that interface ports do not prevent
-/// elaboration. Returns `None` if Slang fails.
-pub(crate) fn elaborate_definition(module: &str, cfg: &ParserConfig) -> Option<serde_json::Value> {
+/// elaboration. Returns the AST Slang dumped and whether elaboration
+/// succeeded; a definition whose default parameters do not elaborate still
+/// shows its parameter and port declarations. Returns `None` if Slang dumped
+/// no AST.
+pub(crate) fn elaborate_definition(
+    module: &str,
+    cfg: &ParserConfig,
+) -> Option<(serde_json::Value, bool)> {
     const FLAG: &str = "--allow-toplevel-iface-ports";
     let mut extra_arguments = cfg.extra_arguments.to_vec();
     // Slang rejects the flag given twice.
@@ -391,7 +400,7 @@ pub(crate) fn elaborate_definition(module: &str, cfg: &ParserConfig) -> Option<s
         extra_arguments: &extra_arguments,
         ..*cfg
     };
-    slang_rs::run_slang(&cfg.to_slang_config()).ok()
+    slang_rs::run_slang_keep_ast(&cfg.to_slang_config()).ok()
 }
 
 static SLANG_ERROR: LazyLock<Regex> =

@@ -287,7 +287,11 @@ pub(crate) struct Specialized {
 
 static SPECIALIZATIONS: DependencyCache<Specialized> = DependencyCache::new();
 
-/// What elaborating a module's definition as the top shows.
+/// What elaborating a module's definition as the top shows. The definition
+/// need not elaborate cleanly: the declarations are read from the AST Slang
+/// dumps even when its default parameters do not elaborate (a type parameter
+/// defaulting to `logic` used as a struct), so overrides are checked before
+/// the specialization is elaborated.
 #[derive(Clone, Debug)]
 struct Definition {
     interface_ports: Vec<slang_rs::InterfacePort>,
@@ -295,8 +299,8 @@ struct Definition {
     parameters: Vec<(String, ParameterKind)>,
 }
 
-/// `None` if the definition does not elaborate alone (for example a
-/// parameter without a default).
+/// `None` if Slang dumped no AST of the definition alone (for example a
+/// syntax error, or a module not found).
 static DEFINITIONS: DependencyCache<Option<Definition>> = DependencyCache::new();
 
 /// The instance of the module in the generated elaboration top.
@@ -505,8 +509,8 @@ fn scratch_dir(
     Ok((dir, mall))
 }
 
-/// The definition of `module` elaborated alone; `Ok(None)` if it does not
-/// elaborate alone.
+/// The definition of `module` elaborated alone; `Ok(None)` if Slang dumped
+/// no AST of it.
 fn definition(
     module: &str,
     import: &VerilogImport,
@@ -519,7 +523,7 @@ fn definition(
     let (_dir, mall) = scratch_dir(module, caller)?;
     let mall_arg = mall.to_str().expect("checked by scratch_dir");
     let definition = import.with_config(&[], &[], &["--Mall", mall_arg], |cfg| {
-        let value = typed::elaborate_definition(module, cfg)?;
+        let (value, _) = typed::elaborate_definition(module, cfg)?;
         let interface_ports =
             slang_rs::extract_interface_ports_from_value(&value).remove(module)?;
         let parameters = slang_rs::extract_overridable_parameters_from_value(&value)
@@ -980,6 +984,38 @@ mod tests {
         assert_eq!(elaborations(), before + 3);
         assert_eq!(restored.specialization_key(), first.specialization_key());
         assert_eq!(SPECIALIZATIONS.entry_count(&pre_key), 1);
+    }
+
+    #[test]
+    fn direct_import_shares_the_cache() {
+        // `T` defaults to `logic`, which has no member `v`.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("direct.sv");
+        write(
+            &path,
+            "package dp; typedef struct packed { logic v; } t; endpackage\n\
+             module Direct #(parameter type T = logic) (input T x, output logic y);\n  \
+             assign y = x.v;\nendmodule\n",
+        );
+        let sources = [path.to_str().unwrap()];
+        let cfg = ParserConfig {
+            sources: &sources,
+            ..Default::default()
+        };
+        let overrides = [("T", ParameterValue::Type("dp::t".to_string()))];
+
+        let before = elaborations();
+        let first = ModDef::try_from_verilog_parameterized("Direct", &cfg, &overrides).unwrap();
+        assert_eq!(elaborations(), before + 1);
+        let hit = ModDef::try_from_verilog_parameterized("Direct", &cfg, &overrides).unwrap();
+        assert_eq!(elaborations(), before + 1, "equal overrides must hit");
+        assert_eq!(first.specialization_key(), hit.specialization_key());
+
+        // Parameterizing the result again with the same overrides is the
+        // same specialization.
+        let again = first.try_parameterize(&overrides).unwrap();
+        assert_eq!(elaborations(), before + 1);
+        assert_eq!(again.specialization_key(), first.specialization_key());
     }
 
     #[test]

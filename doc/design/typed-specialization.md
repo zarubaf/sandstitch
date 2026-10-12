@@ -33,13 +33,27 @@ Dependencies: `designs/floonoc → library → crates/{slang-rs, xlsynth-vast}`.
 
 ## Specialization
 
+A module whose defaults elaborate is imported, then specialized:
+
 ```rust
-let router = ModDef::try_from_verilog_with_config("floo_nw_router", &cfg)?; // sources include cfg_pkg.sv
-let r5 = router.try_parameterize(&[
-    ("NumRoutes", 5.into()),
-    ("flit_t", ParameterValue::Type("cfg_pkg::flit_t".into())),
-])?;                                                        // Result<ModDef, ImportError>
+let child = ModDef::try_from_verilog_with_config("child", &cfg)?;
+let c4 = child.try_parameterize(&[("N", 4)])?;               // Result<ModDef, ImportError>
 ```
+
+Parameterized IP often does not elaborate with its defaults: `floo_nw_router`'s type parameters default to `logic` and are used as structs, and `NumRoutes` defaults to 0. Import it directly with its overrides; it is never elaborated with its defaults:
+
+```rust
+let r5 = ModDef::try_from_verilog_parameterized::<ParameterValue>(
+    "floo_nw_router",
+    &cfg,                                                   // sources include cfg_pkg.sv
+    &[
+        ("NumRoutes", 5.into()),
+        ("flit_t", ParameterValue::Type("cfg_pkg::flit_t".into())),
+    ],
+)?;
+```
+
+The result is the same as importing and then calling `try_parameterize` (ports, key, emitted overrides, manifest sources), and it can be parameterized again. Overrides are checked against the parameters the definition declares, read from the AST Slang dumps for the definition alone even when that elaboration fails; Slang's `-G` (`ParserConfig::parameters`) is rejected with S0105, since it applies only to value parameters.
 
 - **Identity**: original module name, ordered overrides, and the import configuration including each source file's content hash and the Slang version. The key has a stable short hash recorded for provenance.
 - **Elaboration**: on a cache miss, write a portless top that instantiates the original with the overrides into a temporary directory; Slang elaborates it (with `--ast-json-source-info`); read the instance's ports with resolved types. Slang's JSON leaves ports typed by a type parameter unresolved (`child.T[2:0]`); the slang-rs fork substitutes the instance's `TypeParameter` type and re-applies the dimensions. Value-only overrides use the same path.

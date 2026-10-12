@@ -5,9 +5,11 @@ use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::diagnostic::codes;
+use crate::import::parser::VerilogImport;
 use crate::import::specialize::{self, SpecializationKey};
 use crate::model::parameter::{ParameterSpec, ParameterValue};
-use crate::{ImportError, ModDef, ModDefCore, Span, Usage};
+use crate::{Diagnostics, ImportError, Label, ModDef, ModDefCore, ParserConfig, Span, Usage};
 
 impl ModDef {
     /// Returns a new module definition that is a variant of this module
@@ -81,8 +83,71 @@ impl ModDef {
             overrides.insert(name.to_string(), value.clone().into());
         }
 
-        specialize::validate(&core.name, &overrides, &caller)?;
-        let specialized = specialize::specialize(&core.name, verilog_import, &overrides, &caller)?;
+        Self::specialized(&core.name, verilog_import, overrides, &caller)
+    }
+
+    /// Imports module `name` from the sources in `cfg` directly with the
+    /// parameter `overrides`, without elaborating it with its default
+    /// parameters first. Use this for a module whose defaults do not
+    /// elaborate, for example a type parameter defaulting to `logic` that the
+    /// module uses as a struct, or a count defaulting to 0 that is used as an
+    /// index. Otherwise the result is the same as
+    /// [`ModDef::try_from_verilog_with_config`] followed by
+    /// [`ModDef::try_parameterize`] with the same overrides: the same ports
+    /// and types, [`ModDef::specialization_key`], emitted `#(...)` override
+    /// and build manifest sources. It can be parameterized again; overrides
+    /// merge as in [`ModDef::try_parameterize`].
+    ///
+    /// With no overrides this is [`ModDef::try_from_verilog_with_config`].
+    /// Otherwise, as for any specialization, `cfg.tops` and
+    /// `cfg.include_hierarchy` are not used: the module is elaborated under a
+    /// generated top and the result has no instances.
+    ///
+    /// Errors (Rust spans point at the caller) are those of
+    /// [`ModDef::try_parameterize`], and S0105 if `cfg.parameters` is not
+    /// empty (pass those overrides in `overrides`).
+    #[track_caller]
+    pub fn try_from_verilog_parameterized<T: Into<ParameterValue> + Clone>(
+        name: &str,
+        cfg: &ParserConfig,
+        overrides: &[(&str, T)],
+    ) -> Result<ModDef, ImportError> {
+        let caller = Span::caller();
+        if overrides.is_empty() {
+            return Self::try_from_verilog_with_config(name, cfg);
+        }
+        if !cfg.parameters.is_empty() {
+            let mut d = crate::import::typed::error(
+                codes::S0105,
+                format!("unsupported overrides of the parameters of `{name}`"),
+                Label {
+                    span: caller,
+                    text: "`ParserConfig::parameters` is not empty".to_string(),
+                },
+            );
+            d.helps
+                .push("pass these overrides in `overrides` instead".to_string());
+            return Err(ImportError {
+                diagnostics: Diagnostics(vec![d]),
+            });
+        }
+        let overrides: IndexMap<String, ParameterValue> = overrides
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.clone().into()))
+            .collect();
+        Self::specialized(name, &VerilogImport::new(cfg), overrides, &caller)
+    }
+
+    /// Elaborates `name` from `verilog_import` with `overrides`, the
+    /// complete set of overrides of the specialization.
+    fn specialized(
+        name: &str,
+        verilog_import: &VerilogImport,
+        overrides: IndexMap<String, ParameterValue>,
+        caller: &Span,
+    ) -> Result<ModDef, ImportError> {
+        specialize::validate(name, &overrides, caller)?;
+        let specialized = specialize::specialize(name, verilog_import, &overrides, caller)?;
 
         let parameters: IndexMap<String, ParameterSpec> = overrides
             .into_iter()
@@ -105,7 +170,7 @@ impl ModDef {
 
         let mod_def = ModDef {
             core: Arc::new(RwLock::new(ModDefCore {
-                name: core.name.clone(),
+                name: name.to_string(),
                 ports: IndexMap::new(),
                 port_types: IndexMap::new(),
                 port_spans: IndexMap::new(),
