@@ -1,6 +1,6 @@
 # Typed specialization
 
-Status: accepted, 2026-10-12; sub-project 1 implemented. Tracks #4 (sub-project 1 of 3). Sub-projects 2 (SystemVerilog interface ports) and 3 (bundled struct interfaces) get their own design notes.
+Status: accepted, 2026-10-12; sub-project 1 implemented. Tracks #4 (sub-project 1 of 3). Sub-project 2 (SystemVerilog interface ports) is declined, see [SystemVerilog interface ports](#systemverilog-interface-ports); sub-project 3 (bundled struct interfaces) gets its own design note.
 
 ## Goal
 
@@ -116,6 +116,10 @@ Logic vectors nested inside aggregates are compared structurally; only a `Logic`
 - S0206 is over-strict for a re-emitted definition (`Usage::EmitDefinitionAndDescend`) whose unpacked port is tied off inside it: the port is reported even when the parent leaves it unconnected, where the flat declaration would be harmless.
 - Only `ident`/`pkg::ident` overrides; computed types and expressions need a named type or constant in a package.
 
+## SystemVerilog interface ports
+
+Declined, 2026-10-13 (sub-project 2 of #4). Interface ports (`interface`/`modport`) stay unsupported and are rejected with S0104, never dropped. No target design needs them: FlooNoC and the IP it imports use struct ports, and outside testbenches the vendored interfaces (`AXI_BUS`, `AXI_LITE`, `cc_stream_dv`) appear only in `*_intf` wrappers around struct-port modules (`axi_xbar_intf` wraps `axi_xbar`). Supporting them would add interface instances to the composition model, the snapshot and emission, with no user to validate them. A design instantiates the struct-port module instead. Revisit when a design must integrate IP that exposes only interface ports.
+
 ## Out of scope
 
-SV interface ports (sub-project 2; its diagnostic S0104 lands now), bundled struct interfaces (sub-project 3), the explorer, a Rust type builder, routing (#7).
+SV interface ports (declined, see above), bundled struct interfaces (sub-project 3), the explorer, a Rust type builder, routing (#7).
