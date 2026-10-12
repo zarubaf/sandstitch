@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 
 use crate::model::mod_def::ModDefCore;
 use crate::model::mod_inst::HierPathElem;
-use crate::{ConvertibleToPortSliceVec, MetadataKey, MetadataValue, ModDef, ModInst, PortSlice};
+use crate::{ConvertibleToPortSliceVec, MetadataKey, MetadataValue, ModInst, PortSlice};
 
 mod connect;
 mod copy;
@@ -15,9 +15,12 @@ pub(crate) mod crossover;
 mod debug;
 mod export;
 mod feedthrough;
+mod members;
 mod subdivide;
 mod tieoff;
 mod width;
+
+pub(crate) use members::IntfMember;
 
 /// Represents an interface on a module definition or module instance.
 /// Interfaces are used to connect modules together by function name.
@@ -55,114 +58,32 @@ impl Intf {
     }
 
     pub(crate) fn get_port_slices(&self) -> IndexMap<String, PortSlice> {
-        match self {
-            Intf::ModDef {
-                mod_def_core, name, ..
-            } => {
-                let core = mod_def_core.upgrade().unwrap();
-                let binding = core.read();
-                let mod_def = ModDef { core: core.clone() };
-                let mapping = binding.interfaces.get(name).unwrap();
-                mapping
-                    .iter()
-                    .map(|(func_name, (port_name, msb, lsb))| {
-                        (
-                            func_name.clone(),
-                            mod_def.get_port(port_name).slice_or_whole(*msb, *lsb),
-                        )
-                    })
-                    .collect()
-            }
-            Intf::ModInst {
-                intf_name,
-                hierarchy,
-                ..
-            } => {
-                let inst = ModInst {
-                    hierarchy: hierarchy.clone(),
-                };
-                let inst_core = inst.mod_def_core_of_instance();
-                let inst_binding = inst_core.read();
-                let inst_mapping = inst_binding.interfaces.get(intf_name).unwrap();
-                inst_mapping
-                    .iter()
-                    .map(|(func_name, (port_name, msb, lsb))| {
-                        (
-                            func_name.clone(),
-                            inst.get_port(port_name).slice_or_whole(*msb, *lsb),
-                        )
-                    })
-                    .collect()
-            }
-        }
+        self.members().into_iter().collect()
     }
 
     /// Returns the port slice for the given function name if present, otherwise `None`.
     pub fn get(&self, func_name: impl AsRef<str>) -> Option<PortSlice> {
-        let func_name = func_name.as_ref();
-        match self {
-            Intf::ModDef {
-                mod_def_core, name, ..
-            } => {
-                let core = mod_def_core.upgrade().unwrap();
-                let binding = core.read();
-                let mod_def = ModDef { core: core.clone() };
-                let mapping = binding.interfaces.get(name)?;
-                mapping.get(func_name).map(|(port_name, msb, lsb)| {
-                    mod_def.get_port(port_name).slice_or_whole(*msb, *lsb)
-                })
-            }
-            Intf::ModInst {
-                intf_name,
-                hierarchy,
-                ..
-            } => {
-                let inst = ModInst {
-                    hierarchy: hierarchy.clone(),
-                };
-                let inst_core = inst.mod_def_core_of_instance();
-                let inst_binding = inst_core.read();
-                let inst_mapping = inst_binding.interfaces.get(intf_name)?;
-                inst_mapping.get(func_name).map(|(port_name, msb, lsb)| {
-                    inst.get_port(port_name).slice_or_whole(*msb, *lsb)
-                })
-            }
-        }
+        self.members()
+            .into_iter()
+            .find(|(name, _)| name == func_name.as_ref())
+            .map(|(_, slice)| slice)
     }
 
     /// Removes and returns the port slice for the given function name if present.
     pub fn remove(&self, func_name: impl AsRef<str>) -> Option<PortSlice> {
-        let func_name = func_name.as_ref();
-        match self {
-            Intf::ModDef {
-                mod_def_core, name, ..
-            } => {
-                let core = mod_def_core.upgrade().unwrap();
-                let mod_def = ModDef { core: core.clone() };
-                let removed = {
-                    let mut binding = core.write();
-                    let mapping = binding.interfaces.get_mut(name)?;
-                    mapping.shift_remove(func_name)
-                };
-                removed.map(|(port_name, msb, lsb)| mod_def.get_port_slice(&port_name, msb, lsb))
+        let slice = self.get(func_name.as_ref())?;
+        let core = match self {
+            Intf::ModDef { .. } => self.get_mod_def_core(),
+            Intf::ModInst { hierarchy, .. } => ModInst {
+                hierarchy: hierarchy.clone(),
             }
-            Intf::ModInst {
-                intf_name,
-                hierarchy,
-                ..
-            } => {
-                let inst = ModInst {
-                    hierarchy: hierarchy.clone(),
-                };
-                let inst_core = inst.mod_def_core_of_instance();
-                let removed = {
-                    let mut inst_binding = inst_core.write();
-                    let inst_mapping = inst_binding.interfaces.get_mut(intf_name)?;
-                    inst_mapping.shift_remove(func_name)
-                };
-                removed.map(|(port_name, msb, lsb)| inst.get_port_slice(&port_name, msb, lsb))
-            }
-        }
+            .mod_def_core_of_instance(),
+        };
+        let mut binding = core.write();
+        let members = binding.interfaces.get_mut(self.name())?;
+        let i = members.iter().position(|m| m.name == func_name.as_ref())?;
+        members.remove(i);
+        Some(slice)
     }
 
     /// Returns an iterator over the interface functions and their port slices.

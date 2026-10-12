@@ -4,42 +4,16 @@ use crate::Intf;
 
 impl std::fmt::Debug for Intf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mod_def_core = self.get_mod_def_core();
-        let core = mod_def_core.read();
-        match self {
-            Intf::ModDef { name, .. } => {
-                writeln!(f, "Interface Mapping:")?;
-                for (func_name, (port_name, msb, lsb)) in core.interfaces.get(name).unwrap() {
-                    writeln!(
-                        f,
-                        "{func_name}: (port_name: {port_name}, msb: {msb}, lsb: {lsb})",
-                    )?;
-                }
-            }
-            Intf::ModInst {
-                intf_name,
-                hierarchy,
-                ..
-            } => {
-                let inst_name = hierarchy
-                    .last()
-                    .expect("Intf::ModInst hierarchy cannot be empty")
-                    .inst_name
-                    .as_str();
-                let inst_core = core.instances.get(inst_name).unwrap();
-                let inst_binding = inst_core.read();
-                writeln!(f, "Interface Mapping:")?;
-                for (func_name, (port_name, msb, lsb)) in
-                    inst_binding.interfaces.get(intf_name).unwrap()
-                {
-                    writeln!(
-                        f,
-                        "{func_name}: (port_name: {port_name}, msb: {msb}, lsb: {lsb})",
-                    )?;
-                }
-            }
-        };
-
+        writeln!(f, "Interface Mapping:")?;
+        for (func_name, slice) in self.members() {
+            writeln!(
+                f,
+                "{func_name}: (port_name: {}, msb: {}, lsb: {})",
+                slice.port.name(),
+                slice.msb,
+                slice.lsb
+            )?;
+        }
         Ok(())
     }
 }

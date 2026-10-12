@@ -12,6 +12,7 @@ use crate::physical::geometry::PhysicalPin;
 use crate::physical::tracks::{TrackDefinitions, TrackOccupancies};
 
 use crate::model::connection::PortSliceConnections;
+use crate::model::intf::IntfMember;
 use crate::{IO, Metadata, PortType, Span, Usage};
 
 type PhysicalPinMap = IndexMap<String, Vec<Option<PhysicalPin>>>;
@@ -34,7 +35,8 @@ pub struct ModDefCore {
     pub(crate) port_types: IndexMap<String, PortType>,
     /// SystemVerilog declaration spans of imported ports, keyed like `ports`.
     pub(crate) port_spans: IndexMap<String, Span>,
-    pub(crate) interfaces: IndexMap<String, IndexMap<String, (String, usize, usize)>>,
+    /// Interfaces by name; members in definition order.
+    pub(crate) interfaces: IndexMap<String, Vec<IntfMember>>,
     pub(crate) instances: IndexMap<String, Arc<RwLock<ModDefCore>>>,
     pub(crate) usage: Usage,
     pub(crate) verilog_import: Option<VerilogImport>,
