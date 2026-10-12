@@ -290,8 +290,8 @@ static SPECIALIZATIONS: DependencyCache<Specialized> = DependencyCache::new();
 /// What elaborating a module's definition as the top shows. The definition
 /// need not elaborate cleanly: the declarations are read from the AST Slang
 /// dumps even when its default parameters do not elaborate (a type parameter
-/// defaulting to `logic` used as a struct), so overrides are checked before
-/// the specialization is elaborated.
+/// defaulting to `logic` used as a struct), as long as the sources parse, so
+/// overrides are checked before the specialization is elaborated.
 #[derive(Clone, Debug)]
 struct Definition {
     interface_ports: Vec<slang_rs::InterfacePort>,
@@ -299,8 +299,8 @@ struct Definition {
     parameters: Vec<(String, ParameterKind)>,
 }
 
-/// `None` if Slang dumped no AST of the definition alone (for example a
-/// syntax error, or a module not found).
+/// `None` if the sources do not parse or Slang dumped no AST of the
+/// definition alone.
 static DEFINITIONS: DependencyCache<Option<Definition>> = DependencyCache::new();
 
 /// The instance of the module in the generated elaboration top.
@@ -509,8 +509,8 @@ fn scratch_dir(
     Ok((dir, mall))
 }
 
-/// The definition of `module` elaborated alone; `Ok(None)` if Slang dumped
-/// no AST of it.
+/// The definition of `module` elaborated alone; `Ok(None)` if the sources do
+/// not parse or Slang dumped no AST of it.
 fn definition(
     module: &str,
     import: &VerilogImport,
@@ -523,17 +523,28 @@ fn definition(
     let (_dir, mall) = scratch_dir(module, caller)?;
     let mall_arg = mall.to_str().expect("checked by scratch_dir");
     let definition = import.with_config(&[], &[], &["--Mall", mall_arg], |cfg| {
-        let (value, _) = typed::elaborate_definition(module, cfg)?;
+        let (value, succeeded) = typed::elaborate_definition(module, cfg)?;
         let interface_ports =
             slang_rs::extract_interface_ports_from_value(&value).remove(module)?;
         let parameters = slang_rs::extract_overridable_parameters_from_value(&value)
             .remove(module)
             .unwrap_or_default();
-        Some(Definition {
-            interface_ports,
-            parameters,
-        })
+        Some((
+            Definition {
+                interface_ports,
+                parameters,
+            },
+            succeeded,
+        ))
     });
+    // After a syntax error the AST is Slang's recovery, which can differ
+    // from the source (a parameter port list cut short at a typo makes the
+    // following parameters local): it is used only if the sources parse.
+    let definition = match definition {
+        Some((definition, true)) => Some(definition),
+        Some((definition, false)) if parses(import) => Some(definition),
+        _ => None,
+    };
     match dependencies(&mall, import, None) {
         Ok(dependencies) => DEFINITIONS.insert(pre_key, dependencies, definition.clone()),
         // A failed run may write no list: the failure is reported by the
@@ -542,6 +553,13 @@ fn definition(
         Err(e) => return Err(elaboration_io_failure(module, caller, e)),
     }
     Ok(definition)
+}
+
+/// Whether Slang parses the sources of `import` without errors.
+fn parses(import: &VerilogImport) -> bool {
+    import.with_config(&[], &[], &["--parse-only"], |cfg| {
+        slang_rs::check_slang(&cfg.to_slang_config()).is_ok()
+    })
 }
 
 /// S0102 for extra arguments that would clash with those a specialization

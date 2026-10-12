@@ -311,6 +311,31 @@ endmodule
 }
 
 #[test]
+fn syntax_error_in_parameter_list_reports_s0102() {
+    // `;` for `,`: Slang's recovered AST makes `M` and `T` local, which must
+    // not turn into "no overridable parameter `T`".
+    let typo = "
+module m #(parameter int N = 1; parameter int M = 2, parameter type T = logic) (
+  input T x
+);
+endmodule
+";
+    let sources = Sources::new(&[typo]);
+    let paths = sources.paths();
+    let overrides = [("T", ty("logic"))];
+    let e = ModDef::try_from_verilog_parameterized("m", &config(&paths), &overrides)
+        .err()
+        .unwrap();
+    let d = &e.diagnostics.0[0];
+    assert_eq!(d.code, codes::S0102, "{e}");
+    assert_eq!(
+        d.message,
+        "Slang failed to elaborate a specialization of `m`"
+    );
+    assert!(d.secondary.iter().any(|l| l.text == "expected ')'"), "{e}");
+}
+
+#[test]
 fn slang_parameters_are_rejected() {
     let sources = Sources::new(&[CHILD]);
     let paths = sources.paths();
