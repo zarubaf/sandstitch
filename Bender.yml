@@ -1,0 +1,267 @@
+package:
+  name: common_cells
+  authors:
+    - "Florian Zaruba <zarubaf@iis.ee.ethz.ch>"
+    - "Fabian Schuiki <fschuiki@iis.ee.ethz.ch>"
+    - "Michael Schaffner <schaffner@iis.ee.ethz.ch>"
+    - "Andreas Kurth <akurth@iis.ee.ethz.ch>"
+    - "Manuel Eggimann <meggimann@iis.ee.ethz.ch>"
+    - "Stefan Mach <smach@iis.ee.ethz.ch>"
+    - "Wolfgang Roenninger <wroennin@student.ethz.ch>"
+    - "Thomas Benz <tbenz@iis.ee.ethz.ch>"
+
+dependencies:
+  common_verification: { git: "https://github.com/pulp-platform/common_verification.git", version: 0.2.0 }
+  tech_cells_generic: { git: "https://github.com/pulp-platform/tech_cells_generic.git", version: 0.2.14 }
+
+export_include_dirs:
+  - include
+
+sources:
+  # Source files grouped in levels. Files in level 0 have no dependencies on files in this package.
+  # Files in level 1 only depend on files in level 0, files in level 2 on files in levels 1 and 0,
+  # etc. Files within a level are ordered alphabetically.
+
+  # Level 0
+  - src/assert_rpt_pkg.sv
+  - src/cc_binary_to_gray.sv
+
+  - target: not(all(xilinx,vivado_ipx))
+    files:
+      - src/cc_pkg.sv
+      - src/cc_onehot.sv
+      - src/cc_clk_int_div.sv
+      - src/cc_credit_counter.sv
+      - src/cc_delta_counter.sv
+      - src/cc_edge_propagator_tx.sv
+      - src/cc_exp_backoff.sv
+      - src/cc_fifo.sv
+      - src/cc_gray_to_binary.sv
+      - src/cc_heaviside.sv
+      - src/cc_isochronous_4phase_handshake.sv
+      - src/cc_isochronous_spill_register.sv
+      - src/cc_lfsr.sv
+      - src/cc_lfsr_16bit.sv
+      - src/cc_lfsr_8bit.sv
+      - src/cc_lossy_valid_to_stream.sv
+      - src/cc_onehot_to_bin.sv
+      - src/cc_plru_tree.sv
+      - src/cc_passthrough_stream_fifo.sv
+      - src/cc_popcount.sv
+      - src/cc_ring_buffer.sv
+      - src/cc_rr_arb_tree.sv
+      - src/cc_rstgen_bypass.sv
+      - src/cc_serial_deglitch.sv
+      - src/cc_shift_register.sv
+      - src/cc_shift_register_gated.sv
+      - src/cc_spill_register_flushable.sv
+      - src/cc_stream_demux.sv
+      - src/cc_stream_filter.sv
+      - src/cc_stream_fork.sv
+      - src/cc_stream_intf.sv
+      - src/cc_stream_join_dynamic.sv
+      - src/cc_stream_mux.sv
+      - src/cc_stream_throttle.sv
+      - src/cc_sub_per_hash.sv
+      - src/cc_sync_wedge.sv
+      - src/cc_unread.sv
+      - src/cc_read.sv
+      # Level 1
+      - src/cc_addr_decode_dync.sv
+      - src/cc_boxcar.sv
+      - src/cc_cdc_2phase.sv
+      - src/cc_cdc_4phase.sv
+      - src/cc_clk_int_div_static.sv
+      - src/cc_edge_detect.sv
+      - src/cc_edge_propagator_ack.sv
+      - src/cc_edge_propagator_rx.sv
+      - src/cc_trip_counter.sv
+      # Level 2
+      - src/cc_addr_decode.sv
+      - src/cc_addr_decode_napot.sv
+      - src/cc_edge_propagator.sv
+      - src/cc_multiaddr_decode.sv
+  - target: not(all(xilinx,vivado_ipx))
+    files:
+      - src/cc_cb_filter.sv
+      - src/cc_cdc_fifo_2phase.sv
+      - src/cc_clk_mux_glitch_free.sv
+      - src/cc_counter.sv
+      - src/cc_ecc_decode.sv
+      - src/cc_ecc_encode.sv
+      - src/cc_lzc.sv
+      - src/cc_majority_vote_filter.sv
+      - src/cc_max_counter.sv
+      - src/cc_rstgen.sv
+      - src/cc_spill_register.sv
+      - src/cc_stream_delay.sv
+      - src/cc_stream_fifo.sv
+      - src/cc_stream_fork_dynamic.sv
+      - src/cc_stream_join.sv
+      # Level 2
+      - src/cc_cdc_reset_ctrlr.sv
+      - src/cc_cdc_fifo_gray.sv
+      - src/cc_fall_through_register.sv
+      - src/cc_id_queue.sv
+      - src/cc_stream_to_mem.sv
+      - src/cc_stream_arbiter.sv
+      - src/cc_stream_fifo_optimal_wrap.sv
+      - src/cc_stream_register.sv
+      - src/cc_stream_xbar.sv
+      # Level 3
+      - src/cc_cdc_fifo_gray_clearable.sv
+      - src/cc_cdc_2phase_clearable.sv
+      - src/cc_mem_to_banks_detailed.sv
+      - src/cc_stream_omega_net.sv
+      # Level 4
+      - src/cc_mem_to_banks.sv
+
+  - target: formal
+    files:
+      - formal/cc_cdc_reset_ctrlr_half_properties.sv
+      - formal/cc_cdc_reset_ctrlr_properties.sv
+
+  - target: test
+    files:
+      - test/cc_test_pkg.sv
+
+  - target: tb
+    files:
+      # Level 0
+      - test/cc_addr_decode_tb.sv
+      - test/cc_cb_filter_tb.sv
+      - test/cc_cdc_2phase_tb.sv
+      - test/cc_cdc_2phase_clearable_tb.sv
+      - test/cc_cdc_4phase_tb.sv
+      - test/cc_cdc_fifo_2phase_tb.sv
+      - test/cc_cdc_fifo_gray_tb.sv
+      - test/cc_cdc_fifo_tb.sv
+      - test/cc_cdc_fifo_clearable_tb.sv
+      - test/cc_fifo_tb.sv
+      - test/cc_graycode_tb.sv
+      - test/cc_id_queue_tb.sv
+      - test/cc_passthrough_stream_fifo_tb.sv
+      - test/cc_popcount_tb.sv
+      - test/cc_rr_arb_tree_tb.sv
+      - test/cc_stream_register_tb.sv
+      - test/cc_stream_to_mem_tb.sv
+      - test/cc_sub_per_hash_tb.sv
+      # Level 1
+      - test/cc_isochronous_crossing_tb.sv
+      - test/cc_stream_omega_net_tb.sv
+      - test/cc_stream_xbar_tb.sv
+      - test/cc_clk_int_div_tb.sv
+      - test/cc_clk_int_div_static_tb.sv
+      - test/cc_clk_mux_glitch_free_tb.sv
+      - test/cc_lossy_valid_to_stream_tb.sv
+
+  - target: synth_test
+    files:
+      # Level 0
+      - test/cc_cdc_2phase_synth.sv
+      - test/cc_id_queue_synth.sv
+      - test/cc_stream_arbiter_synth.sv
+      - test/cc_ecc_synth.sv
+      # Level 1
+      - test/cc_synth_bench.sv
+
+  # Deprecated wrappers: legacy module names that wrap the new cc_* modules.
+  # Included by default for backward compatibility. Set the target 'cc_no_deprecated'
+  # to exclude them and enforce use of the new cc_* names.
+  - target: not(cc_no_deprecated)
+    files:
+      # Deprecated packages forwarding to cc_pkg (keep old package names working)
+      - src/deprecated/cf_math_pkg.sv
+      - src/deprecated/cb_filter_pkg.sv
+      - src/deprecated/ecc_pkg.sv
+      - src/deprecated/cdc_reset_ctrlr_pkg.sv
+      - src/deprecated/stream_intf.sv
+      - src/deprecated/binary_to_gray.sv
+      - src/deprecated/boxcar.sv
+      - src/deprecated/cb_filter.sv
+      - src/deprecated/cdc_2phase.sv
+      - src/deprecated/cdc_4phase.sv
+      - src/deprecated/cdc_fifo_2phase.sv
+      - src/deprecated/cdc_fifo_gray.sv
+      - src/deprecated/clk_int_div.sv
+      - src/deprecated/clk_int_div_static.sv
+      - src/deprecated/clk_mux_glitch_free.sv
+      - src/deprecated/counter.sv
+      - src/deprecated/credit_counter.sv
+      - src/deprecated/delta_counter.sv
+      - src/deprecated/ecc_decode.sv
+      - src/deprecated/ecc_encode.sv
+      - src/deprecated/edge_detect.sv
+      - src/deprecated/edge_propagator_tx.sv
+      - src/deprecated/edge_propagator_rx.sv
+      - src/deprecated/edge_propagator_ack.sv
+      - src/deprecated/edge_propagator.sv
+      - src/deprecated/exp_backoff.sv
+      - src/deprecated/fifo_v3.sv
+      - src/deprecated/gray_to_binary.sv
+      - src/deprecated/heaviside.sv
+      - src/deprecated/isochronous_4phase_handshake.sv
+      - src/deprecated/isochronous_spill_register.sv
+      - src/deprecated/lfsr.sv
+      - src/deprecated/lfsr_16bit.sv
+      - src/deprecated/lfsr_8bit.sv
+      - src/deprecated/lossy_valid_to_stream.sv
+      - src/deprecated/lzc.sv
+      - src/deprecated/onehot_to_bin.sv
+      - src/deprecated/passthrough_stream_fifo.sv
+      - src/deprecated/plru_tree.sv
+      - src/deprecated/popcount.sv
+      - src/deprecated/read.sv
+      - src/deprecated/ring_buffer.sv
+      - src/deprecated/rr_arb_tree.sv
+      - src/deprecated/rstgen_bypass.sv
+      - src/deprecated/rstgen.sv
+      - src/deprecated/serial_deglitch.sv
+      - src/deprecated/shift_reg.sv
+      - src/deprecated/shift_reg_gated.sv
+      - src/deprecated/spill_register.sv
+      - src/deprecated/spill_register_flushable.sv
+      - src/deprecated/sub_per_hash.sv
+      - src/deprecated/sync.sv
+      - src/deprecated/sync_wedge.sv
+      - src/deprecated/unread.sv
+      - src/deprecated/fall_through_register.sv
+      - src/deprecated/max_counter.sv
+      - src/deprecated/mv_filter.sv
+      - src/deprecated/trip_counter.sv
+      # Level 1
+      - src/deprecated/addr_decode.sv
+      - src/deprecated/addr_decode_dync.sv
+      - src/deprecated/addr_decode_napot.sv
+      - src/deprecated/multiaddr_decode.sv
+      - src/deprecated/cdc_reset_ctrlr.sv
+      - src/deprecated/stream_demux.sv
+      - src/deprecated/stream_mux.sv
+      - src/deprecated/stream_throttle.sv
+      # Level 2
+      - src/deprecated/cdc_2phase_clearable.sv
+      - src/deprecated/cdc_fifo_gray_clearable.sv
+      - src/deprecated/id_queue.sv
+      - src/deprecated/stream_arbiter_flushable.sv
+      - src/deprecated/stream_delay.sv
+      - src/deprecated/stream_fifo.sv
+      - src/deprecated/stream_fifo_optimal_wrap.sv
+      - src/deprecated/stream_filter.sv
+      - src/deprecated/stream_fork.sv
+      - src/deprecated/stream_fork_dynamic.sv
+      - src/deprecated/stream_join.sv
+      - src/deprecated/stream_join_dynamic.sv
+      - src/deprecated/stream_register.sv
+      - src/deprecated/stream_to_mem.sv
+      - src/deprecated/stream_xbar.sv
+      # Level 3
+      - src/deprecated/mem_to_banks_detailed.sv
+      - src/deprecated/stream_arbiter.sv
+      - src/deprecated/stream_omega_net.sv
+      # Level 4
+      - src/deprecated/mem_to_banks.sv
+
+  # Deprecated stream_test package: uses STREAM_DV interface name; only in test mode.
+  - target: all(not(cc_no_deprecated), test)
+    files:
+      - src/deprecated/stream_test.sv
