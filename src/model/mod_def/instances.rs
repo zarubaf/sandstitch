@@ -3,7 +3,7 @@
 use itertools::Itertools;
 use std::sync::Arc;
 
-use crate::{ModDef, ModInst, mod_inst::HierPathElem};
+use crate::{ModDef, ModInst, model::mod_inst::HierPathElem};
 
 impl ModDef {
     /// Returns a vector of all module instances within this module definition.

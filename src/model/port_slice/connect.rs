@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::port::PortDirectionality;
+use crate::model::port::PortDirectionality;
 use crate::{
     ConvertibleToPortSlice, ConvertibleToPortSliceVec, IO, ModInst, PipelineConfig, Port, PortSlice,
 };
@@ -25,7 +25,7 @@ impl PortSlice {
 
             let this = self.to_port_slice();
             let width = this.port.io().width();
-            let other = crate::connection::connected_item::Wire {
+            let other = crate::model::connection::connected_item::Wire {
                 name: net.to_string(),
                 width,
                 msb: self.msb,

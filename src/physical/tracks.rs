@@ -773,7 +773,7 @@ impl ModDef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mod_def::ModDef;
+    use crate::model::mod_def::ModDef;
     use std::collections::HashMap;
 
     #[test]

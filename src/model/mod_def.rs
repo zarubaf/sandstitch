@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-pub use crate::physical::pins::SpreadPinsOptions;
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
@@ -14,26 +13,16 @@ use crate::{Intf, MetadataKey, MetadataValue, Port, Usage};
 mod core;
 pub use core::ModDefCore;
 
-pub use crate::physical::geometry::{
-    BoundingBox, Coordinate, Edge, EdgeOrientation, Mat3, Orientation, PhysicalPin, Placement,
-    Polygon, Range,
-};
+use crate::physical::geometry::{BoundingBox, Coordinate, Edge, EdgeOrientation, Polygon};
 
 mod feedthrough;
+pub(crate) mod hierarchy;
 mod instances;
 mod intf;
-pub use crate::physical::placement::CalculatedPlacement;
-pub(crate) mod hierarchy;
 mod ports;
 mod stub;
 mod wrap;
-pub use crate::physical::edges::{
-    BOTTOM_EDGE_INDEX, EAST_EDGE_INDEX, LEFT_EDGE_INDEX, NORTH_EDGE_INDEX, RIGHT_EDGE_INDEX,
-    SOUTH_EDGE_INDEX, TOP_EDGE_INDEX, WEST_EDGE_INDEX,
-};
-pub use crate::physical::tracks::{
-    PinPlacementError, TrackDefinition, TrackDefinitions, TrackOrientation,
-};
+use crate::physical::tracks::{TrackDefinition, TrackDefinitions};
 use crate::physical::tracks::{TrackOccupancies, TrackOccupancy};
 
 /// Represents a module definition, like `module <mod_def_name> ... endmodule`

@@ -5,10 +5,10 @@ use std::path::Path;
 
 use indexmap::IndexMap;
 
-use crate::mod_def::CalculatedPlacement;
 use crate::physical::def_parse::mod_def_from_def;
 use crate::physical::lef_parse::mod_defs_from_lef;
 use crate::physical::lefdef::{self, DefComponent, DefOrientation, DefPin, DefPoint, LefComponent};
+use crate::physical::placement::CalculatedPlacement;
 use crate::physical::validate::pins_contained;
 use crate::{Coordinate, LefDefOptions, ModDef, MultiplePinShapesPolicy, PhysicalPin, Polygon};
 

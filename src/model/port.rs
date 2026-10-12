@@ -4,9 +4,9 @@ use parking_lot::RwLock;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Weak};
 
-use crate::connection::PortSliceConnections;
-use crate::io::IO;
-use crate::mod_inst::HierPathElem;
+use crate::model::connection::PortSliceConnections;
+use crate::model::io::IO;
+use crate::model::mod_inst::HierPathElem;
 use crate::{
     ConvertibleToPortSlice, Coordinate, MetadataKey, MetadataValue, ModDef, ModDefCore, ModInst,
     PhysicalPin, PinPlacementError, PortSlice,

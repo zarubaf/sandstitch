@@ -302,7 +302,7 @@ impl ModDef {
                 TrackOccupancies(vec_maps)
             });
 
-        let new_core = crate::mod_def::ModDefCore {
+        let new_core = crate::model::mod_def::ModDefCore {
             name: core.name.clone(),
             ports: core.ports.clone(),
             interfaces: IndexMap::new(),

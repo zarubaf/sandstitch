@@ -4,7 +4,7 @@ use num_bigint::BigInt;
 use std::fmt::{self, Debug};
 
 use crate::PortSlice;
-use crate::connection::port_slice::PortSliceConnections;
+use crate::model::connection::port_slice::PortSliceConnections;
 
 /// Represents what a PortSlice is connected to: another
 /// PortSlice, a tieoff, an "unused" marker, or a wire.

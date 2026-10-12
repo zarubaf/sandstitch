@@ -3,8 +3,8 @@
 use num_bigint::BigInt;
 
 use crate::PortSlice;
-use crate::connection::connected_item::{Tieoff, Unused};
-use crate::port_slice::{ConvertibleToPortSlice, PortDirectionality};
+use crate::model::connection::connected_item::{Tieoff, Unused};
+use crate::model::port_slice::{ConvertibleToPortSlice, PortDirectionality};
 
 impl PortSlice {
     /// Ties off this port slice to the given constant value, specified as a

@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use indexmap::map::Entry;
 
-use crate::connection::{connected_item::ConnectedItem, port_slice::PortSliceConnections};
-use crate::mod_inst::HierPathElem;
-use crate::port::PortDirectionality;
+use crate::model::connection::{connected_item::ConnectedItem, port_slice::PortSliceConnections};
+use crate::model::mod_inst::HierPathElem;
+use crate::model::port::PortDirectionality;
 use crate::{Coordinate, EdgeOrientation, Mat3, ModDef, ModDefCore, PhysicalPin, Port};
 
 mod connect;

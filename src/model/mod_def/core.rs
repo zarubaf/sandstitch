@@ -10,7 +10,7 @@ use indexmap::IndexMap;
 use crate::physical::geometry::{PhysicalPin, VerilogImport};
 use crate::physical::tracks::{TrackDefinitions, TrackOccupancies};
 
-use crate::connection::PortSliceConnections;
+use crate::model::connection::PortSliceConnections;
 use crate::{IO, Metadata, Usage};
 
 type PhysicalPinMap = IndexMap<String, Vec<Option<PhysicalPin>>>;

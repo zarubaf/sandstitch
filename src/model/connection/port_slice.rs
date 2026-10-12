@@ -231,8 +231,8 @@ impl PortSliceConnection {
 mod tests {
     use crate::{
         IO, ModDef,
-        connection::connected_item::{ConnectedItem, Tieoff, Unused, Wire},
-        connection::port_slice::PortSliceConnections,
+        model::connection::connected_item::{ConnectedItem, Tieoff, Unused, Wire},
+        model::connection::port_slice::PortSliceConnections,
     };
 
     // Deterministic order for PortSliceConnections for the purpose of test

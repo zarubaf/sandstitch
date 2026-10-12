@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::connection::port_slice::PortSliceConnections;
-use crate::io::IO;
+use crate::model::connection::port_slice::PortSliceConnections;
+use crate::model::io::IO;
 
 /// Asserts that a collection of non-overlapping connection chunks fully
 /// covers a port without gaps.

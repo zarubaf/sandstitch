@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::mod_def::ModDef;
+use crate::model::mod_def::ModDef;
 
 impl ModDef {
     /// Returns `true` when the module shape is a four-vertex rectangle. This

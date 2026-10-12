@@ -5,8 +5,8 @@ use std::sync::{Arc, Weak};
 
 use indexmap::IndexMap;
 
-use crate::mod_def::ModDefCore;
-use crate::mod_inst::HierPathElem;
+use crate::model::mod_def::ModDefCore;
+use crate::model::mod_inst::HierPathElem;
 use crate::{
     ConvertibleToPortSliceVec, MetadataKey, MetadataValue, ModDef, ModInst, PinPlacementError,
     PortSlice,
