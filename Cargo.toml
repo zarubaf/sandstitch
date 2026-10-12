@@ -9,7 +9,7 @@ repository = "https://github.com/zarubaf/sandstitch"
 homepage = "https://github.com/zarubaf/sandstitch"
 
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "xtask"]
 
 [dependencies]
 num-bigint = "0.4.3"
