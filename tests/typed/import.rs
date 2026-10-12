@@ -96,11 +96,13 @@ fn cfg_pkg(name: &str) -> Option<QualifiedName> {
 fn flit(packed: &[(i64, i64)]) -> PortType {
     PortType::Struct {
         name: cfg_pkg("flit_t"),
+        signed: false,
         fields: vec![
             field(
                 "hdr",
                 PortType::Struct {
                     name: cfg_pkg("hdr_t"),
+                    signed: false,
                     fields: vec![
                         field("dst_id", logic(false, &[(3, 0)])),
                         field("len", logic(false, &[(7, 0)])),
@@ -150,6 +152,7 @@ fn struct_port_keeps_fields_and_qualified_name() {
         m.get_port("anon_o").port_type(),
         Some(PortType::Struct {
             name: None,
+            signed: false,
             fields: vec![
                 field("a", logic(false, &[])),
                 field("b", logic(false, &[(2, 0)])),
@@ -495,6 +498,7 @@ endmodule
                 package: Some("sp".into()),
                 name: "s_t".into(),
             }),
+            signed: true,
             fields: vec![
                 field("a", logic(true, &[(7, 0)])),
                 field("b", logic(true, &[(31, 0)])),
@@ -733,5 +737,63 @@ module mid (input byte m); endmodule"]);
     assert_eq!(
         mod_defs[1].get_port("m").port_type(),
         Some(logic(true, &[(7, 0)]))
+    );
+}
+
+const SIGNING: &str = "
+package sg;
+  typedef struct packed signed { logic [3:0] a; } ss_t;
+  typedef struct packed unsigned { logic [3:0] a; } su_t;
+  typedef struct packed { logic [3:0] a; } sp_t;
+  typedef union packed signed { logic [3:0] a; logic [3:0] b; } us_t;
+  typedef union packed { logic [3:0] a; logic [3:0] b; } up_t;
+  typedef struct packed { ss_t inner; } outer_s_t;
+  typedef struct packed { sp_t inner; } outer_p_t;
+endpackage
+module sgm (
+  input sg::ss_t ss, input sg::su_t su, input sg::sp_t sp,
+  input sg::us_t us, input sg::up_t up,
+  input sg::outer_s_t os, input sg::outer_p_t op,
+  input struct packed signed { logic [1:0] x; } anon
+);
+endmodule
+";
+
+#[test]
+fn struct_and_union_signing_is_compared() {
+    let sources = Sources::new(&[SIGNING]);
+    let m = sources.import("sgm").unwrap();
+    let ty = |name: &str| m.get_port(name).port_type().unwrap();
+    let difference = |path: &str, left: &str, right: &str| TypeDifference {
+        path: path.into(),
+        left: left.into(),
+        right: right.into(),
+    };
+
+    // A plain packed struct is unsigned.
+    assert_eq!(ty("su").equivalent(&ty("sp")), Ok(()));
+    assert_eq!(
+        ty("ss").equivalent(&ty("su")),
+        Err(difference("", "sg::ss_t (signed)", "sg::su_t (unsigned)"))
+    );
+    assert_eq!(
+        ty("sp").equivalent(&ty("ss")),
+        Err(difference("", "sg::sp_t (unsigned)", "sg::ss_t (signed)"))
+    );
+    assert_eq!(
+        ty("us").equivalent(&ty("up")),
+        Err(difference("", "sg::us_t (signed)", "sg::up_t (unsigned)"))
+    );
+    assert_eq!(
+        ty("os").equivalent(&ty("op")),
+        Err(difference(
+            "inner",
+            "sg::ss_t (signed)",
+            "sg::sp_t (unsigned)"
+        ))
+    );
+    assert_eq!(
+        ty("anon").to_string(),
+        "struct packed signed {logic [1:0] x;}"
     );
 }

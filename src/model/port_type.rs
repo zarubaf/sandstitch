@@ -67,11 +67,15 @@ pub enum PortType {
     },
     Struct {
         name: Option<QualifiedName>,
+        /// `struct packed signed`: the whole struct reads as a signed vector.
+        signed: bool,
         fields: Vec<PortField>,
         packed: Vec<Dim>,
     },
     Union {
         name: Option<QualifiedName>,
+        /// `union packed signed`.
+        signed: bool,
         fields: Vec<PortField>,
         packed: Vec<Dim>,
     },
@@ -89,7 +93,9 @@ pub enum PortType {
 /// it is empty when the roots themselves differ. `left` and `right` describe
 /// what each side has at that place: a type (`logic [3:0]`), a member
 /// declaration (`logic [3:0] dst_id`), an enum variant (`IDLE = 0`), or
-/// `nothing` when one side has no member there.
+/// `nothing` when one side has no member there. When only the signing of a
+/// struct or union differs, a named type is followed by `(signed)` or
+/// `(unsigned)`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TypeDifference {
     pub path: String,
@@ -144,11 +150,13 @@ impl fmt::Display for PortType {
             }
             PortType::Struct {
                 name,
+                signed,
                 fields,
                 packed,
             }
             | PortType::Union {
                 name,
+                signed,
                 fields,
                 packed,
             } => {
@@ -161,6 +169,9 @@ impl fmt::Display for PortType {
                             "union"
                         };
                         write!(f, "{keyword} packed ")?;
+                        if *signed {
+                            f.write_str("signed ")?;
+                        }
                         write_fields(f, fields)?;
                     }
                 }
@@ -206,14 +217,32 @@ impl PortType {
         }
     }
 
-    /// Checks structural equivalence: same kind, signedness and packed
-    /// dimensions; struct and union members with the same names in the same
+    /// Checks structural equivalence: same kind, signedness (of logic vectors,
+    /// structs, unions and enum bases) and packed dimensions; struct and union members with the same names in the same
     /// order and equivalent types; enums with equivalent base types and the
     /// same variant names and values. Type names are not compared.
     ///
     /// Returns the first difference found, in declaration order.
     pub fn equivalent(&self, other: &PortType) -> Result<(), TypeDifference> {
         self.equivalent_at("", other)
+    }
+
+    /// The display, with `(signed)`/`(unsigned)` after a named struct or
+    /// union (an anonymous one shows its `signed` keyword already).
+    fn with_signing(&self) -> String {
+        match self {
+            PortType::Struct {
+                name: Some(_),
+                signed,
+                ..
+            }
+            | PortType::Union {
+                name: Some(_),
+                signed,
+                ..
+            } => format!("{self} ({})", if *signed { "signed" } else { "unsigned" }),
+            _ => self.to_string(),
+        }
     }
 
     fn equivalent_at(&self, path: &str, other: &PortType) -> Result<(), TypeDifference> {
@@ -236,21 +265,40 @@ impl PortType {
                 Ok(())
             }
             (
-                PortType::Struct { fields, packed, .. },
                 PortType::Struct {
+                    signed,
+                    fields,
+                    packed,
+                    ..
+                },
+                PortType::Struct {
+                    signed: other_signed,
                     fields: other_fields,
                     packed: other_packed,
                     ..
                 },
             )
             | (
-                PortType::Union { fields, packed, .. },
                 PortType::Union {
+                    signed,
+                    fields,
+                    packed,
+                    ..
+                },
+                PortType::Union {
+                    signed: other_signed,
                     fields: other_fields,
                     packed: other_packed,
                     ..
                 },
             ) => {
+                if signed != other_signed {
+                    return Err(TypeDifference {
+                        path: path.to_string(),
+                        left: self.with_signing(),
+                        right: other.with_signing(),
+                    });
+                }
                 if packed != other_packed {
                     return Err(differ());
                 }
@@ -354,6 +402,7 @@ mod tests {
     fn strukt(name: Option<QualifiedName>, fields: Vec<PortField>) -> PortType {
         PortType::Struct {
             name,
+            signed: false,
             fields,
             packed: vec![],
         }
@@ -402,6 +451,7 @@ mod tests {
         assert_eq!(flit("flit_t", 4).width(), 44);
         let union = PortType::Union {
             name: None,
+            signed: false,
             fields: vec![
                 field("a", logic(false, &[(3, 0)])),
                 field("b", logic(false, &[(5, 0)])),
@@ -628,11 +678,81 @@ mod tests {
     }
 
     #[test]
+    fn struct_signing_differs() {
+        let fields = vec![field("a", logic(false, &[(3, 0)]))];
+        let signing = |signed, name: Option<QualifiedName>| PortType::Struct {
+            name,
+            signed,
+            fields: fields.clone(),
+            packed: vec![],
+        };
+        // A plain packed struct is unsigned.
+        assert_eq!(
+            signing(false, None).equivalent(&signing(false, named("p", "u_t"))),
+            Ok(())
+        );
+        assert_eq!(
+            signing(true, named("p", "s_t")).equivalent(&signing(false, named("p", "u_t"))),
+            Err(TypeDifference {
+                path: "".into(),
+                left: "p::s_t (signed)".into(),
+                right: "p::u_t (unsigned)".into(),
+            })
+        );
+        assert_eq!(
+            signing(true, None).equivalent(&signing(false, None)),
+            Err(TypeDifference {
+                path: "".into(),
+                left: "struct packed signed {logic [3:0] a;}".into(),
+                right: "struct packed {logic [3:0] a;}".into(),
+            })
+        );
+        let outer = |inner| PortType::Struct {
+            name: None,
+            signed: false,
+            fields: vec![field("inner", inner)],
+            packed: vec![],
+        };
+        assert_eq!(
+            outer(signing(true, named("p", "s_t")))
+                .equivalent(&outer(signing(false, named("p", "s_t")))),
+            Err(TypeDifference {
+                path: "inner".into(),
+                left: "p::s_t (signed)".into(),
+                right: "p::s_t (unsigned)".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn union_signing_differs() {
+        let union = |signed| PortType::Union {
+            name: None,
+            signed,
+            fields: vec![
+                field("a", logic(false, &[(3, 0)])),
+                field("b", logic(false, &[(3, 0)])),
+            ],
+            packed: vec![],
+        };
+        assert_eq!(union(true).equivalent(&union(true)), Ok(()));
+        assert_eq!(
+            union(true).equivalent(&union(false)),
+            Err(TypeDifference {
+                path: "".into(),
+                left: "union packed signed {logic [3:0] a; logic [3:0] b;}".into(),
+                right: "union packed {logic [3:0] a; logic [3:0] b;}".into(),
+            })
+        );
+    }
+
+    #[test]
     fn struct_and_union_differ() {
         let fields = vec![field("a", logic(false, &[(3, 0)]))];
         let s = strukt(None, fields.clone());
         let u = PortType::Union {
             name: None,
+            signed: false,
             fields,
             packed: vec![],
         };
@@ -648,11 +768,18 @@ mod tests {
 
     #[test]
     fn array_dims_of_struct_differ() {
-        let PortType::Struct { name, fields, .. } = flit("flit_t", 4) else {
+        let PortType::Struct {
+            name,
+            signed,
+            fields,
+            ..
+        } = flit("flit_t", 4)
+        else {
             unreachable!()
         };
         let array = |msb| PortType::Struct {
             name: name.clone(),
+            signed,
             fields: fields.clone(),
             packed: vec![Dim { msb, lsb: 0 }],
         };
