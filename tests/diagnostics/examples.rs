@@ -3,10 +3,14 @@
 //! Each error index example (`doc/errors/S0xxx.md`) triggers its code.
 //!
 //! The SystemVerilog blocks of an entry are written to files, one per block,
-//! and its `cfg` lists them in order. The Rust statements run here are the
-//! entry's: [`documented!`] checks that each appears in the entry's Rust
-//! blocks (ignoring whitespace) before running it.
+//! and its `cfg` lists them in order. The Rust statements run here are
+//! exactly the entry's: [`documented!`] checks each against the entry's Rust
+//! blocks (ignoring whitespace and `//` comments) before running it, and
+//! [`Entry::finish`] checks that all of them ran. Where an entry shows the
+//! rendered output (`text` block), its header, notes and helps must be those
+//! of the run, and every source line it quotes must be in the example.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 
 use tempfile::TempDir;
@@ -14,9 +18,15 @@ use topstitch::*;
 
 /// An error index entry with its SystemVerilog blocks written to files.
 struct Entry {
+    code: Code,
+    /// The Rust blocks without comments and whitespace.
     rust: String,
+    /// The statements run so far, without whitespace.
+    run: RefCell<String>,
     /// The rendered output shown (`text` blocks).
     output: Vec<String>,
+    /// The trimmed lines of the SystemVerilog and Rust blocks.
+    source_lines: Vec<String>,
     files: Vec<PathBuf>,
     _dir: TempDir,
 }
@@ -42,11 +52,60 @@ fn blocks(text: &str, lang: &str) -> Vec<String> {
     out
 }
 
+fn strip_whitespace(text: &str) -> String {
+    text.split_whitespace().collect()
+}
+
+/// Rust code without `//` comments (the examples have no `//` in strings).
+fn strip_comments(code: &str) -> String {
+    code.lines()
+        .map(|line| line.split("//").next().unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The header, notes and helps of a rendered diagnostic.
+#[derive(Debug, PartialEq)]
+struct Summary {
+    header: String,
+    notes: Vec<String>,
+    helps: Vec<String>,
+}
+
+fn summary(rendered: &str) -> Summary {
+    let tagged = |tag: &str| -> Vec<String> {
+        rendered
+            .lines()
+            .filter_map(|l| l.trim_start().strip_prefix(tag))
+            .map(str::to_string)
+            .collect()
+    };
+    Summary {
+        header: rendered.lines().next().unwrap_or_default().to_string(),
+        notes: tagged("= note: "),
+        helps: tagged("= help: "),
+    }
+}
+
+/// The source lines a rendered diagnostic quotes (`12 | text`).
+fn quoted_lines(rendered: &str) -> Vec<String> {
+    rendered
+        .lines()
+        .filter_map(|l| {
+            let (gutter, text) = l.split_once(" | ")?;
+            let gutter = gutter.trim();
+            (!gutter.is_empty() && gutter.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| text.trim().to_string())
+        })
+        .collect()
+}
+
 impl Entry {
     fn load(code: Code) -> Entry {
         let text = std::fs::read_to_string(format!("doc/errors/{}.md", code.0)).unwrap();
         let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-        let files = blocks(&text, "systemverilog")
+        let sv = blocks(&text, "systemverilog");
+        let files = sv
             .iter()
             .enumerate()
             .map(|(i, block)| {
@@ -55,32 +114,74 @@ impl Entry {
                 path
             })
             .collect();
-        let rust: String = blocks(&text, "rust").concat();
+        let rust = blocks(&text, "rust");
         assert!(!rust.is_empty(), "{} has no Rust example", code.0);
+        let source_lines = sv
+            .iter()
+            .chain(&rust)
+            .flat_map(|block| block.lines().map(|l| l.trim().to_string()))
+            .collect();
         Entry {
-            rust: rust.split_whitespace().collect(),
+            code,
+            rust: strip_whitespace(&strip_comments(&rust.concat())),
+            run: RefCell::new(String::new()),
             output: blocks(&text, "text"),
+            source_lines,
             files,
             _dir: dir,
         }
-    }
-
-    /// Panics unless `rendered` is the entry's output.
-    fn assert_output(&self, rendered: &str) {
-        assert_eq!(self.output, [format!("{rendered}\n")]);
     }
 
     fn paths(&self) -> Vec<&str> {
         self.files.iter().map(|p| p.to_str().unwrap()).collect()
     }
 
-    /// Panics unless `code` (from `stringify!`) appears in the Rust blocks.
+    /// Panics unless `code` (from `stringify!`) is the next documented
+    /// statement.
     fn assert_documented(&self, code: &str) {
-        let code: String = code.split_whitespace().collect();
+        let mut run = self.run.borrow_mut();
+        run.push_str(&strip_whitespace(code));
         assert!(
-            self.rust.contains(&code),
-            "statement not in the documented example: {code}"
+            self.rust.starts_with(run.as_str()),
+            "{}: statement not next in the documented example: {code}",
+            self.code.0
         );
+    }
+
+    /// Panics unless every documented statement ran.
+    fn finish(&self) {
+        assert_eq!(
+            *self.run.borrow(),
+            self.rust,
+            "{}: not every documented statement ran",
+            self.code.0
+        );
+    }
+
+    /// The single output block.
+    fn shown(&self) -> &str {
+        assert_eq!(self.output.len(), 1, "{}: one `text` block", self.code.0);
+        &self.output[0]
+    }
+
+    /// Panics unless the output shown has the header, notes and helps of
+    /// `rendered`, and quotes only lines of the example.
+    fn assert_summary(&self, rendered: &str) {
+        let shown = self.shown();
+        assert_eq!(summary(shown), summary(rendered), "{}", self.code.0);
+        for line in quoted_lines(shown) {
+            assert!(
+                self.source_lines.contains(&line),
+                "{}: quoted line not in the example: {line}",
+                self.code.0
+            );
+        }
+    }
+
+    /// Panics unless `rendered` is the entry's output.
+    fn assert_output(&self, rendered: &str) {
+        self.assert_summary(rendered);
+        assert_eq!(self.shown(), format!("{rendered}\n"));
     }
 }
 
@@ -112,20 +213,19 @@ fn assert_code(err: &ImportError, code: Code, message: &str) {
     assert_eq!(first.message, message);
 }
 
-/// `rendered` starts with the header of `code` and `message`.
-fn assert_rendered(rendered: &str, code: Code, message: &str) {
-    let header = format!("error[{}]: {message}\n", code.0);
-    assert!(rendered.starts_with(&header), "{rendered}");
+/// `cfg` listing the entry's sources.
+fn config<'a>(paths: &'a [&'a str]) -> ParserConfig<'a> {
+    ParserConfig {
+        sources: paths,
+        ..Default::default()
+    }
 }
 
 #[test]
 fn s0101() {
     let entry = Entry::load(diagnostic::codes::S0101);
     let paths = entry.paths();
-    let cfg = ParserConfig {
-        sources: &paths,
-        ..Default::default()
-    };
+    let cfg = config(&paths);
     let run = || -> Result<(), ImportError> {
         documented! { entry;
             let router = ModDef::try_from_verilog_with_config("router", &cfg)?;
@@ -138,16 +238,14 @@ fn s0101() {
         diagnostic::codes::S0101,
         "`router` has no overridable parameter `flit_tt`",
     );
+    entry.finish();
 }
 
 #[test]
 fn s0102() {
     let entry = Entry::load(diagnostic::codes::S0102);
     let paths = entry.paths();
-    let cfg = ParserConfig {
-        sources: &paths,
-        ..Default::default()
-    };
+    let cfg = config(&paths);
     let run = || -> Result<(), ImportError> {
         documented! { entry;
             ModDef::try_from_verilog_with_config("router", &cfg)?;
@@ -162,16 +260,14 @@ fn s0102() {
     );
     let label = &err.diagnostics.0[0].primary.text;
     assert!(label.contains("cfg_pkg"), "{label}");
+    entry.finish();
 }
 
 #[test]
 fn s0103() {
     let entry = Entry::load(diagnostic::codes::S0103);
     let paths = entry.paths();
-    let cfg = ParserConfig {
-        sources: &paths,
-        ..Default::default()
-    };
+    let cfg = config(&paths);
     let run = || -> Result<(), ImportError> {
         documented! { entry;
             ModDef::try_from_verilog_with_config("m", &cfg)?;
@@ -183,16 +279,14 @@ fn s0103() {
         diagnostic::codes::S0103,
         "port `mem` of `m` has unpacked dimensions",
     );
+    entry.finish();
 }
 
 #[test]
 fn s0104() {
     let entry = Entry::load(diagnostic::codes::S0104);
     let paths = entry.paths();
-    let cfg = ParserConfig {
-        sources: &paths,
-        ..Default::default()
-    };
+    let cfg = config(&paths);
     let run = || -> Result<(), ImportError> {
         documented! { entry;
             ModDef::try_from_verilog_with_config("m", &cfg)?;
@@ -204,16 +298,14 @@ fn s0104() {
         diagnostic::codes::S0104,
         "port `bus` of `m` is an interface port",
     );
+    entry.finish();
 }
 
 #[test]
 fn s0105() {
     let entry = Entry::load(diagnostic::codes::S0105);
     let paths = entry.paths();
-    let cfg = ParserConfig {
-        sources: &paths,
-        ..Default::default()
-    };
+    let cfg = config(&paths);
     let run = || -> Result<(), ImportError> {
         documented! { entry;
             let router = ModDef::try_from_verilog_with_config("router", &cfg)?;
@@ -226,16 +318,14 @@ fn s0105() {
         diagnostic::codes::S0105,
         "unsupported override for parameter `flit_t` of `router`",
     );
+    entry.finish();
 }
 
 #[test]
 fn s0201() {
     let entry = Entry::load(diagnostic::codes::S0201);
     let paths = entry.paths();
-    let cfg = ParserConfig {
-        sources: &paths,
-        ..Default::default()
-    };
+    let cfg = config(&paths);
     documented! { entry;
         let producer = ModDef::from_verilog_with_config("producer", &cfg);
         let consumer = ModDef::from_verilog_with_config("consumer", &cfg);
@@ -245,61 +335,54 @@ fn s0201() {
         p.get_port("req_o").connect(&c.get_port("req_i"));
         let diagnostics = top.check();
     }
+    entry.finish();
     assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
     assert_eq!(diagnostics.0[0].code, diagnostic::codes::S0201);
+    entry.assert_summary(&diagnostics.render());
 }
 
 /// The examples that select from `sel` and panic.
-fn sel_panic(code: Code, message: &str, select: impl FnOnce(&Entry, &ModDef)) {
+fn sel_panic(code: Code, select: impl FnOnce(&Entry, &ModDef)) {
     let entry = Entry::load(code);
     let paths = entry.paths();
-    let cfg = ParserConfig {
-        sources: &paths,
-        ..Default::default()
-    };
+    let cfg = config(&paths);
     documented! { entry;
         let sel = ModDef::from_verilog_with_config("sel", &cfg);
     }
-    assert_rendered(&panic_message(|| select(&entry, &sel)), code, message);
+    let rendered = panic_message(|| select(&entry, &sel));
+    entry.finish();
+    assert!(
+        rendered.starts_with(&format!("error[{}]: ", code.0)),
+        "{rendered}"
+    );
+    entry.assert_summary(&rendered);
 }
 
 #[test]
 fn s0202() {
-    sel_panic(
-        diagnostic::codes::S0202,
-        "no field `dst_idd` in `sel_pkg::hdr_t`",
-        |entry, sel| {
-            documented! { entry;
-                sel.get_port("hdrs_i").index(3).field("dst_idd");
-            }
-        },
-    );
+    sel_panic(diagnostic::codes::S0202, |entry, sel| {
+        documented! { entry;
+            sel.get_port("hdrs_i").index(3).field("dst_idd");
+        }
+    });
 }
 
 #[test]
 fn s0203() {
-    sel_panic(
-        diagnostic::codes::S0203,
-        "index 8 is out of range for `sel_pkg::hdr_t [7:0]`",
-        |entry, sel| {
-            documented! { entry;
-                sel.get_port("hdrs_i").index(8);
-            }
-        },
-    );
+    sel_panic(diagnostic::codes::S0203, |entry, sel| {
+        documented! { entry;
+            sel.get_port("hdrs_i").index(8);
+        }
+    });
 }
 
 #[test]
 fn s0204() {
-    sel_panic(
-        diagnostic::codes::S0204,
-        "cannot select field `hdr` through union `sel_pkg::hdr_u`",
-        |entry, sel| {
-            documented! { entry;
-                sel.get_port("u_i").field("hdr.dst_id");
-            }
-        },
-    );
+    sel_panic(diagnostic::codes::S0204, |entry, sel| {
+        documented! { entry;
+            sel.get_port("u_i").field("hdr.dst_id");
+        }
+    });
 }
 
 #[test]
@@ -307,10 +390,7 @@ fn s0301() {
     let entry = Entry::load(diagnostic::codes::S0301);
     let paths = entry.paths();
     assert_eq!(paths.len(), 1, "the example is one file");
-    let cfg = ParserConfig {
-        sources: &paths,
-        ..Default::default()
-    };
+    let cfg = config(&paths);
     let message = panic_message(|| {
         documented! { entry;
             let producer = ModDef::from_verilog_with_config("producer", &cfg);
@@ -323,6 +403,7 @@ fn s0301() {
             top.manifest();
         }
     });
+    entry.finish();
     // The example shows the file as `/work/blocks.sv`.
     entry.assert_output(&message.replace(paths[0], "/work/blocks.sv"));
 }
@@ -352,23 +433,8 @@ fn s0302() {
             top.manifest();
         }
     });
+    entry.finish();
     entry.assert_output(&message);
-}
-
-/// The outputs shown for the typed connection codes are the snapshots of
-/// `tests/diagnostics/typed.rs`, which renders them from its own call sites.
-#[test]
-fn typed_outputs_are_the_snapshots() {
-    for (code, snapshot) in [
-        (diagnostic::codes::S0201, "s0201_field_mismatch"),
-        (diagnostic::codes::S0202, "s0202_no_such_field"),
-        (diagnostic::codes::S0203, "s0203_index_out_of_range"),
-        (diagnostic::codes::S0204, "s0204_field_through_union"),
-    ] {
-        let path = format!("tests/diagnostics/snapshots/{snapshot}.txt");
-        let expected = std::fs::read_to_string(path).unwrap();
-        assert_eq!(Entry::load(code).output, [expected], "{}", code.0);
-    }
 }
 
 #[test]
@@ -377,7 +443,7 @@ fn every_code_has_an_example_test() {
     for code in diagnostic::codes::ALL {
         let name = code.0.to_lowercase();
         assert!(
-            source.contains(&format!("fn {name}()")),
+            source.contains(&format!("#[test]\nfn {name}() {{")),
             "no example test for {}",
             code.0
         );
