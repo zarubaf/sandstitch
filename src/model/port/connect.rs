@@ -44,6 +44,7 @@ impl Port {
 
     /// Punches a sequence of feedthroughs through the specified module
     /// instances to connect this port to another port or port slice.
+    #[track_caller]
     pub fn connect_through<T: ConvertibleToPortSlice>(
         &self,
         other: &T,
@@ -56,6 +57,7 @@ impl Port {
     /// Punches a sequence of feedthroughs through the specified module
     /// instances to connect this port to another port or port slice, with
     /// optional pipelining for each connection.
+    #[track_caller]
     pub fn connect_through_generic<T: ConvertibleToPortSlice>(
         &self,
         other: &T,

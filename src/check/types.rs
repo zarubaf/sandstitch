@@ -9,16 +9,21 @@ use std::sync::Arc;
 use crate::diagnostic::codes;
 use crate::model::connection::port_slice::ConnectionRecord;
 use crate::model::port_slice::path_string;
-use crate::{Diagnostic, Diagnostics, Label, ModDef, ModDefCore, PortSlice, Severity, Span};
+use crate::{
+    Diagnostic, Diagnostics, Label, ModDef, ModDefCore, PortSlice, PortType, Severity, Span, Usage,
+};
 
 impl ModDef {
     /// Collects structural diagnostics of this module definition and every
     /// module definition it instantiates, directly or indirectly.
     ///
-    /// Reports S0201 for each connection between typed ends (whole typed
-    /// ports, fields or elements) whose types are not equivalent. Connections
-    /// with a plain bit slice on either end, or made with `connect_bits`,
-    /// are checked for width only, when they are made.
+    /// Reports S0201 for each connection between aggregate-typed ends
+    /// (structs, unions or enums, as whole typed ports, fields or elements)
+    /// whose types are not equivalent. Connections with a logic vector or a
+    /// plain bit slice on either end, or made with `connect_bits`, are
+    /// checked for width only, when they are made. Instantiated definitions
+    /// whose internals are not emitted (`EmitNothingAndStop`,
+    /// `EmitDefinitionAndStop`) are not descended into.
     pub fn check(&self) -> Diagnostics {
         let mut diagnostics = Vec::new();
         let mut visited = HashSet::new();
@@ -39,8 +44,19 @@ impl ModDef {
                 let records: Vec<ConnectionRecord> = connections
                     .flat_map(|c| c.read().records().to_vec())
                     .collect();
-                let instances: Vec<Arc<RwLock<ModDefCore>>> =
-                    core.instances.values().rev().cloned().collect();
+                // Definitions whose internals are not emitted are not checked.
+                let instances: Vec<Arc<RwLock<ModDefCore>>> = core
+                    .instances
+                    .values()
+                    .rev()
+                    .filter(|inst| {
+                        !matches!(
+                            inst.read().usage,
+                            Usage::EmitNothingAndStop | Usage::EmitDefinitionAndStop
+                        )
+                    })
+                    .cloned()
+                    .collect();
                 (records, instances)
             };
             diagnostics.extend(records.iter().filter_map(check_record));
@@ -73,6 +89,12 @@ fn check_record(record: &ConnectionRecord) -> Option<Diagnostic> {
     }
     let left = record.this.port_type()?;
     let right = record.other.port_type()?;
+    // A logic vector on either end makes the connection width-only, as in
+    // upstream: `[8:1]` to `[7:0]`, `wire` to `logic [0:0]`, signed to
+    // unsigned, and a struct to an equal-width vector all connect.
+    if matches!(left, PortType::Logic { .. }) || matches!(right, PortType::Logic { .. }) {
+        return None;
+    }
     let difference = left.equivalent(&right).err()?;
     let note = if difference.path.is_empty() {
         format!("`{}` vs `{}`", difference.left, difference.right)

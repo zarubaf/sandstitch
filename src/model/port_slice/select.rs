@@ -62,7 +62,12 @@ fn step(ty: &PortType, select: &Select) -> Result<(PortType, usize), SelectError
                     code: codes::S0203,
                     message: format!("cannot index `{ty}`: it has no packed dimension"),
                     notes: vec![],
-                    helps: vec!["use `bit` or `slice` to select bits of a vector".into()],
+                    helps: match ty {
+                        PortType::Logic { .. } | PortType::Enum { .. } => {
+                            vec!["use `bit` or `slice` to select bits of a vector".into()]
+                        }
+                        _ => vec![],
+                    },
                 });
             };
             let (low, high) = (outer.msb.min(outer.lsb), outer.msb.max(outer.lsb));
@@ -322,6 +327,30 @@ mod tests {
 
     fn f(name: &str) -> Select {
         Select::Field(name.into())
+    }
+
+    #[test]
+    fn chained_and_dotted_fields_have_the_same_selection() {
+        let m = crate::ModDef::new("m");
+        let inner = strukt(&[("a", logic(&[(2, 0)])), ("b", logic(&[(1, 0)]))], &[]);
+        let outer = strukt(&[("x", inner), ("y", logic(&[]))], &[(1, 0)]);
+        m.core
+            .write()
+            .insert_typed_port("p".into(), crate::IO::Input, outer, Span::None);
+        let p = m.get_port("p");
+        let chained = p.index(1).field("x").field("b");
+        let dotted = p.index(1).field("x.b");
+        let expected: Vec<Select> = vec![Select::Index(1), f("x"), f("b")];
+        assert_eq!(chained.select.as_deref(), Some(expected.as_slice()));
+        assert_eq!(dotted.select.as_deref(), Some(expected.as_slice()));
+        // Element 1 is [11:6]; `x` is [11:7], `x.b` is [8:7].
+        assert_eq!((chained.msb, chained.lsb), (8, 7));
+        // A partial sub-range drops the selection, the whole range keeps it.
+        assert_eq!(chained.slice_with_offset_and_width(0, 1).select, None);
+        assert_eq!(
+            chained.slice_with_offset_and_width(0, 2).select.as_deref(),
+            Some(expected.as_slice())
+        );
     }
 
     #[test]

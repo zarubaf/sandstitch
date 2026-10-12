@@ -4,6 +4,7 @@
 //! connections (S0201), `connect_bits`, and the selection errors
 //! (S0202, S0203, S0204).
 
+use indexmap::IndexMap;
 use slang_rs::str2tmpfile;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use tempfile::NamedTempFile;
@@ -34,6 +35,15 @@ endmodule
 module src import lay_pkg::*; (output flit_t o, output hdr_t h, output flat_t f);
 endmodule
 module dst import lay_pkg::*; (input flit2_t i, input hdr2_t h, input flit_t i1);
+endmodule
+module ch (input logic [43:0] x_in, output logic [43:0] x_out);
+endmodule
+module pv_src import lay_pkg::*; (output logic [8:1] o, output wire s,
+  output logic [3:0][1:0] q, output logic [0:7] r, output logic signed [7:0] g,
+  output flit_t st, output state_t e);
+endmodule
+module pv_dst (input [7:0] i, input logic [0:0] s, input logic [7:0] q,
+  input logic [7:0] r, input logic [7:0] g, input logic [43:0] st, input logic [1:0] e);
 endmodule
 ";
 
@@ -175,9 +185,14 @@ fn field_and_index_types() {
         "lay_pkg::state_t"
     );
     // Chained `field` equals a dotted path.
+    // (Slice equality compares bits only; the selection paths are compared
+    // in the unit tests of `select.rs`.)
     let chained = flits.index(2).field("hdr").field("len");
-    assert_eq!(chained, flits.index(2).field("hdr.len"));
+    let dotted = flits.index(2).field("hdr.len");
+    assert_eq!(range(&chained), (288, 281));
+    assert_eq!(range(&dotted), (288, 281));
     assert_eq!(chained.port_type(), Some(logic(&[(7, 0)])));
+    assert_eq!(dotted.port_type(), Some(logic(&[(7, 0)])));
 
     // The whole port is typed; plain bit slices are not, even full-width.
     assert_eq!(w.to_port_slice().port_type(), w.port_type());
@@ -519,6 +534,18 @@ fn index_out_of_range_panics_with_s0203() {
         message.starts_with("error[S0203]: cannot index `logic`: it has no packed dimension"),
         "{message}"
     );
+    assert!(message.contains("use `bit` or `slice`"), "{message}");
+    // A struct without dimensions: no hint about vector bits.
+    let message = panic_message(|| {
+        w.index(0).index(0);
+    });
+    assert!(
+        message.starts_with(
+            "error[S0203]: cannot index `lay_pkg::wrap_t`: it has no packed dimension"
+        ),
+        "{message}"
+    );
+    assert!(!message.contains("use `bit` or `slice`"), "{message}");
 }
 
 #[test]
@@ -538,4 +565,152 @@ fn field_through_union_panics_with_s0204() {
         message.contains("`u` declared here as `lay_pkg::hdr_u`"),
         "{message}"
     );
+}
+
+#[test]
+fn logic_vectors_connect_width_only() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let (a, b) = (sources.import("pv_src"), sources.import("pv_dst"));
+    let top = ModDef::new("top");
+    let a = top.instantiate(&a, Some("a"), None);
+    let b = top.instantiate(&b, Some("b"), None);
+    // `[8:1]`/`[7:0]`, `wire`/`logic [0:0]`, `[3:0][1:0]`/`[7:0]`,
+    // `[0:7]`/`[7:0]`, signed/unsigned, struct/vector, enum/vector.
+    for port in ["o", "s", "q", "r", "g", "st", "e"] {
+        let sink = if port == "o" { "i" } else { port };
+        a.get_port(port).connect(&b.get_port(sink));
+    }
+    assert_eq!(top.check(), Diagnostics(vec![]));
+    let text = top.emit(EmitOptions::default());
+    assert!(text.contains("module top"), "{text}");
+}
+
+/// `top` with `src` as `s` and `dst` as `d`; `d.i1` (`flit_t`) and `s.f`
+/// (`flat_t`) are equal-width structs with different layouts.
+fn mismatched_pair(sources: &Sources) -> (ModDef, ModInst, ModInst) {
+    let (src, dst) = (sources.import("src"), sources.import("dst"));
+    let top = ModDef::new("top");
+    let s = top.instantiate(&src, Some("s"), None);
+    let d = top.instantiate(&dst, Some("d"), None);
+    (top, s, d)
+}
+
+fn assert_one_s0201_at(top: &ModDef, line: u32) {
+    let diagnostics = top.check();
+    assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
+    let d = &diagnostics.0[0];
+    assert_eq!(d.code, codes::S0201);
+    let Span::Rust { file, line: l, .. } = &d.primary.span else {
+        panic!("expected a Rust span: {:?}", d.primary.span);
+    };
+    assert!(file.ends_with("tests/typed/connect.rs"), "{file}");
+    assert_eq!(*l, line, "{}", diagnostics.render());
+}
+
+#[test]
+fn pipelined_connection_is_type_checked() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let (top, s, d) = mismatched_pair(&sources);
+    let pipeline = PipelineConfig {
+        clk: "clk".into(),
+        depth: 1,
+        inst_name: None,
+    };
+    let (f, i1) = (s.get_port("f"), d.get_port("i1"));
+    let line = line!() + 1;
+    f.connect_pipeline(&i1, pipeline);
+    assert_one_s0201_at(&top, line);
+}
+
+#[test]
+fn connect_through_reports_at_the_call_site() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let (top, s, d) = mismatched_pair(&sources);
+    let line = line!() + 1;
+    s.get_port("f").connect_through(&d.get_port("i1"), &[], "x");
+    assert_one_s0201_at(&top, line);
+
+    // Through feedthroughs, the end-to-end pair is checked.
+    let (top, s, d) = mismatched_pair(&sources);
+    let thru = ModDef::new("thru");
+    let t = top.instantiate(&thru, Some("t"), None);
+    let (f, i1) = (s.get_port("f"), d.get_port("i1"));
+    let line = line!() + 1;
+    f.connect_through(&i1, &[&t], "x");
+    assert_one_s0201_at(&top, line);
+
+    // The same through `PortSlice`.
+    let (top, s, d) = mismatched_pair(&sources);
+    let (f, i1) = (s.get_port("f").to_port_slice(), d.get_port("i1"));
+    let line = line!() + 1;
+    f.connect_through(&i1, &[], "x");
+    assert_one_s0201_at(&top, line);
+}
+
+#[test]
+fn intf_connection_of_whole_ports_is_type_checked() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let (src, dst) = (sources.import("src"), sources.import("dst"));
+    src.def_intf(
+        "bus",
+        IndexMap::from([("v".to_string(), ("f".to_string(), 43, 0))]),
+    );
+    dst.def_intf(
+        "bus",
+        IndexMap::from([("v".to_string(), ("i1".to_string(), 43, 0))]),
+    );
+    let top = ModDef::new("top");
+    let s = top.instantiate(&src, Some("s"), None);
+    let d = top.instantiate(&dst, Some("d"), None);
+    let line = line!() + 1;
+    s.get_intf("bus").connect(&d.get_intf("bus"), false);
+    assert_one_s0201_at(&top, line);
+}
+
+#[test]
+fn funnel_over_typed_ends_emits() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let (src, dst, ch) = (
+        sources.import("src"),
+        sources.import("dst"),
+        sources.import("ch"),
+    );
+    let top = ModDef::new("top");
+    let s = top.instantiate(&src, Some("s"), None);
+    let d = top.instantiate(&dst, Some("d"), None);
+    let fa = top.instantiate(&ch, Some("fa"), None);
+    let fb = top.instantiate(&ch, Some("fb"), None);
+    let mut funnel = Funnel::new(
+        (fa.get_port("x_in"), fa.get_port("x_out")),
+        (fb.get_port("x_in"), fb.get_port("x_out")),
+    );
+    funnel.connect(&s.get_port("o"), &d.get_port("i"));
+    fa.get_port("x_out").unused();
+    fb.get_port("x_in").tieoff(0);
+    s.get_port("h").unused();
+    s.get_port("f").unused();
+    d.get_port("h").tieoff(0);
+    d.get_port("i1").tieoff(0);
+    assert_eq!(top.check(), Diagnostics(vec![]));
+    top.emit(EmitOptions::default());
+}
+
+#[test]
+fn check_skips_definitions_that_are_not_emitted() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let (src, dst) = (sources.import("src"), sources.import("dst"));
+    let mid = ModDef::new("mid");
+    let s = mid.instantiate(&src, Some("s"), None);
+    let d = mid.instantiate(&dst, Some("d"), None);
+    d.get_port("i1").connect(&s.get_port("f"));
+    let top = ModDef::new("top");
+    top.instantiate(&mid, Some("m"), None);
+    for usage in [Usage::EmitNothingAndStop, Usage::EmitDefinitionAndStop] {
+        mid.set_usage(usage);
+        assert_eq!(top.check(), Diagnostics(vec![]));
+        // Checked directly, `mid` still reports.
+        assert_eq!(mid.check().0.len(), 1);
+    }
+    mid.set_usage(Usage::EmitDefinitionAndDescend);
+    assert_eq!(top.check().0.len(), 1);
 }

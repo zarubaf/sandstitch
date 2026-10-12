@@ -106,6 +106,7 @@ impl Funnel {
             b.debug_string()
         );
 
+        // The channel carries raw bits; the ends' types are not compared.
         if a.port.is_driver() {
             if b.port.is_driver() {
                 panic!(
@@ -125,10 +126,10 @@ impl Funnel {
                 );
                 self.a_in
                     .slice_with_offset_and_width(self.a_in_offset, a.width())
-                    .connect(&a);
+                    .connect_bits(&a);
                 self.b_out
                     .slice_with_offset_and_width(self.a_in_offset, b.width())
-                    .connect(&b);
+                    .connect_bits(&b);
                 self.a_in_offset += a.width();
             }
         } else if b.port.is_driver() {
@@ -143,10 +144,10 @@ impl Funnel {
             );
             self.a_out
                 .slice_with_offset_and_width(self.a_out_offset, a.width())
-                .connect(&a);
+                .connect_bits(&a);
             self.b_in
                 .slice_with_offset_and_width(self.a_out_offset, b.width())
-                .connect(&b);
+                .connect_bits(&b);
             self.a_out_offset += a.width();
         } else {
             panic!(

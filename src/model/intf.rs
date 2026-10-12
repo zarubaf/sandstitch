@@ -68,7 +68,7 @@ impl Intf {
                     .map(|(func_name, (port_name, msb, lsb))| {
                         (
                             func_name.clone(),
-                            mod_def.get_port_slice(port_name, *msb, *lsb),
+                            mod_def.get_port(port_name).slice_or_whole(*msb, *lsb),
                         )
                     })
                     .collect()
@@ -89,7 +89,7 @@ impl Intf {
                     .map(|(func_name, (port_name, msb, lsb))| {
                         (
                             func_name.clone(),
-                            inst.get_port_slice(port_name, *msb, *lsb),
+                            inst.get_port(port_name).slice_or_whole(*msb, *lsb),
                         )
                     })
                     .collect()
@@ -108,9 +108,9 @@ impl Intf {
                 let binding = core.read();
                 let mod_def = ModDef { core: core.clone() };
                 let mapping = binding.interfaces.get(name)?;
-                mapping
-                    .get(func_name)
-                    .map(|(port_name, msb, lsb)| mod_def.get_port_slice(port_name, *msb, *lsb))
+                mapping.get(func_name).map(|(port_name, msb, lsb)| {
+                    mod_def.get_port(port_name).slice_or_whole(*msb, *lsb)
+                })
             }
             Intf::ModInst {
                 intf_name,
@@ -123,9 +123,9 @@ impl Intf {
                 let inst_core = inst.mod_def_core_of_instance();
                 let inst_binding = inst_core.read();
                 let inst_mapping = inst_binding.interfaces.get(intf_name)?;
-                inst_mapping
-                    .get(func_name)
-                    .map(|(port_name, msb, lsb)| inst.get_port_slice(port_name, *msb, *lsb))
+                inst_mapping.get(func_name).map(|(port_name, msb, lsb)| {
+                    inst.get_port(port_name).slice_or_whole(*msb, *lsb)
+                })
             }
         }
     }

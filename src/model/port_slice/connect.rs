@@ -218,22 +218,11 @@ impl PortSlice {
             repeater_instance.get_port("in").connect(driver);
             repeater_instance.get_port("out").connect(receiver);
             repeater_instance.get_port("out_stages").unused();
+            // The ends are not connected directly, but their types must
+            // still agree.
+            self.store_record(&other_as_slice, location, bits);
         } else {
-            // Only connections between typed ends are recorded: those are the
-            // ones `check` compares and that emission can name by type.
-            let record =
-                (self.port_type().is_some() && other_as_slice.port_type().is_some()).then(|| {
-                    ConnectionRecord {
-                        this: self.clone(),
-                        other: other_as_slice.clone(),
-                        span: Span::Rust {
-                            file: location.file().to_string(),
-                            line: location.line(),
-                            column: location.column(),
-                        },
-                        bits,
-                    }
-                });
+            let record = self.typed_record(&other_as_slice, location, bits);
             {
                 let connections = self.port.get_port_connections_define_if_missing();
                 let mut connections = connections.write();
@@ -250,8 +239,40 @@ impl PortSlice {
         }
     }
 
+    /// A record of a connection from `self` to `other`, if both ends are
+    /// typed: only those are compared by `check` and named by type.
+    fn typed_record(
+        &self,
+        other: &PortSlice,
+        location: &'static Location<'static>,
+        bits: bool,
+    ) -> Option<ConnectionRecord> {
+        (self.port_type().is_some() && other.port_type().is_some()).then(|| ConnectionRecord {
+            this: self.clone(),
+            other: other.clone(),
+            span: Span::Rust {
+                file: location.file().to_string(),
+                line: location.line(),
+                column: location.column(),
+            },
+            bits,
+        })
+    }
+
+    /// Records a connection between typed ends that are connected
+    /// indirectly (through a pipeline or feedthroughs).
+    fn store_record(&self, other: &PortSlice, location: &'static Location<'static>, bits: bool) {
+        if let Some(record) = self.typed_record(other, location, bits) {
+            self.port
+                .get_port_connections_define_if_missing()
+                .write()
+                .add_record(record);
+        }
+    }
+
     /// Punches a sequence of feedthroughs through the specified module
     /// instances to connect this port slice to another port or port slice.
+    #[track_caller]
     pub fn connect_through<T: ConvertibleToPortSlice>(
         &self,
         other: &T,
@@ -268,6 +289,7 @@ impl PortSlice {
     /// Punches a sequence of feedthroughs through the specified module
     /// instances to connect this port slice to another port or port slice,
     /// with optional pipelining for each connection.
+    #[track_caller]
     pub fn connect_through_generic<T: ConvertibleToPortSlice>(
         &self,
         other: &T,
@@ -278,6 +300,8 @@ impl PortSlice {
             self.connect(other);
             return;
         }
+
+        self.store_record(&other.to_port_slice(), Location::caller(), false);
 
         let flipped = format!("{}_flipped", prefix.as_ref());
         let original = format!("{}_original", prefix.as_ref());

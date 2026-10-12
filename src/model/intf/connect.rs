@@ -17,6 +17,7 @@ impl Intf {
     /// example, if this interface also contained function "ready", but the
     /// other interface did not, this method would panic unless `allow_mismatch`
     /// was `true`.
+    #[track_caller]
     pub fn connect(&self, other: &Intf, allow_mismatch: bool) {
         self.connect_generic(other, None, allow_mismatch, None::<&[&str]>);
     }
@@ -31,6 +32,7 @@ impl Intf {
     }
 
     /// Connects this interface to another interface, skipping the specified functions.
+    #[track_caller]
     pub fn connect_except<'a, I, T>(&self, other: &Intf, skip: Option<I>)
     where
         I: IntoIterator<Item = &'a T>,
@@ -39,10 +41,12 @@ impl Intf {
         self.connect_generic(other, None, false, skip);
     }
 
+    #[track_caller]
     pub fn connect_pipeline(&self, other: &Intf, pipeline: PipelineConfig, allow_mismatch: bool) {
         self.connect_generic(other, Some(pipeline), allow_mismatch, None::<&[&str]>);
     }
 
+    #[track_caller]
     pub fn connect_pipeline_except<'a, I, T>(
         &self,
         other: &Intf,
@@ -55,6 +59,7 @@ impl Intf {
         self.connect_generic(other, Some(pipeline), false, skip);
     }
 
+    #[track_caller]
     pub(crate) fn connect_generic<'a, I, T>(
         &self,
         other: &Intf,
@@ -119,6 +124,7 @@ impl Intf {
 
     /// Punches a sequence of feedthroughs through the specified module
     /// instances to connect this interface to another interface.
+    #[track_caller]
     pub fn connect_through(
         &self,
         other: &Intf,
@@ -136,6 +142,7 @@ impl Intf {
     /// Punches a sequence of feedthroughs through the specified module
     /// instances to connect this interface to another interface, with
     /// optional pipelining for each connection.
+    #[track_caller]
     pub fn connect_through_generic(
         &self,
         other: &Intf,

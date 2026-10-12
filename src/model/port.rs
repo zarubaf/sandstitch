@@ -431,6 +431,16 @@ impl Port {
         }
     }
 
+    /// The whole port (typed, like [`ConvertibleToPortSlice::to_port_slice`])
+    /// if `msb:lsb` covers it, a plain bit slice otherwise.
+    pub(crate) fn slice_or_whole(&self, msb: usize, lsb: usize) -> PortSlice {
+        if lsb == 0 && msb + 1 == self.io().width() {
+            self.to_port_slice()
+        } else {
+            self.slice(msb, lsb)
+        }
+    }
+
     /// Returns a single-bit slice of this port at the specified index.
     pub fn bit(&self, index: usize) -> PortSlice {
         self.slice(index, index)
