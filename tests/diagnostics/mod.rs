@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+mod examples;
 mod typed;
 
 use std::path::PathBuf;
