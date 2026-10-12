@@ -124,6 +124,9 @@ pub(crate) fn emit_expr(file: &VastFile, expr: Expr) -> String {
         }
         ExprData::WidthCast { width, value } => emit_width_cast(file, *width, *value),
         ExprData::TypeCast { data_type, value } => emit_data_type_cast(file, *data_type, *value),
+        ExprData::TypeExpr { data_type } => emit_type_expr(file, *data_type),
+        ExprData::PackageRef { package, name } => format!("{package}::{name}"),
+        ExprData::MemberSelect { base, field } => format!("{}.{field}", emit_expr(file, *base)),
         ExprData::PosEdge(value) => format!("posedge {}", emit_expr(file, *value)),
         ExprData::NegEdge(value) => format!("negedge {}", emit_expr(file, *value)),
         ExprData::Macro { name, args } => match args {
@@ -160,6 +163,37 @@ fn emit_width_cast(file: &VastFile, width: Expr, value: Expr) -> String {
     let needs_parentheses = !is_digits_or_identifier(&rendered_width);
     let rendered_width = parenthesize_if(rendered_width, needs_parentheses);
     format!("{rendered_width}'({})", emit_expr(file, value))
+}
+
+/// Emits a data type as a self-contained expression operand, spelling out the
+/// implicit `logic` base that declarations leave off.
+fn emit_type_expr(file: &VastFile, data_type: VastDataType) -> String {
+    let mut element = data_type;
+    while let TypeData::PackedArray { element: inner, .. } = &file.ast.data_types[element.0.index] {
+        element = *inner;
+    }
+    match &file.ast.data_types[element.0.index] {
+        TypeData::Integer { signed, kind } => {
+            let keyword = match kind {
+                IntegerTypeKind::Integer => "integer",
+                IntegerTypeKind::Int => "int",
+            };
+            if *signed {
+                keyword.to_owned()
+            } else {
+                format!("{keyword} unsigned")
+            }
+        }
+        TypeData::Scalar { .. } | TypeData::BitVector { .. } => {
+            let rendered = emit_type(file, data_type);
+            if rendered.is_empty() {
+                "logic".to_owned()
+            } else {
+                format!("logic {rendered}")
+            }
+        }
+        _ => emit_type(file, data_type),
+    }
 }
 
 /// Emits a complete, syntactically valid casting type rather than a declaration

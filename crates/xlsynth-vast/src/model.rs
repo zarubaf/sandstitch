@@ -280,6 +280,21 @@ pub(crate) enum ExprData {
         data_type: VastDataType,
         value: Expr,
     },
+    /// A data type used where a value expression is expected, such as a type
+    /// parameter override.
+    TypeExpr {
+        data_type: VastDataType,
+    },
+    /// A package-scoped identifier such as `pkg::NAME`.
+    PackageRef {
+        package: String,
+        name: String,
+    },
+    /// A struct or hierarchical member selection such as `base.field`.
+    MemberSelect {
+        base: Expr,
+        field: String,
+    },
     PosEdge(Expr),
     NegEdge(Expr),
     Macro {

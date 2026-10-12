@@ -77,3 +77,7 @@ version = "0.4.6"
 
 [lints.rust]
 warnings = "deny"
+
+[[test]]
+name = "sandstitch_ext_test"
+path = "tests/sandstitch_ext_test.rs"

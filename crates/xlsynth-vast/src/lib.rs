@@ -1067,6 +1067,46 @@ impl VastFile {
         })
     }
 
+    /// Creates an expression that spells a data type, for example as a type
+    /// parameter override (`pkg::t` or `logic [7:0]`).
+    pub fn make_type_expr(&mut self, data_type: &VastDataType) -> Expr {
+        let type_index = self.check(data_type.0);
+        assert!(
+            !matches!(
+                &self.ast.data_types[type_index],
+                TypeData::UnpackedArray { .. }
+            ),
+            "unpacked array types cannot be used as type expressions"
+        );
+        self.add_expression(ExprData::TypeExpr {
+            data_type: *data_type,
+        })
+    }
+
+    /// Creates a package-scoped reference such as `pkg::NAME`.
+    pub fn make_package_ref(&mut self, package: &str, name: &str) -> Expr {
+        self.add_expression(ExprData::PackageRef {
+            package: package.to_owned(),
+            name: name.to_owned(),
+        })
+    }
+
+    /// Creates a member selection `base.field`; results can be selected again.
+    pub fn make_member_select(&mut self, base: &Expr, field: &str) -> Expr {
+        self.check(base.0);
+        self.add_expression(ExprData::MemberSelect {
+            base: *base,
+            field: field.to_owned(),
+        })
+    }
+
+    /// Creates a member selection usable as the subject of `make_index`,
+    /// `make_slice` and their expression-indexed variants.
+    pub fn make_member_select_indexable(&mut self, base: &Expr, field: &str) -> IndexableExpr {
+        let select = self.make_member_select(base, field);
+        IndexableExpr(select.0)
+    }
+
     /// Creates a positive-edge sensitivity expression.
     pub fn make_pos_edge(&mut self, expression: &Expr) -> Expr {
         self.check(expression.0);
