@@ -2,7 +2,6 @@
 
 // adapted from https://github.com/xlsynth/xlsynth-crate/blob/main/test-helpers/tests/spdx_test.rs
 
-use cargo_metadata::MetadataCommand;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
@@ -126,10 +125,8 @@ fn test_finds_rust_file_missing_spdx_in_tempdir() {
 
 #[test]
 fn check_all_rust_files_for_spdx() {
-    // Use cargo_metadata to get the workspace root
-    let metadata = MetadataCommand::new().exec().unwrap();
-    let workspace_dir = metadata.workspace_root;
-    let missing_spdx_files = find_missing_spdx_files(workspace_dir.as_std_path());
+    // Scope the check to this crate: it lives in a larger workspace.
+    let missing_spdx_files = find_missing_spdx_files(Path::new(env!("CARGO_MANIFEST_DIR")));
     assert!(
         missing_spdx_files.is_empty(),
         "The following files are missing SPDX identifiers: {:?}",
