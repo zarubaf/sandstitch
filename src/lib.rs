@@ -4,8 +4,8 @@
 //!
 //! The source is organised by concern:
 //!
-//! - `model`: the structural model (`ModDef`, `ModInst`, `Port`, `PortSlice`,
-//!   `Intf`, connections, parameters).
+//! - `model`: the structural model (`ModDef`, `ModInst`, `Port`, `PortType`,
+//!   `PortSlice`, `Intf`, connections, parameters).
 //! - `import`: SystemVerilog import through Slang (the only user of
 //!   `slang_rs`), parameterization and package extraction.
 //! - `emit`: SystemVerilog emission.
@@ -37,6 +37,7 @@ pub use model::parameter::{ParameterType, ParameterValue};
 pub use model::pipeline::PipelineConfig;
 pub use model::port::Port;
 pub use model::port_slice::{ConvertibleToPortSlice, ConvertibleToPortSliceVec, PortSlice};
+pub use model::port_type::{Dim, PortField, PortType, QualifiedName, TypeDifference};
 pub use model::usage::Usage;
 
 // Import.

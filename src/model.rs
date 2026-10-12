@@ -15,4 +15,5 @@ pub(crate) mod parameter;
 pub(crate) mod pipeline;
 pub(crate) mod port;
 pub(crate) mod port_slice;
+pub(crate) mod port_type;
 pub(crate) mod usage;
