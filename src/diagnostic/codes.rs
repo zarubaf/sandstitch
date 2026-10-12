@@ -4,31 +4,43 @@
 
 use super::Code;
 
-/// Unknown parameter.
-pub const S0101: Code = Code("S0101");
-/// Slang elaboration error.
-pub const S0102: Code = Code("S0102");
-/// Unsupported port form (unpacked dimensions).
-pub const S0103: Code = Code("S0103");
-/// Interface port unsupported.
-pub const S0104: Code = Code("S0104");
-/// Unsupported override expression.
-pub const S0105: Code = Code("S0105");
-/// Incompatible types.
-pub const S0201: Code = Code("S0201");
-/// No such field.
-pub const S0202: Code = Code("S0202");
-/// Index out of range.
-pub const S0203: Code = Code("S0203");
-/// Field access through union.
-pub const S0204: Code = Code("S0204");
+/// Defines each code as a constant and lists them all in [`ALL`], so that
+/// no code can be left out of it.
+macro_rules! codes {
+    ($($(#[$doc:meta])* $name:ident;)*) => {
+        $(
+            $(#[$doc])*
+            pub const $name: Code = Code(stringify!($name));
+        )*
 
-/// Module defined both by emitted RTL and by a manifest source.
-pub const S0301: Code = Code("S0301");
-/// Macro defined differently by two imports in the build.
-pub const S0302: Code = Code("S0302");
+        /// Every defined code.
+        pub const ALL: &[Code] = &[$($name),*];
+    };
+}
 
-/// Every defined code.
-pub const ALL: &[Code] = &[
-    S0101, S0102, S0103, S0104, S0105, S0201, S0202, S0203, S0204, S0301, S0302,
-];
+codes! {
+    /// Unknown parameter.
+    S0101;
+    /// Slang elaboration error.
+    S0102;
+    /// Unsupported port form (unpacked dimensions or a non-integral type).
+    S0103;
+    /// Interface port unsupported.
+    S0104;
+    /// Unsupported override: an expression other than `ident` or
+    /// `pkg::ident`, a value of the wrong kind or range, or a `-G` value that
+    /// cannot be emitted.
+    S0105;
+    /// Incompatible types.
+    S0201;
+    /// No such field.
+    S0202;
+    /// Index out of range.
+    S0203;
+    /// Field access through union.
+    S0204;
+    /// Module defined both by emitted RTL and by a manifest source.
+    S0301;
+    /// Macro defined differently by two imports in the build.
+    S0302;
+}
