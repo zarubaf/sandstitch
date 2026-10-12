@@ -139,6 +139,57 @@ fn walk(root: &PortType, path: &[Select]) -> Result<(PortType, usize), (usize, S
     Ok((ty, offset))
 }
 
+/// Every selection path from `root` whose bits are exactly `[msb:lsb]`
+/// (relative to the least significant bit of `root`), with the selected
+/// type; shallower paths first.
+pub(crate) fn selections_covering(
+    root: &PortType,
+    msb: usize,
+    lsb: usize,
+) -> Vec<(Vec<Select>, PortType)> {
+    fn visit(
+        ty: &PortType,
+        offset: usize,
+        path: &mut Vec<Select>,
+        (msb, lsb): (usize, usize),
+        found: &mut Vec<(Vec<Select>, PortType)>,
+    ) {
+        let width = ty.width();
+        if width == 0 || lsb < offset || msb > offset + width - 1 {
+            return;
+        }
+        if lsb == offset && msb == offset + width - 1 {
+            found.push((path.clone(), ty.clone()));
+        }
+        let steps: Vec<Select> = match (packed(ty).first(), ty) {
+            (Some(dim), _) => {
+                let (low, high) = (dim.msb.min(dim.lsb), dim.msb.max(dim.lsb));
+                (low..=high)
+                    .filter_map(|i| usize::try_from(i).ok())
+                    .map(Select::Index)
+                    .collect()
+            }
+            (None, PortType::Struct { fields, .. }) => fields
+                .iter()
+                .map(|f| Select::Field(f.name.clone()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        for select in steps {
+            if let Ok((next, delta)) = step(ty, &select) {
+                path.push(select);
+                visit(&next, offset + delta, path, (msb, lsb), found);
+                path.pop();
+            }
+        }
+    }
+    let mut found = Vec::new();
+    visit(root, 0, &mut Vec::new(), (msb, lsb), &mut found);
+    // Siblings cover disjoint bits, so the matches lie on one root-to-leaf
+    // chain and the pre-order walk lists them shallowest first.
+    found
+}
+
 /// Renders a selection path after a port name: `.hdr[2].dst_id`.
 pub(crate) fn path_string(path: &[Select]) -> String {
     let mut out = String::new();
@@ -351,6 +402,36 @@ mod tests {
             chained.slice_with_offset_and_width(0, 2).select.as_deref(),
             Some(expected.as_slice())
         );
+    }
+
+    #[test]
+    fn selections_covering_exact_bits() {
+        // struct { struct { logic [2:0] a; logic [1:0] b; } x; logic y; } [1:0]:
+        // element width 6; element 1 is [11:6], its `x` [11:7], `x.b` [8:7].
+        let inner = strukt(&[("a", logic(&[(2, 0)])), ("b", logic(&[(1, 0)]))], &[]);
+        let outer = strukt(&[("x", inner.clone()), ("y", logic(&[]))], &[(1, 0)]);
+        let paths = |msb, lsb| -> Vec<Vec<Select>> {
+            selections_covering(&outer, msb, lsb)
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect()
+        };
+        assert_eq!(paths(11, 0), vec![Vec::<Select>::new()]);
+        assert_eq!(paths(11, 7), vec![vec![Select::Index(1), f("x")]]);
+        assert_eq!(paths(8, 7), vec![vec![Select::Index(1), f("x"), f("b")]]);
+        assert_eq!(paths(0, 0), vec![vec![Select::Index(0), f("y")]]);
+        assert_eq!(selections_covering(&outer, 11, 7)[0].1, inner);
+        // Bits that are no member, or that straddle elements.
+        assert!(paths(9, 7).is_empty());
+        assert!(paths(6, 5).is_empty());
+        // A one-field struct and its field cover the same bits: both, the
+        // shallower first.
+        let single = strukt(&[("v", logic(&[(3, 0)]))], &[]);
+        let found: Vec<Vec<Select>> = selections_covering(&single, 3, 0)
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        assert_eq!(found, vec![vec![], vec![f("v")]]);
     }
 
     #[test]

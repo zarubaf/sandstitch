@@ -49,6 +49,7 @@ pub use import::parser_cfg::ParserConfig;
 pub use import::specialize::SpecializationKey;
 
 // Emission.
+pub use emit::manifest::Manifest;
 pub use emit::verilog::EmitOptions;
 
 // Physical design.

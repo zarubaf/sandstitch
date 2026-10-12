@@ -89,7 +89,7 @@ fn test_unions() {
         top.emit(EmitOptions::default()),
         "\
 module Top;
-  wire [2:0] a0_x;
+  wire my_pack::my_union_t a0_x;
   A a0 (
     .x(a0_x)
   );
@@ -138,7 +138,7 @@ fn test_unions_complex() {
         top.emit(EmitOptions::default()),
         "\
 module Top;
-  wire [15:0] a0_x;
+  wire my_pack::my_union_t [1:0] a0_x;
   A a0 (
     .x(a0_x)
   );

@@ -18,7 +18,7 @@ mod tieoff;
 mod trace;
 
 pub use select::Select;
-pub(crate) use select::path_string;
+pub(crate) use select::{path_string, selections_covering};
 
 /// Represents a slice of a port, which may be on a module definition or on a
 /// module instance.

@@ -20,6 +20,7 @@ impl Port {
     /// port `x` on a module instance, calling `export_as("y")` will create a
     /// new 8-bit input port `y` on the module definition that contains the
     /// instance.
+    #[track_caller]
     pub fn export_as(&self, name: impl AsRef<str>) -> Port {
         self.to_port_slice().export_as(name)
     }
@@ -28,6 +29,7 @@ impl Port {
     /// the port being exported. As a result, this method can only be used with
     /// ports on module instances. The method will panic if called on a port on
     /// a module definition.
+    #[track_caller]
     pub fn export(&self) -> Port {
         self.to_port_slice().export()
     }

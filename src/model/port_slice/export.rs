@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{ModDef, Port, PortSlice};
+use crate::{IO, ModDef, Port, PortSlice, Span};
 
 impl PortSlice {
     /// Create a new port called `name` on the parent module and connects it to
@@ -20,6 +20,10 @@ impl PortSlice {
     /// an 8-bit input port `x` on a module instance, calling
     /// `export_as("y")` will create a new 8-bit input port `y` on the
     /// module definition that contains the instance.
+    ///
+    /// A typed slice (a whole typed port, a field or an element) exports as a
+    /// port of the same type.
+    #[track_caller]
     pub fn export_as(&self, name: impl AsRef<str>) -> Port {
         let io = match self.port {
             Port::ModDef { .. } => self.port.io().with_width(self.width()).flip(),
@@ -29,7 +33,20 @@ impl PortSlice {
         let core = self.get_mod_def_core();
         let moddef = ModDef { core };
 
-        let new_port = moddef.add_port(name, io);
+        let new_port = moddef.add_port(name, io.clone());
+        if let Some(ty) = self.port_type() {
+            let io: fn(usize) -> IO = match io {
+                IO::Input(_) => IO::Input,
+                IO::Output(_) => IO::Output,
+                IO::InOut(_) => IO::InOut,
+            };
+            moddef.core.write().insert_typed_port(
+                new_port.name().to_string(),
+                io,
+                ty,
+                Span::caller(),
+            );
+        }
         self.connect(&new_port);
 
         new_port
@@ -39,6 +56,7 @@ impl PortSlice {
     /// the port being exported. As a result, this method can only be used with
     /// ports on module instances. The method will panic if called on a port
     /// slice on a module definition.
+    #[track_caller]
     pub fn export(&self) -> Port {
         let name = match &self.port {
             Port::ModDef { .. } => panic!(

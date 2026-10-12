@@ -6,18 +6,33 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 use indexmap::map::Entry;
-use xlsynth_vast::{Expr, LiteralFormat, LogicRef, VastFile, VastFileType, VastModule};
+use xlsynth_vast::{
+    Expr, LiteralFormat, LogicRef, VastDataType, VastFile, VastFileType, VastModule,
+};
 
+use super::net_types::{End, NetTypes, declarable, typed_path};
 use crate::check::connection::check_for_gaps;
 use crate::model::connection::connected_item::ConnectedItem;
 use crate::model::connection::expression_source::merge_expression_sources;
-use crate::{IO, ModDef, ModDefCore, Port, PortSlice, Usage};
+use crate::model::connection::port_slice::PortSliceConnection;
+use crate::{Dim, IO, ModDef, ModDefCore, Port, PortSlice, PortType, Select, Usage};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum NetNameSource {
     ManuallySpecified(String),
     ModDefPort(String),
     ModInstPort((String, String)),
+}
+
+impl NetNameSource {
+    /// The net named after `port`.
+    fn of_port(port: &Port) -> Self {
+        let port_name = port.get_port_name();
+        match port.inst_name() {
+            Some(inst_name) => NetNameSource::ModInstPort((inst_name.to_string(), port_name)),
+            None => NetNameSource::ModDefPort(port_name),
+        }
+    }
 }
 
 use std::fmt;
@@ -61,13 +76,38 @@ impl fmt::Display for NetNameSource {
 struct NetCollection {
     sources: IndexMap<String, NetNameSource>,
     logic_refs: IndexMap<String, LogicRef>,
+    /// Typing decisions for this module's nets.
+    types: NetTypes,
+    /// The declared type of each typed net; nets without an entry are flat.
+    declared: IndexMap<String, PortType>,
 }
 
 impl NetCollection {
-    pub fn new() -> Self {
+    pub fn new(types: NetTypes) -> Self {
         Self {
             sources: IndexMap::new(),
             logic_refs: IndexMap::new(),
+            types,
+            declared: IndexMap::new(),
+        }
+    }
+
+    /// The data type of net `name`, `width` bits wide and named after a port
+    /// of type `port_type`; remembers the type of a typed net.
+    fn data_type(
+        &mut self,
+        name: &str,
+        width: usize,
+        port_type: Option<PortType>,
+        file: &mut VastFile,
+    ) -> VastDataType {
+        match self.types.type_of(name, port_type) {
+            Some(ty) => {
+                let data_type = declared_type(&ty, file);
+                self.declared.insert(name.to_string(), ty);
+                data_type
+            }
+            None => file.make_bit_vector_type(width as i64, false),
         }
     }
 
@@ -75,6 +115,7 @@ impl NetCollection {
         &mut self,
         name: &str,
         io: &IO,
+        port_type: Option<PortType>,
         file: &mut VastFile,
         module: &mut VastModule,
     ) {
@@ -92,7 +133,7 @@ impl NetCollection {
         let width = match io {
             IO::Input(width) | IO::Output(width) | IO::InOut(width) => *width,
         };
-        let data_type = file.make_bit_vector_type(width as i64, false);
+        let data_type = self.data_type(name, width, port_type, file);
         let logic_ref = match io {
             IO::Input(_) => file.add_input(*module, name, &data_type),
             IO::Output(_) => file.add_output(*module, name, &data_type),
@@ -106,23 +147,26 @@ impl NetCollection {
         }
     }
 
-    pub fn get_logic_ref<'a>(&'a self, name: &str) -> Option<&'a LogicRef> {
+    pub fn get_logic_ref(&self, name: &str) -> Option<&LogicRef> {
         self.logic_refs.get(name)
     }
 
-    pub fn get_logic_ref_create_if_necessary<'a>(
-        &'a mut self,
+    /// Returns the net for `source`, declaring it on first use. `port_type`
+    /// is the type of the port the net is named after.
+    pub fn get_logic_ref_create_if_necessary(
+        &mut self,
         source: NetNameSource,
         width: usize,
+        port_type: Option<PortType>,
         file: &mut VastFile,
         module: &mut VastModule,
-    ) -> &'a LogicRef {
+    ) -> LogicRef {
         match self.sources.entry(source.to_string()) {
             Entry::Occupied(source_entry) => {
                 let existing_ref = self.logic_refs.get(source_entry.key());
                 let existing_source = source_entry.get();
                 if existing_source == &source {
-                    existing_ref.unwrap()
+                    *existing_ref.unwrap()
                 } else {
                     panic!(
                         "Net name collision for {source:?} and {:?}: both resolve to \"{}\". If you have used specify_net_name() on one of the ports involved, you may need to remove it or change the net name. If not, you may need to use specify_net_name() to override the net name for one of the ModInst ports involved.",
@@ -133,10 +177,13 @@ impl NetCollection {
             }
             Entry::Vacant(source_entry) => {
                 let net_name = source.to_string();
-                let data_type = file.make_bit_vector_type(width as i64, false);
-                let wire = match source {
-                    NetNameSource::ManuallySpecified(_) | NetNameSource::ModInstPort(_) => {
-                        file.add_wire(*module, &net_name, &data_type)
+                source_entry.insert(source.clone());
+                let data_type = match source {
+                    NetNameSource::ModInstPort(_) => {
+                        self.data_type(&net_name, width, port_type, file)
+                    }
+                    NetNameSource::ManuallySpecified(_) => {
+                        file.make_bit_vector_type(width as i64, false)
                     }
                     NetNameSource::ModDefPort(_) => {
                         panic!(
@@ -144,9 +191,9 @@ impl NetCollection {
                         )
                     }
                 };
-                source_entry.insert(source);
+                let wire = file.add_wire(*module, &net_name, &data_type);
                 match self.logic_refs.entry(net_name.clone()) {
-                    Entry::Vacant(ref_entry) => ref_entry.insert(wire),
+                    Entry::Vacant(ref_entry) => *ref_entry.insert(wire),
                     Entry::Occupied(_) => {
                         panic!(
                             "NetCollection out of sync: net \"{}\" is declared in the refs map but not the sources map.",
@@ -157,7 +204,95 @@ impl NetCollection {
             }
         }
     }
+
+    /// The expression for `slice` of net `name`: a member select or index on
+    /// a typed net, a bit slice on a flat one.
+    fn expression(
+        &self,
+        name: &str,
+        net: LogicRef,
+        slice: &PortSlice,
+        end: End,
+        file: &mut VastFile,
+        options: &EmitOptions,
+    ) -> Expr {
+        match self.declared.get(name) {
+            Some(ty) => {
+                let path = typed_path(slice, &end).unwrap_or_else(|| {
+                    panic!(
+                        "typed net {name} has an untyped use: {}",
+                        slice.debug_string()
+                    )
+                });
+                typed_net_expression(net, ty, &path, file)
+            }
+            None => slice_net(
+                &net,
+                slice.port.io().width(),
+                slice.msb,
+                slice.lsb,
+                file,
+                options,
+            ),
+        }
+    }
 }
+
+/// The declaration type of a typed net: the named type with the packed
+/// dimensions of `ty`, each renumbered `[n-1:0]`.
+fn declared_type(ty: &PortType, file: &mut VastFile) -> VastDataType {
+    let (package, name) = declarable(ty).expect("typed nets have a declarable type");
+    let element = file.make_extern_package_type(package, name);
+    let dims = packed_dims(ty);
+    if dims.is_empty() {
+        element
+    } else {
+        let sizes: Vec<i64> = dims.iter().map(|d| d.size() as i64).collect();
+        file.make_packed_array_type(element, &sizes)
+    }
+}
+
+fn packed_dims(ty: &PortType) -> &[Dim] {
+    match ty {
+        PortType::Logic { packed, .. }
+        | PortType::Struct { packed, .. }
+        | PortType::Union { packed, .. }
+        | PortType::Enum { packed, .. } => packed,
+    }
+}
+
+/// The selection `path` of a net declared with type `ty`.
+fn typed_net_expression(
+    net: LogicRef,
+    ty: &PortType,
+    path: &[Select],
+    file: &mut VastFile,
+) -> Expr {
+    if path.is_empty() {
+        return net.to_expr();
+    }
+    // The net's own dimensions are declared `[n-1:0]`: an index into them
+    // becomes the element's position above the least significant end.
+    let dims = packed_dims(ty);
+    let mut expr = net.to_indexable_expr();
+    for (i, select) in path.iter().enumerate() {
+        expr = match select {
+            Select::Field(name) => file.make_member_select_indexable(&expr.to_expr(), name),
+            Select::Index(index) => {
+                let index = match dims.get(i) {
+                    Some(dim) => (*index as i64 - dim.lsb).abs(),
+                    None => *index as i64,
+                };
+                file.make_index(&expr, index).to_indexable_expr()
+            }
+        };
+    }
+    expr.to_expr()
+}
+
+/// The connections of one instance port, ready to emit: `None` when the port
+/// is only marked unused.
+type InstPortPlan = (String, Option<Vec<PortSliceConnection>>);
 
 impl ModDef {
     /// Writes Verilog code for this module definition to the given file path.
@@ -227,75 +362,54 @@ impl ModDef {
 
         let mut module = file.add_module(&core.name);
 
+        let stub = core.usage == Usage::EmitStubAndStop;
+
+        // Resolve the connections of every instance port and ModDef port,
+        // and decide from them which nets are typed.
+
+        let mut types = NetTypes::default();
+        let (inst_plans, assignments) = if stub {
+            (Vec::new(), Vec::new())
+        } else {
+            let inst_plans = self.plan_instances(&core);
+            let assignments = self.plan_assignments(&core, options);
+            record_uses(&mut types, &inst_plans, &assignments);
+            (inst_plans, assignments)
+        };
+
         // Create nets for each module port
 
-        let mut nets = NetCollection::new();
+        let mut nets = NetCollection::new(types);
 
-        for port_name in core.ports.keys() {
-            let io = core.ports.get(port_name).unwrap();
-            nets.declare_mod_def_port(port_name, io, file, &mut module);
+        for (port_name, io) in core.ports.iter() {
+            let port_type = core.port_type(port_name).cloned();
+            nets.declare_mod_def_port(port_name, io, port_type, file, &mut module);
         }
 
-        if core.usage == Usage::EmitStubAndStop {
+        if stub {
             return;
         }
 
         // Create module instances
-        for (inst_name, inst) in core.instances.iter() {
-            let core_borrowed = self.core.read();
-            let empty_connections = IndexMap::new();
-            let mod_inst_connections = match core_borrowed.mod_inst_connections.get(inst_name) {
-                Some(mod_inst_connections) => mod_inst_connections,
-                None => &empty_connections,
-            };
-
+        for ((inst_name, inst), port_plans) in core.instances.iter().zip(inst_plans) {
             let module_name = inst.read().name.clone();
             let mut parameter_port_names: Vec<String> = Vec::new();
             let mut parameter_expr_vals: Vec<Expr> = Vec::new();
             let mut connection_port_names = Vec::new();
             let mut connection_expressions = Vec::new();
 
-            for (port_name, io) in inst.read().ports.iter() {
-                connection_port_names.push(port_name.clone());
-
+            for (port_name, merged) in port_plans {
                 let enum_t = inst
                     .read()
                     .enum_ports
-                    .get(port_name)
+                    .get(&port_name)
                     .map(|enum_t| file.make_extern_type(enum_t));
+                connection_port_names.push(port_name);
 
-                let port_slice_connections = match mod_inst_connections.get(port_name) {
-                    Some(port_slice_connections) => port_slice_connections,
-                    None => {
-                        panic!("{}.{}.{} is unconnected", core.name, inst_name, port_name);
-                    }
-                };
-
-                // break into non-overlapping chunks
-                let mut non_overlapping =
-                    port_slice_connections.read().trace().make_non_overlapping();
-
-                non_overlapping.retain(|c| !c.is_empty());
-                non_overlapping.sort_by_key(|c| -(c[0].this.msb as isize));
-
-                // make sure there aren't gaps between connections for this port
-                check_for_gaps(
-                    &non_overlapping,
-                    io,
-                    &format!("{}.{}.{}", core.name, inst_name, port_name),
-                );
-
-                let expression_sources = non_overlapping
-                    .iter()
-                    .map(|c| c.to_expression_source().unwrap())
-                    .collect::<Vec<_>>();
-
-                let merged = merge_expression_sources(expression_sources);
-
-                if (merged.len() == 1) && matches!(merged[0].other, ConnectedItem::Unused(_)) {
+                let Some(merged) = merged else {
                     connection_expressions.push(None);
                     continue;
-                }
+                };
 
                 let mut concat_entries = merged
                     .into_iter()
@@ -390,9 +504,85 @@ impl ModDef {
         }
 
         // Emit assign statements for ModDef ports if necessary
+        for (this, other) in assignments {
+            let port_name = this.port.get_port_name();
+            let lhs = nets.expression(
+                &port_name,
+                *nets.get_logic_ref(&port_name).unwrap(),
+                &this,
+                End::of(&other),
+                file,
+                options,
+            );
+
+            let rhs =
+                connected_item_to_expression(&this, &other, file, &mut module, &mut nets, options);
+
+            let assignment = file.make_continuous_assignment(&lhs, &rhs);
+            file.add_member_continuous_assignment(module, assignment);
+        }
+    }
+
+    /// The merged connections of each port of each instance, in declaration
+    /// order.
+    fn plan_instances(&self, core: &ModDefCore) -> Vec<Vec<InstPortPlan>> {
+        let empty_connections = IndexMap::new();
+        let mut plans = Vec::new();
+        for (inst_name, inst) in core.instances.iter() {
+            let mod_inst_connections = match core.mod_inst_connections.get(inst_name) {
+                Some(mod_inst_connections) => mod_inst_connections,
+                None => &empty_connections,
+            };
+
+            let mut port_plans = Vec::new();
+            for (port_name, io) in inst.read().ports.iter() {
+                let port_slice_connections = match mod_inst_connections.get(port_name) {
+                    Some(port_slice_connections) => port_slice_connections,
+                    None => {
+                        panic!("{}.{}.{} is unconnected", core.name, inst_name, port_name);
+                    }
+                };
+
+                // break into non-overlapping chunks
+                let mut non_overlapping =
+                    port_slice_connections.read().trace().make_non_overlapping();
+
+                non_overlapping.retain(|c| !c.is_empty());
+                non_overlapping.sort_by_key(|c| -(c[0].this.msb as isize));
+
+                // make sure there aren't gaps between connections for this port
+                check_for_gaps(
+                    &non_overlapping,
+                    io,
+                    &format!("{}.{}.{}", core.name, inst_name, port_name),
+                );
+
+                let expression_sources = non_overlapping
+                    .iter()
+                    .map(|c| c.to_expression_source().unwrap())
+                    .collect::<Vec<_>>();
+
+                let merged = merge_expression_sources(expression_sources);
+
+                let only_unused =
+                    merged.len() == 1 && matches!(merged[0].other, ConnectedItem::Unused(_));
+                port_plans.push((port_name.clone(), (!only_unused).then_some(merged)));
+            }
+            plans.push(port_plans);
+        }
+        plans
+    }
+
+    /// The continuous assignments driving this module's ports, as
+    /// (port slice, source) pairs in emission order.
+    fn plan_assignments(
+        &self,
+        core: &ModDefCore,
+        options: &EmitOptions,
+    ) -> Vec<(PortSlice, ConnectedItem)> {
+        let mut assignments = Vec::new();
         for port_name in core.ports.keys() {
-            let core_borrowed = self.core.read();
-            let port_slice_connections = match core_borrowed.mod_def_connections.get(port_name) {
+            let port_slice_connections = match core.mod_def_connections.get(port_name) {
                 Some(port_slice_connections) => port_slice_connections,
                 None => panic!("{}.{} is unconnected", core.name, port_name),
             };
@@ -453,48 +643,57 @@ impl ModDef {
                 // Expand the assignment from MSB to LSB by slicing both sides
                 // at the same relative offset. ConnectedItem slicing keeps
                 // this mapping uniform for ports, wires, and constants.
-                let assignments = if options.bitblast_assignments {
-                    (0..width)
-                        .rev()
-                        .map(|offset| {
-                            (
-                                expression_source
-                                    .this
-                                    .slice_with_offset_and_width(offset, 1),
-                                expression_source
-                                    .other
-                                    .slice_with_offset_and_width(offset, 1),
-                            )
-                        })
-                        .collect::<Vec<_>>()
+                if options.bitblast_assignments {
+                    for offset in (0..width).rev() {
+                        assignments.push((
+                            expression_source
+                                .this
+                                .slice_with_offset_and_width(offset, 1),
+                            expression_source
+                                .other
+                                .slice_with_offset_and_width(offset, 1),
+                        ));
+                    }
                 } else {
-                    vec![(expression_source.this, expression_source.other)]
-                };
-
-                for (this, other) in assignments {
-                    let lhs = slice_net(
-                        nets.get_logic_ref(port_name).unwrap(),
-                        this.port.io().width(),
-                        this.msb,
-                        this.lsb,
-                        file,
-                        options,
-                    );
-
-                    let rhs = connected_item_to_expression(
-                        &this,
-                        &other,
-                        file,
-                        &mut module,
-                        &mut nets,
-                        options,
-                    );
-
-                    let assignment = file.make_continuous_assignment(&lhs, &rhs);
-                    file.add_member_continuous_assignment(module, assignment);
+                    assignments.push((expression_source.this, expression_source.other));
                 }
             }
         }
+        assignments
+    }
+}
+
+/// Records every use of a net that emission will make, with what each use
+/// is connected to.
+fn record_uses(
+    types: &mut NetTypes,
+    inst_plans: &[Vec<InstPortPlan>],
+    assignments: &[(PortSlice, ConnectedItem)],
+) {
+    let record_item = |types: &mut NetTypes, this: &PortSlice, item: &ConnectedItem| match item {
+        ConnectedItem::PortSlice(slice) => types.record(
+            NetNameSource::of_port(&slice.port).to_string(),
+            slice,
+            End::Slice(this),
+        ),
+        ConnectedItem::Unused(_) => types.record(
+            NetNameSource::of_port(&this.port).to_string(),
+            this,
+            End::Slice(this),
+        ),
+        ConnectedItem::Tieoff(_) | ConnectedItem::Wire(_) => {}
+    };
+    for connection in inst_plans
+        .iter()
+        .flatten()
+        .filter_map(|(_, merged)| merged.as_ref())
+        .flatten()
+    {
+        record_item(types, &connection.this, &connection.other);
+    }
+    for (this, other) in assignments {
+        types.record(this.port.get_port_name(), this, End::of(other));
+        record_item(types, this, other);
     }
 }
 
@@ -508,25 +707,13 @@ fn connected_item_to_expression(
 ) -> Expr {
     match item {
         ConnectedItem::PortSlice(port_slice) => {
-            let port = &port_slice.port;
-            let width = port.io().width();
-
-            let inst_name = port.inst_name();
-            let port_name = port.get_port_name();
-            let source = match inst_name {
-                Some(inst_name) => NetNameSource::ModInstPort((inst_name.to_string(), port_name)),
-                None => NetNameSource::ModDefPort(port_name),
-            };
-
-            let net = nets.get_logic_ref_create_if_necessary(source, width, file, module);
-
-            slice_net(net, width, port_slice.msb, port_slice.lsb, file, options)
+            port_net_expression(port_slice, End::Slice(this), file, module, nets, options)
         }
         ConnectedItem::Wire(wire) => {
             let width = wire.width;
             let source = NetNameSource::ManuallySpecified(wire.name.clone());
-            let net = nets.get_logic_ref_create_if_necessary(source, width, file, module);
-            slice_net(net, width, wire.msb, wire.lsb, file, options)
+            let net = nets.get_logic_ref_create_if_necessary(source, width, None, file, module);
+            slice_net(&net, width, wire.msb, wire.lsb, file, options)
         }
         ConnectedItem::Tieoff(tieoff) => {
             let literal_str = format!("bits[{}]:{}", tieoff.width, tieoff.value);
@@ -534,24 +721,32 @@ fn connected_item_to_expression(
                 .unwrap()
         }
         ConnectedItem::Unused(_) => {
-            // TODO(sherbst) 2025-12-01: Reduce code duplication for
-            // ConnectedItem::PortSlice and ConnectedItem::Unused cases?
-
-            let port = &this.port;
-            let width = port.io().width();
-
-            let inst_name = port.inst_name();
-            let port_name = port.get_port_name();
-            let source = match inst_name {
-                Some(inst_name) => NetNameSource::ModInstPort((inst_name.to_string(), port_name)),
-                None => NetNameSource::ModDefPort(port_name),
-            };
-
-            let net = nets.get_logic_ref_create_if_necessary(source, width, file, module);
-
-            slice_net(net, width, this.msb, this.lsb, file, options)
+            port_net_expression(this, End::Slice(this), file, module, nets, options)
         }
     }
+}
+
+/// `slice` of the net named after its port, connected to `end`, declaring
+/// the net if necessary.
+fn port_net_expression(
+    slice: &PortSlice,
+    end: End,
+    file: &mut VastFile,
+    module: &mut VastModule,
+    nets: &mut NetCollection,
+    options: &EmitOptions,
+) -> Expr {
+    let port = &slice.port;
+    let source = NetNameSource::of_port(port);
+    let name = source.to_string();
+    let net = nets.get_logic_ref_create_if_necessary(
+        source,
+        port.io().width(),
+        port.port_type(),
+        file,
+        module,
+    );
+    nets.expression(&name, net, slice, end, file, options)
 }
 
 fn slice_net(
