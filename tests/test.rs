@@ -9,5 +9,6 @@ mod emit;
 mod feedthroughs;
 mod interfaces;
 mod modifications;
+mod roundtrip;
 mod syntax;
 mod typed;
