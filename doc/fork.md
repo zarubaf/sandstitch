@@ -117,6 +117,8 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
     `resolver = "2"` are removed (so new test files run and the workspace
     resolver applies); `[lints.clippy] write_with_newline` and `clone_on_copy`
     are allowed for pre-existing upstream code.
+  - `LICENSE`: the Apache-2.0 text, added because the published crate
+    declares `license = "Apache-2.0"` but ships no licence file.
   - Sandstitch extensions (`feat(xlsynth-vast): type expressions, package refs
     and member selects`): `make_type_expr`, `make_package_ref`,
     `make_member_select`, `make_member_select_indexable` and
