@@ -1,0 +1,17 @@
+[options]
+mode bmc
+depth 100
+
+[engines]
+smtbmc
+
+[script]
+read -formal cc_fifo.sv
+read -formal cc_fall_through_register.sv
+read -formal cc_fall_through_register_properties.sv
+prep -top cc_fall_through_register
+
+[files]
+cc_fall_through_register_properties.sv
+../src/cc_fall_through_register.sv
+../src/cc_fifo.sv
