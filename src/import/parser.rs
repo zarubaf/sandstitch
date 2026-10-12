@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
-use crate::import::parameterize::ParameterType;
 use crate::import::parser_cfg::ParserConfig;
+use crate::model::parameter::ParameterType;
 use crate::{IO, ModDef, ModDefCore, Usage};
 
 #[derive(Clone)]

@@ -328,7 +328,7 @@ impl ModDef {
                 for (param_name, spec) in param_core.parameters.iter() {
                     parameter_port_names.push(param_name.clone());
                     let expr = match spec {
-                        crate::import::parameterize::ParameterSpec::Integer { value, ty } => {
+                        crate::model::parameter::ParameterSpec::Integer { value, ty } => {
                             if value.sign() == num_bigint::Sign::Minus {
                                 // TODO(sherbst) 2025-10-29: Support negative parameter values
                                 panic!("Negative parameter values not yet supported");
@@ -337,7 +337,7 @@ impl ModDef {
                             file.make_literal(&literal_str, &LiteralFormat::Hex)
                                 .unwrap()
                         }
-                        crate::import::parameterize::ParameterSpec::String(value) => {
+                        crate::model::parameter::ParameterSpec::String(value) => {
                             file.make_string_literal(value)
                         }
                     };

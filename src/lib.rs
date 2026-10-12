@@ -32,6 +32,7 @@ pub use model::io::IO;
 pub use model::metadata::{Metadata, MetadataKey, MetadataValue};
 pub use model::mod_def::{ConvertibleToModDef, ModDef};
 pub use model::mod_inst::ModInst;
+pub use model::parameter::{ParameterType, ParameterValue};
 pub use model::pipeline::PipelineConfig;
 pub use model::port::Port;
 pub use model::port_slice::{ConvertibleToPortSlice, ConvertibleToPortSliceVec, PortSlice};
@@ -42,7 +43,6 @@ pub use import::package::{
     Package, Parameter, extract_packages_from_verilog, extract_packages_from_verilog_file,
     extract_packages_from_verilog_files, extract_packages_with_config,
 };
-pub use import::parameterize::{ParameterType, ParameterValue};
 pub use import::parser_cfg::ParserConfig;
 
 // Emission.
