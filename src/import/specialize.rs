@@ -427,7 +427,9 @@ pub(crate) fn specialize(
     if let Some(specialized) = SPECIALIZATIONS.get(&pre_key) {
         return Ok(specialized);
     }
-    if let Some(definition) = definition(module, import, caller)? {
+    let definition = definition(module, import, caller)?;
+    let definition_known = definition.is_some();
+    if let Some(definition) = definition {
         if !definition.interface_ports.is_empty() {
             return Err(typed::interface_port_error(
                 module,
@@ -436,8 +438,14 @@ pub(crate) fn specialize(
         }
         check_against_definition(module, overrides, &definition.parameters, caller)?;
     }
-    let (dependencies, ports, integer_parameter_types) =
-        elaborate(module, import, overrides, &pre_key, caller)?;
+    let (dependencies, ports, integer_parameter_types) = elaborate(
+        module,
+        import,
+        overrides,
+        &pre_key,
+        definition_known,
+        caller,
+    )?;
     let specialized = Specialized {
         key: SpecializationKey {
             digest: final_key(&pre_key, &dependencies),
@@ -722,11 +730,14 @@ type Elaborated = (
     IndexMap<String, ParameterType>,
 );
 
+/// `definition_known`: the definition's declarations were read
+/// ([`definition`]); otherwise the sources may not parse.
 fn elaborate(
     module: &str,
     import: &VerilogImport,
     overrides: &IndexMap<String, ParameterValue>,
     pre_key: &[u8; 32],
+    definition_known: bool,
     caller: &Span,
 ) -> Result<Elaborated, ImportError> {
     let top = format!("__sandstitch_elab_{}", short_hash(pre_key));
@@ -760,6 +771,7 @@ fn elaborate(
                 &file_name,
                 &override_lines,
                 overrides,
+                definition_known || parses(import),
                 caller,
             )
         })?;
@@ -772,6 +784,20 @@ fn elaborate(
 
     let definitions = slang_rs::extract_instance_parameter_defs_from_value(&value, &instance)
         .expect("the instance exists");
+    let integer_parameter_types = integer_parameter_types(module, overrides, &definitions, caller)?;
+    Ok((dependencies, ports, integer_parameter_types))
+}
+
+/// The type of each parameter with an integer override, from the elaborated
+/// parameter definitions, for emitting the override as a literal. S0105 for
+/// an integer that does not fit its parameter's type, or a parameter whose
+/// type has no integer literal form.
+pub(crate) fn integer_parameter_types(
+    module: &str,
+    overrides: &IndexMap<String, ParameterValue>,
+    definitions: &[slang_rs::ParameterDef],
+    caller: &Span,
+) -> Result<IndexMap<String, ParameterType>, ImportError> {
     let mut integer_parameter_types = IndexMap::new();
     let mut diagnostics = Vec::new();
     for (name, value) in overrides {
@@ -806,10 +832,21 @@ fn elaborate(
             )),
         }
     }
-    if !diagnostics.is_empty() {
-        return Err(import_error(diagnostics));
+    if diagnostics.is_empty() {
+        Ok(integer_parameter_types)
+    } else {
+        Err(import_error(diagnostics))
     }
-    Ok((dependencies, ports, integer_parameter_types))
+}
+
+/// The overridable parameters `module` declares, in declaration order;
+/// `None` if its definition is not known ([`definition`]).
+pub(crate) fn overridable_parameters(
+    module: &str,
+    import: &VerilogImport,
+    caller: &Span,
+) -> Result<Option<Vec<(String, ParameterKind)>>, ImportError> {
+    Ok(definition(module, import, caller)?.map(|definition| definition.parameters))
 }
 
 /// S0102 for a specialization whose module definition was not found (with
@@ -828,13 +865,16 @@ fn module_not_found(module: &str, caller: &Span) -> ImportError {
 
 /// S0102 for a failed Slang run on the elaboration top. Errors in the
 /// generated top (which is deleted afterwards) become notes naming the
-/// override they are on; errors in the sources are secondary labels.
+/// override they are on, unless the sources do not parse (`sources_parse`):
+/// the module's parameters are then Slang's recovery, and errors on the
+/// overrides are consequences. Errors in the sources are secondary labels.
 fn slang_failure(
     module: &str,
     output: &str,
     top_file_name: &str,
     override_lines: &HashMap<u32, String>,
     overrides: &IndexMap<String, ParameterValue>,
+    sources_parse: bool,
     caller: &Span,
 ) -> ImportError {
     let mut d = error_at(
@@ -862,6 +902,9 @@ fn slang_failure(
                 },
                 text: error.message,
             });
+            continue;
+        }
+        if !sources_parse {
             continue;
         }
         match override_lines.get(&error.line) {

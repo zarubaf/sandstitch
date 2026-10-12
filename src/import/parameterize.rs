@@ -10,8 +10,9 @@ use num_bigint::BigInt;
 use crate::diagnostic::codes;
 use crate::import::parser::VerilogImport;
 use crate::import::specialize::{self, SpecializationKey};
-use crate::model::parameter::{ParameterSpec, ParameterValue};
+use crate::model::parameter::{ParameterSpec, ParameterType, ParameterValue};
 use crate::{Diagnostics, ImportError, Label, ModDef, ModDefCore, ParserConfig, Span, Usage};
+use slang_rs::ParameterKind;
 
 impl ModDef {
     /// Returns a new module definition that is a variant of this module
@@ -51,7 +52,9 @@ impl ModDef {
     ///
     /// The `parameters` (Slang `-G`) of the configuration the module was
     /// imported with are base overrides of every specialization, so that
-    /// they are not lost; explicit overrides replace them. A `-G` value must
+    /// they are not lost; explicit overrides replace them. Values of
+    /// parameters the module does not declare are ignored, as by Slang;
+    /// explicit overrides stay strict. A `-G` value must
     /// be a decimal integer, a string literal or a name.
     ///
     /// Errors (Rust spans point at the caller):
@@ -141,27 +144,23 @@ impl ModDef {
         overrides: IndexMap<String, ParameterValue>,
         caller: &Span,
     ) -> Result<ModDef, ImportError> {
-        let mut merged = slang_parameter_overrides(name, verilog_import, &overrides, caller)?;
+        let mut merged = if verilog_import.parameters.is_empty() {
+            IndexMap::new()
+        } else {
+            let declared = specialize::overridable_parameters(name, verilog_import, caller)?;
+            slang_parameter_overrides(
+                name,
+                &verilog_import.parameters,
+                declared.as_deref(),
+                &overrides,
+                caller,
+            )?
+        };
         merged.extend(overrides);
         let overrides = merged;
         specialize::validate(name, &overrides, caller)?;
         let specialized = specialize::specialize(name, verilog_import, &overrides, caller)?;
-
-        let parameters: IndexMap<String, ParameterSpec> = overrides
-            .into_iter()
-            .map(|(name, value)| {
-                let spec = match value {
-                    ParameterValue::Integer(value) => ParameterSpec::Integer {
-                        value,
-                        ty: specialized.integer_parameter_types[&name].clone(),
-                    },
-                    ParameterValue::String(value) => ParameterSpec::String(value),
-                    ParameterValue::Type(name) => ParameterSpec::Type(name),
-                    ParameterValue::Expr(name) => ParameterSpec::Expr(name),
-                };
-                (name, spec)
-            })
-            .collect();
+        let parameters = parameter_specs(overrides, &specialized.integer_parameter_types);
 
         let mut verilog_import = verilog_import.clone();
         verilog_import.specialization = Some(specialized.key.clone());
@@ -218,20 +217,106 @@ impl ModDef {
     }
 }
 
-/// The import's Slang `-G` parameters not replaced by `explicit` as
-/// overrides: a decimal integer, a string literal, or a name (`ident` or
-/// `pkg::ident`, a named constant). S0105 for any other value.
+/// Overrides with their integer types, as recorded on a module definition.
+fn parameter_specs(
+    overrides: IndexMap<String, ParameterValue>,
+    integer_parameter_types: &IndexMap<String, ParameterType>,
+) -> IndexMap<String, ParameterSpec> {
+    overrides
+        .into_iter()
+        .map(|(name, value)| {
+            let spec = match value {
+                ParameterValue::Integer(value) => ParameterSpec::Integer {
+                    value,
+                    ty: integer_parameter_types[&name].clone(),
+                },
+                ParameterValue::String(value) => ParameterSpec::String(value),
+                ParameterValue::Type(name) => ParameterSpec::Type(name),
+                ParameterValue::Expr(name) => ParameterSpec::Expr(name),
+            };
+            (name, spec)
+        })
+        .collect()
+}
+
+/// The parameters of a plain import of top `module` from `value`, elaborated
+/// with Slang `-G` `parameters`: the `-G` values the module declares, so that
+/// its instances are emitted with the overrides its ports were resolved
+/// with. Errors as for [`slang_parameter_overrides`], [`specialize::validate`]
+/// and [`specialize::integer_parameter_types`].
+pub(crate) fn plain_import_parameters(
+    module: &str,
+    parameters: &[(String, String)],
+    value: &serde_json::Value,
+    caller: &Span,
+) -> Result<IndexMap<String, ParameterSpec>, ImportError> {
+    if parameters.is_empty() {
+        return Ok(IndexMap::new());
+    }
+    let declared = slang_rs::extract_overridable_parameters_from_value(value)
+        .remove(module)
+        .unwrap_or_default();
+    let overrides = slang_parameter_overrides(
+        module,
+        parameters,
+        Some(&declared),
+        &IndexMap::new(),
+        caller,
+    )?;
+    specialize::validate(module, &overrides, caller)?;
+    let definitions = slang_rs::extract_parameter_defs_from_value(value, true)
+        .remove(module)
+        .unwrap_or_default();
+    let types = specialize::integer_parameter_types(module, &overrides, &definitions, caller)?;
+    Ok(parameter_specs(overrides, &types))
+}
+
+/// The Slang `-G` `parameters` not replaced by `explicit`, as overrides: a
+/// decimal integer, a string literal, or a name (`ident` or `pkg::ident`, a
+/// named constant). As in Slang, a `-G` value of a parameter the module does
+/// not declare as overridable (`declared`, if known) is not applied. S0105
+/// for any other value, and for a type parameter (Slang applies `-G` only to
+/// value parameters).
 fn slang_parameter_overrides(
     module: &str,
-    import: &VerilogImport,
+    parameters: &[(String, String)],
+    declared: Option<&[(String, ParameterKind)]>,
     explicit: &IndexMap<String, ParameterValue>,
     caller: &Span,
 ) -> Result<IndexMap<String, ParameterValue>, ImportError> {
     let mut overrides = IndexMap::new();
     let mut diagnostics = Vec::new();
-    for (name, text) in &import.parameters {
+    for (name, text) in parameters {
         if explicit.contains_key(name) {
             continue;
+        }
+        let kind = declared.map(|declared| {
+            declared
+                .iter()
+                .find(|(declared, _)| declared == name)
+                .map(|(_, kind)| *kind)
+        });
+        match kind {
+            Some(None) => continue,
+            Some(Some(ParameterKind::Type)) => {
+                let mut d = crate::import::typed::error(
+                    codes::S0105,
+                    format!("unsupported `-G` override for parameter `{name}` of `{module}`"),
+                    Label {
+                        span: caller.clone(),
+                        text: format!(
+                            "`ParserConfig::parameters` sets type parameter `{name}`, which \
+                             Slang's `-G` does not apply"
+                        ),
+                    },
+                );
+                d.helps.push(format!(
+                    "override `{name}` with `ParameterValue::Type` instead"
+                ));
+                diagnostics.push(d);
+                continue;
+            }
+            _ => {}
         }
         let text = text.trim();
         let value = if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {

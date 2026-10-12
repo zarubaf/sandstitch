@@ -7,11 +7,20 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
+use crate::import::parameterize::plain_import_parameters;
 use crate::import::parser_cfg::ParserConfig;
 use crate::import::specialize::SpecializationKey;
 use crate::import::typed::{self, ImportedPort};
-use crate::model::parameter::ParameterType;
-use crate::{ImportError, ModDef, ModDefCore, Usage};
+use crate::model::parameter::{ParameterSpec, ParameterType};
+use crate::{ImportError, ModDef, ModDefCore, Span, Usage};
+
+/// `(name, value)` pairs as owned strings.
+fn owned_pairs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
 
 /// S0104 if the definition of `module`, elaborated alone, has interface
 /// ports; `None` if it has none or does not elaborate alone either.
@@ -33,7 +42,9 @@ pub(crate) struct VerilogImport {
     /// Absolute, like `sources`.
     pub(crate) incdirs: Vec<String>,
     pub(crate) defines: Vec<(String, String)>,
+    /// Absolute, like `sources`.
     pub(crate) libfiles: Vec<String>,
+    /// Absolute, like `sources`.
     pub(crate) libdirs: Vec<String>,
     pub(crate) libexts: Vec<String>,
     pub(crate) ignore_unknown_modules: bool,
@@ -111,19 +122,15 @@ impl VerilogImport {
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
-            libfiles: strings(cfg.libfiles),
-            libdirs: strings(cfg.libdirs),
+            libfiles: absolute(cfg.libfiles),
+            libdirs: absolute(cfg.libdirs),
             libexts: strings(cfg.libexts),
             ignore_unknown_modules: cfg.ignore_unknown_modules,
             ignore_protected: cfg.ignore_protected,
             timescale: cfg.timescale.map(str::to_string),
             skip_unsupported: cfg.skip_unsupported,
             extra_arguments: strings(cfg.extra_arguments),
-            parameters: cfg
-                .parameters
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
+            parameters: owned_pairs(cfg.parameters),
             specialization: None,
             inline: false,
         }
@@ -168,6 +175,7 @@ impl ModDef {
     fn mod_def_from_imported_ports(
         mod_def_name: &str,
         imported_ports: &[ImportedPort],
+        parameters: IndexMap<String, ParameterSpec>,
         cfg: &ParserConfig,
     ) -> ModDef {
         let mod_def = ModDef {
@@ -181,7 +189,7 @@ impl ModDef {
                 instances: IndexMap::new(),
                 usage: Usage::EmitNothingAndStop,
                 verilog_import: Some(VerilogImport::new(cfg)),
-                parameters: IndexMap::new(),
+                parameters,
                 mod_inst_connections: IndexMap::new(),
                 mod_def_connections: IndexMap::new(),
                 mod_def_metadata: HashMap::new(),
@@ -292,6 +300,7 @@ impl ModDef {
     /// `cfg` is a `ParserConfig` struct specifying source files, include
     /// directories, etc. Panics with the rendered diagnostics if the import
     /// fails; see [`ModDef::try_from_verilog_with_config`].
+    #[track_caller]
     pub fn from_verilog_with_config(name: impl AsRef<str>, cfg: &ParserConfig) -> Self {
         Self::try_from_verilog_with_config(name.as_ref(), cfg).unwrap_or_else(|e| panic!("{e}"))
     }
@@ -311,10 +320,19 @@ impl ModDef {
     ///   alone with `--allow-toplevel-iface-ports`. If the sources elaborate
     ///   anyway (that flag in `cfg.extra_arguments`) and `cfg.skip_unsupported`
     ///   is set, the interface ports are skipped.
+    /// - S0105 for a Slang `-G` value (`cfg.parameters`) of a parameter the
+    ///   module declares that cannot be emitted as an override: it must be a
+    ///   decimal integer, a string literal or a name, and set a value
+    ///   parameter. Instances of the module are emitted with these
+    ///   overrides, which its ports were resolved with; `-G` values of
+    ///   parameters it does not declare are ignored, as by Slang. The Rust
+    ///   span points at the caller.
+    #[track_caller]
     pub fn try_from_verilog_with_config(
         name: &str,
         cfg: &ParserConfig,
     ) -> Result<Self, ImportError> {
+        let caller = Span::caller();
         let value = match slang_rs::run_slang(&cfg.to_slang_config()) {
             Ok(value) => value,
             Err(e) => {
@@ -329,8 +347,10 @@ impl ModDef {
                 .unwrap_or_else(|| typed::module_not_found(name)));
         };
         let imported_ports = imported_ports?;
+        let parameters =
+            plain_import_parameters(name, &owned_pairs(cfg.parameters), &value, &caller)?;
 
-        let mod_def = Self::mod_def_from_imported_ports(name, &imported_ports, cfg);
+        let mod_def = Self::mod_def_from_imported_ports(name, &imported_ports, parameters, cfg);
 
         if cfg.include_hierarchy {
             let mod_def_with_hierarchy = mod_def.stub(name);
@@ -344,7 +364,12 @@ impl ModDef {
         }
     }
 
+    /// Imports every top-level module, as [`ModDef::from_verilog_with_config`]
+    /// does one. Panics with the rendered diagnostics on error.
+    #[track_caller]
     pub fn all_from_verilog_with_config(cfg: &ParserConfig) -> Vec<Self> {
+        let caller = Span::caller();
+        let parameters = owned_pairs(cfg.parameters);
         let value = slang_rs::run_slang(&cfg.to_slang_config()).unwrap();
         // Every top-level module (with or without interface ports), sorted by
         // name for a deterministic order.
@@ -359,7 +384,9 @@ impl ModDef {
                 let imported_ports = typed::import_top_ports(&value, &name, cfg.skip_unsupported)
                     .expect("listed as a top-level module")
                     .unwrap_or_else(|e| panic!("{e}"));
-                Self::mod_def_from_imported_ports(&name, &imported_ports, cfg)
+                let parameters = plain_import_parameters(&name, &parameters, &value, &caller)
+                    .unwrap_or_else(|e| panic!("{e}"));
+                Self::mod_def_from_imported_ports(&name, &imported_ports, parameters, cfg)
             })
             .collect();
 

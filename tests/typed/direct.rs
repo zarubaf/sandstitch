@@ -333,6 +333,11 @@ endmodule
         "Slang failed to elaborate a specialization of `m`"
     );
     assert!(d.secondary.iter().any(|l| l.text == "expected ')'"), "{e}");
+    // Errors on the overrides are consequences of the recovery: no notes.
+    assert!(
+        !d.notes.iter().any(|n| n.starts_with("in the override")),
+        "{e}"
+    );
 }
 
 #[test]
@@ -401,13 +406,90 @@ fn unsupported_slang_parameter_reports_s0105() {
     );
     assert_eq!(primary_line(&e), (file!().to_string(), line - 1));
 
-    // Also when specializing a plain import.
-    let base = ModDef::try_from_verilog_with_config("child", &cfg).unwrap();
-    let e = base.try_parameterize(&hdr).err().unwrap();
+    // A plain import reports it at import: its instances could not be
+    // emitted with the value its ports were resolved with.
+    let (result, line) = (ModDef::try_from_verilog_with_config("child", &cfg), line!());
+    let e = result.err().unwrap();
+    assert_eq!(e.diagnostics.0.len(), 1, "{e}");
     assert_eq!(e.diagnostics.0[0].code, codes::S0105, "{e}");
+    assert_eq!(primary_line(&e), (file!().to_string(), line));
 
     // An explicit override replaces the `-G` value.
     let overrides: [(&str, ParameterValue); 2] = [("T", ty("cfg_pkg::hdr_t")), ("N", 2.into())];
-    let m = base.try_parameterize(&overrides).unwrap();
+    let m = ModDef::try_from_verilog_parameterized("child", &cfg, &overrides).unwrap();
     assert_eq!(m.get_port("in_i").io().width(), 24);
+
+    // `-G` of a type parameter, which Slang does not apply: S0105.
+    let cfg = ParserConfig {
+        parameters: &[("T", "cfg_pkg::hdr_t")],
+        ..config(&paths)
+    };
+    let e = ModDef::try_from_verilog_with_config("child", &cfg)
+        .err()
+        .unwrap();
+    assert_eq!(e.diagnostics.0[0].code, codes::S0105, "{e}");
+    let e = ModDef::try_from_verilog_parameterized("child", &cfg, &[("N", 3)])
+        .err()
+        .unwrap();
+    assert_eq!(e.diagnostics.0[0].code, codes::S0105, "{e}");
+}
+
+#[test]
+fn plain_import_emits_its_slang_parameters() {
+    let gw = "module gw #(parameter int W = 1) (input logic [W-1:0] a);\nendmodule\n";
+    let sources = Sources::new(&[gw]);
+    let paths = sources.paths();
+    let cfg = ParserConfig {
+        parameters: &[("W", "4")],
+        ..config(&paths)
+    };
+    let m = ModDef::try_from_verilog_with_config("gw", &cfg).unwrap();
+    assert_eq!(m.get_port("a").port_type(), Some(logic(&[(3, 0)])));
+    assert_eq!(m.specialization_key(), None);
+    let top = ModDef::new("top");
+    top.instantiate(&m, Some("u"), None)
+        .get_port("a")
+        .export_as("n");
+    let emitted = top.emit(EmitOptions::default());
+    assert!(
+        emitted.contains("  gw #(\n    .W(32'h0000_0004)\n  ) u ("),
+        "{emitted}"
+    );
+    // Strict flags: a 4-bit net into a 1-bit port would warn.
+    elaborate_manifest(&top.manifest(), &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn undeclared_slang_parameters_are_ignored() {
+    // One configuration for two modules; only `ga` declares `W`.
+    let modules = "
+module ga #(parameter int W = 1, parameter type T = logic) (input T [W-1:0] a);
+endmodule
+module gb #(parameter type T = logic) (input T b);
+endmodule
+";
+    let sources = Sources::new(&[CHILD, modules]);
+    let paths = sources.paths();
+    let cfg = ParserConfig {
+        parameters: &[("W", "4")],
+        ..config(&paths)
+    };
+    let hdr = [("T", ty("cfg_pkg::hdr_t"))];
+    let gb = ModDef::try_from_verilog_with_config("gb", &cfg).unwrap();
+    let gb_hdr = gb.try_parameterize(&hdr).unwrap();
+    assert_eq!(gb_hdr.get_port("b").io().width(), 12);
+    let direct = ModDef::try_from_verilog_parameterized("gb", &cfg, &hdr).unwrap();
+    assert_eq!(direct.specialization_key(), gb_hdr.specialization_key());
+    let emitted = wrap_in_top(&direct).emit(EmitOptions::default());
+    assert!(
+        emitted.contains("  gb #(\n    .T(cfg_pkg::hdr_t)\n  ) u ("),
+        "{emitted}"
+    );
+
+    let ga = ModDef::try_from_verilog_parameterized("ga", &cfg, &hdr).unwrap();
+    assert_eq!(ga.get_port("a").io().width(), 48);
+
+    // Explicit overrides stay strict.
+    let e = gb.try_parameterize(&[("W", 4)]).err().unwrap();
+    assert_eq!(e.diagnostics.0[0].code, codes::S0101, "{e}");
 }
