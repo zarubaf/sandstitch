@@ -21,3 +21,12 @@ Sandstitch is a hard fork of Topstitch.
 - `Cargo.toml`: `publish = false`; `repository` and `homepage` point to
   https://github.com/zarubaf/sandstitch; `documentation` removed; unused
   dev-dependencies removed (`curl`, `semver`, `toml`, `serde_json`).
+- `.github/workflows/ci.yml`: the clippy step runs
+  `cargo clippy --all-targets --locked -- -D warnings` and gates the build
+  (upstream tolerated warnings).
+- Clippy lint fixes (behavior-preserving: redundant borrows and useless
+  `format!` removed) in `src/mod_def/emit.rs`, `src/mod_def/placement.rs`,
+  `src/mod_def/lefdef.rs`, `src/mod_def/hierarchy.rs` and
+  `tests/syntax/params.rs`.
+- `Cargo.toml`: `slang-rs = "=0.22.0"` and `xlsynth-vast = "=0.65.0"` are
+  pinned exactly (upstream used caret requirements).

@@ -17,11 +17,12 @@ Sandstitch is an executable hardware specification library. `doc/product.md` is 
 - Fail explicitly: unsupported SystemVerilog constructs produce diagnostics; never silently drop ports.
 - Run these checks on changed areas (from the repository root; `slang` comes from the pinned v11.0 release):
   ```sh
-  curl --fail --location -o slang.tar.gz https://github.com/MikePopoloski/slang/releases/download/v11.0/slang-linux-x86_64.tar.gz
-  echo "951a170e10e25e54c91565030acfdfc11c3226714ebf225a18ad4166a898d8a4  slang.tar.gz" | sha256sum -c -
-  tar -xzf slang.tar.gz slang && chmod +x slang   # then use its absolute path below
-  SLANG_PATH=/abs/path/to/slang cargo test --locked
-  cargo clippy --all-targets --locked   # upstream code currently has 4 warnings; do not add new ones
+  d=$HOME/.cache/sandstitch/slang-v11.0 && mkdir -p "$d"
+  curl --fail --location -o "$d/slang.tar.gz" https://github.com/MikePopoloski/slang/releases/download/v11.0/slang-linux-x86_64.tar.gz
+  echo "951a170e10e25e54c91565030acfdfc11c3226714ebf225a18ad4166a898d8a4  $d/slang.tar.gz" | sha256sum -c -
+  tar -xzf "$d/slang.tar.gz" -C "$d" slang
+  SLANG_PATH=$d/slang cargo test --locked
+  cargo clippy --all-targets --locked -- -D warnings   # must stay warning-free
   SKIP=no-commit-to-branch pre-commit run --all-files
   ```
 - Ask before adding new tooling or CI.
