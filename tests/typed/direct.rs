@@ -468,6 +468,37 @@ fn duplicate_slang_parameter_reports_s0105() {
 }
 
 #[test]
+fn duplicate_slang_parameter_is_fine_when_not_applied() {
+    let sources = Sources::new(&[CHILD]);
+    let paths = sources.paths();
+
+    // `child` does not declare `W`: its `-G` values are ignored, set twice
+    // or not.
+    let cfg = ParserConfig {
+        parameters: &[("W", "4"), ("W", "6")],
+        ..config(&paths)
+    };
+    let plain = ModDef::try_from_verilog_with_config("child", &cfg).unwrap();
+    assert_eq!(plain.get_port("in_i").io().width(), 2);
+    let direct = ModDef::try_from_verilog_parameterized("child", &cfg, &[("N", 3)]).unwrap();
+    assert_eq!(direct.get_port("in_i").io().width(), 3);
+
+    // An explicit override replaces a duplicated `-G` value: no error, and
+    // the explicit value applies.
+    let cfg = ParserConfig {
+        parameters: &[("N", "4"), ("N", "6")],
+        ..config(&paths)
+    };
+    let direct = ModDef::try_from_verilog_parameterized("child", &cfg, &[("N", 5)]).unwrap();
+    assert_eq!(direct.get_port("in_i").io().width(), 5);
+    let emitted = wrap_in_top(&direct).emit(EmitOptions::default());
+    assert!(
+        emitted.contains("  child #(\n    .N(32'h0000_0005)\n  ) u ("),
+        "{emitted}"
+    );
+}
+
+#[test]
 fn plain_import_emits_its_slang_parameters() {
     let gw = "module gw #(parameter int W = 1) (input logic [W-1:0] a);\nendmodule\n";
     let sources = Sources::new(&[gw]);

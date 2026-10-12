@@ -275,7 +275,8 @@ pub(crate) fn plain_import_parameters(
 /// named constant). As in Slang, a `-G` value of a parameter the module does
 /// not declare as overridable (`declared`) is not applied. S0105 for any
 /// other value, for a type parameter (Slang applies `-G` only to value
-/// parameters), and for a name set twice (Slang would apply the first).
+/// parameters), and for a name set twice (Slang would apply the first) unless
+/// `explicit` replaces it or the module does not declare it.
 fn slang_parameter_overrides(
     module: &str,
     parameters: &[(String, String)],
@@ -287,6 +288,16 @@ fn slang_parameter_overrides(
     let mut diagnostics = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for (name, text) in parameters {
+        if explicit.contains_key(name) {
+            continue;
+        }
+        let kind = declared
+            .iter()
+            .find(|(declared, _)| declared == name)
+            .map(|(_, kind)| *kind);
+        let Some(kind) = kind else {
+            continue;
+        };
         if !seen.insert(name) {
             let mut d = crate::import::typed::error(
                 codes::S0105,
@@ -300,34 +311,23 @@ fn slang_parameter_overrides(
             diagnostics.push(d);
             continue;
         }
-        if explicit.contains_key(name) {
+        if matches!(kind, ParameterKind::Type) {
+            let mut d = crate::import::typed::error(
+                codes::S0105,
+                format!("unsupported `-G` override for parameter `{name}` of `{module}`"),
+                Label {
+                    span: caller.clone(),
+                    text: format!(
+                        "`ParserConfig::parameters` sets type parameter `{name}`, which \
+                         Slang's `-G` does not apply"
+                    ),
+                },
+            );
+            d.helps.push(format!(
+                "override `{name}` with `ParameterValue::Type` instead"
+            ));
+            diagnostics.push(d);
             continue;
-        }
-        let kind = declared
-            .iter()
-            .find(|(declared, _)| declared == name)
-            .map(|(_, kind)| *kind);
-        match kind {
-            None => continue,
-            Some(ParameterKind::Type) => {
-                let mut d = crate::import::typed::error(
-                    codes::S0105,
-                    format!("unsupported `-G` override for parameter `{name}` of `{module}`"),
-                    Label {
-                        span: caller.clone(),
-                        text: format!(
-                            "`ParserConfig::parameters` sets type parameter `{name}`, which \
-                             Slang's `-G` does not apply"
-                        ),
-                    },
-                );
-                d.helps.push(format!(
-                    "override `{name}` with `ParameterValue::Type` instead"
-                ));
-                diagnostics.push(d);
-                continue;
-            }
-            _ => {}
         }
         let text = text.trim();
         let value = if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
