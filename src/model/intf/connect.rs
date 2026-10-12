@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::{ConvertibleToPortSliceVec, Intf, ModInst, PhysicalPin, PipelineConfig, PortSlice};
+use crate::{ConvertibleToPortSliceVec, Intf, ModInst, PipelineConfig, PortSlice};
 
 impl Intf {
     /// Connects this interface to another interface. Interfaces are connected
@@ -37,112 +37,6 @@ impl Intf {
         T: AsRef<str> + 'a,
     {
         self.connect_generic(other, None, false, skip);
-    }
-
-    /// Places this interface across from another interface, matching functions
-    pub fn place_across_from(&self, other: &Intf, allow_mismatch: bool) {
-        self.place_across_from_generic(other, allow_mismatch, None::<&[&str]>);
-    }
-
-    /// Places this interface across from another interface, matching functions
-    /// by name, skipping the specified functions.
-    pub fn place_across_from_except<'a, I, T>(
-        &self,
-        other: &Intf,
-        allow_mismatch: bool,
-        skip: Option<I>,
-    ) where
-        I: IntoIterator<Item = &'a T>,
-        T: AsRef<str> + 'a,
-    {
-        self.place_across_from_generic(other, allow_mismatch, skip);
-    }
-
-    /// Places this interface across from another interface, matching functions
-    /// by name. See [`PortSlice::place_across_from`] for placement behavior.
-    fn place_across_from_generic<'a, I, T>(
-        &self,
-        other: &Intf,
-        allow_mismatch: bool,
-        skip: Option<I>,
-    ) where
-        I: IntoIterator<Item = &'a T>,
-        T: AsRef<str> + 'a,
-    {
-        let skip_names = skip.map(|i| i.into_iter().map(|i| i.as_ref()).collect::<HashSet<_>>());
-
-        let is_skipped = |func_name: &str| {
-            if let Some(names) = skip_names.as_ref() {
-                names.contains(func_name)
-            } else {
-                false
-            }
-        };
-
-        let self_ports = self.get_port_slices();
-        let other_ports = other.get_port_slices();
-
-        for (func_name, self_port) in &self_ports {
-            if is_skipped(func_name) {
-                continue;
-            }
-
-            if let Some(other_port) = other_ports.get(func_name) {
-                self_port.place_across_from(other_port.clone());
-            } else if !allow_mismatch {
-                panic!(
-                    "Interfaces {} and {} have mismatched functions and allow_mismatch is false. Example: function '{}' is present in {} but not in {}.",
-                    self.debug_string(),
-                    other.debug_string(),
-                    func_name,
-                    self.debug_string(),
-                    other.debug_string()
-                );
-            }
-        }
-
-        if !allow_mismatch {
-            for (func_name, _) in &other_ports {
-                if is_skipped(func_name) {
-                    continue;
-                }
-
-                if !self_ports.contains_key(func_name) {
-                    panic!(
-                        "Interfaces {} and {} have mismatched functions and allow_mismatch is false. Example: function '{}' is present in {} but not in {}",
-                        self.debug_string(),
-                        other.debug_string(),
-                        func_name,
-                        other.debug_string(),
-                        self.debug_string()
-                    );
-                }
-            }
-        }
-    }
-
-    /// Places this interface across from ModDef ports it is directly connected
-    /// to within the same module.
-    pub fn place_across(&self) {
-        for (_, port_slice) in self.get_port_slices() {
-            port_slice.place_across();
-        }
-    }
-
-    /// Places this interface based on what has been connected to it.
-    pub fn place_abutted(&self) {
-        for (_, port_slice) in self.get_port_slices() {
-            port_slice.place_abutted();
-        }
-    }
-
-    /// For each port slice in this interface, trace its connectivity to
-    /// determine what existing pin it is connected to, and then place a new
-    /// pin for the slice that overlaps the connected pin.
-    pub fn place_overlapped(&self, pin: &PhysicalPin) {
-        for (_, port_slice) in self.get_port_slices() {
-            port_slice.place_overlapped(pin);
-        }
     }
 
     pub fn connect_pipeline(&self, other: &Intf, pipeline: PipelineConfig, allow_mismatch: bool) {

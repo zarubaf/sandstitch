@@ -8,10 +8,6 @@ impl Port {
         self.to_port_slice().specify_net_name(net);
     }
 
-    pub fn set_max_distance(&self, max_distance: Option<i64>) {
-        self.to_port_slice().set_max_distance(max_distance);
-    }
-
     /// Connects this port to another port or port slice.
     pub fn connect<T: ConvertibleToPortSlice>(&self, other: &T) {
         self.to_port_slice().connect(other);
