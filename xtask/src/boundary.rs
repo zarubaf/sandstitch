@@ -4,6 +4,14 @@
 
 use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+static PHRASE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)axis-aligned|[xy] axis|\w+'s axis").unwrap());
+// `axi` must start a token ("s_axi_aw" counts, "taxing" does not).
+static FORBIDDEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)floo|pulp|(^|[^a-z0-9])axi").unwrap());
+static TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9_]+").unwrap());
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -23,10 +31,9 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
 /// benign when bounded by whitespace, line ends or light punctuation, never by
 /// `.`/`-`/identifier characters (so `x axis.tdata` is still flagged).
 fn strip_phrases(line: &str) -> String {
-    let phrase = Regex::new(r"(?i)axis-aligned|[xy] axis|\w+'s axis").unwrap();
     let mut out = String::new();
     let mut last = 0;
-    for m in phrase.find_iter(line) {
+    for m in PHRASE.find_iter(line) {
         let before_ok = line[..m.start()]
             .chars()
             .next_back()
@@ -48,10 +55,18 @@ fn strip_phrases(line: &str) -> String {
     out
 }
 
-/// Whole identifier tokens that are ordinary words.
+/// Whole identifier tokens that are ordinary words. Exact words only, so any
+/// compound such as `floorplan_floo` is still checked.
 fn benign_token(tok: &str, rest: &str) -> bool {
-    let words = Regex::new(r"(?i)^floor(plan\w*|s)?$").unwrap();
-    if words.is_match(tok) {
+    const WORDS: [&str; 6] = [
+        "floor",
+        "floors",
+        "floorplan",
+        "floorplans",
+        "floorplanner",
+        "floorplanning",
+    ];
+    if WORDS.iter().any(|w| tok.eq_ignore_ascii_case(w)) {
         return true;
     }
     tok == "axis_coordinate"
@@ -62,13 +77,10 @@ fn benign_token(tok: &str, rest: &str) -> bool {
 }
 
 fn line_violates(line: &str) -> bool {
-    // `axi` must start a token ("s_axi_aw" counts, "taxing" does not).
-    let forbidden = Regex::new(r"(?i)floo|pulp|(^|[^a-z0-9])axi").unwrap();
-    let token = Regex::new(r"[A-Za-z0-9_]+").unwrap();
     let line = strip_phrases(line);
-    token
+    TOKEN
         .find_iter(&line)
-        .any(|m| !benign_token(m.as_str(), &line[m.end()..]) && forbidden.is_match(m.as_str()))
+        .any(|m| !benign_token(m.as_str(), &line[m.end()..]) && FORBIDDEN.is_match(m.as_str()))
 }
 
 /// Returns `path:line` for every offending line.
@@ -161,6 +173,11 @@ mod tests {
             "fn f(axis: Port) {}",
             "relax axis_tvalid",
             "ready axis_tdata",
+            "floorplan_floo",
+            "floorplanFloo",
+            "floorplan_pulp",
+            "floorplan_s_axi_aw",
+            "floorplan_FlooRouter",
         ] {
             assert!(line_violates(bad), "should flag: {bad}");
         }
@@ -168,6 +185,9 @@ mod tests {
             "floorplan",
             "floor",
             "Floorplan",
+            "Floorplans",
+            "FLOORPLAN",
+            "Floorplanner",
             "// Floorplanning-related types",
             "axis-aligned",
             "// along the X axis",
