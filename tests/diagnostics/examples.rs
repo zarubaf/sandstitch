@@ -395,6 +395,24 @@ fn s0205() {
 }
 
 #[test]
+fn s0206() {
+    let entry = Entry::load(diagnostic::codes::S0206);
+    let paths = entry.paths();
+    let cfg = config(&paths);
+    documented! { entry;
+        let sel = ModDef::from_verilog_with_config("sel", &cfg);
+        let top = ModDef::new("top");
+        top.instantiate(&sel, Some("s"), None).get_port("hdr_i").tieoff(0);
+        let diagnostics = top.check();
+    }
+    entry.finish();
+    assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
+    assert_eq!(diagnostics.0[0].code, diagnostic::codes::S0206);
+    // The example shows the file as `sel.sv`.
+    entry.assert_output(&diagnostics.render().replace(paths[0], "sel.sv"));
+}
+
+#[test]
 fn s0301() {
     let entry = Entry::load(diagnostic::codes::S0301);
     let paths = entry.paths();

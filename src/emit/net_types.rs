@@ -31,7 +31,7 @@ use crate::{PortSlice, PortType, QualifiedName, Select};
 /// declared in a package, without negative bounds in its own packed
 /// dimensions. The name always denotes the element type: an array typedef is
 /// imported under its element's name with the typedef's dimensions.
-pub(super) fn declarable(ty: &PortType) -> Option<(&str, &str)> {
+pub(crate) fn declarable(ty: &PortType) -> Option<(&str, &str)> {
     let dims = match ty {
         PortType::Struct { packed, .. } | PortType::Union { packed, .. } => packed,
         _ => return None,

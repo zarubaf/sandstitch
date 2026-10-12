@@ -557,6 +557,12 @@ module up_src (output up_pkg::hdr_t o, output up_pkg::hdr_p_t p);
 endmodule
 module up_dst (input up_pkg::hdr_t i, input up_pkg::hdr_p_t q);
 endmodule
+module up_vec (input logic [11:0] v);
+endmodule
+module up_anon_src (output struct { logic [3:0] a; } o);
+endmodule
+module up_anon_dst (input struct { logic [3:0] a; } i);
+endmodule
 ";
 
 #[test]
@@ -618,10 +624,13 @@ fn packed_and_unpacked_structs_are_not_equivalent() {
     let d = top.instantiate(&dst, Some("d"), None);
     s.get_port("o").connect(&d.get_port("q"));
     s.get_port("p").connect(&d.get_port("i"));
+    // Each connection is S0201; each unpacked end is also S0206, as its
+    // net would be flat.
     let diagnostics = top.check();
-    assert_eq!(diagnostics.0.len(), 2, "{}", diagnostics.render());
-    assert!(
-        diagnostics.0.iter().all(|d| d.code == codes::S0201),
+    let codes_found: Vec<Code> = diagnostics.0.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes_found,
+        [codes::S0206, codes::S0206, codes::S0201, codes::S0201],
         "{}",
         diagnostics.render()
     );
@@ -824,4 +833,116 @@ fn check_skips_definitions_that_are_not_emitted() {
     }
     mid.set_usage(Usage::EmitDefinitionAndDescend);
     assert_eq!(top.check().0.len(), 1);
+}
+
+/// Checks that `top` reports S0206 exactly for `ports`, the first with
+/// `note` first, that
+/// `emit` panics with it, and that `old_rtl`, what emission produced before
+/// the check, is rejected by Slang.
+fn assert_s0206(
+    sources: &crate::common::slang::Sources,
+    top: &ModDef,
+    ports: &[&str],
+    note: &str,
+    old_rtl: &str,
+) {
+    let diagnostics = top.check();
+    assert_eq!(diagnostics.0.len(), ports.len(), "{}", diagnostics.render());
+    for (d, port) in diagnostics.0.iter().zip(ports) {
+        assert_eq!(d.code, codes::S0206);
+        assert!(
+            d.message
+                .ends_with(&format!("port `{port}` cannot be connected as bits")),
+            "{}",
+            d.message
+        );
+    }
+    assert_eq!(diagnostics.0[0].notes[0], note);
+    let message = panic_message(|| {
+        top.emit(EmitOptions::default());
+    });
+    assert!(message.starts_with("error[S0206]"), "{message}");
+    let slang = sources.elaborate(old_rtl, "top").unwrap_err();
+    assert!(slang.contains("error"), "{slang}");
+}
+
+#[test]
+fn unpacked_struct_to_vector_reports_s0206() {
+    let sources = crate::common::slang::Sources::new(&[UNPACKED]);
+    let (src, vec) = (sources.import("up_src"), sources.import("up_vec"));
+    let top = ModDef::new("top");
+    let s = top.instantiate(&src, Some("s"), None);
+    let v = top.instantiate(&vec, Some("v"), None);
+    s.get_port("o").connect(&v.get_port("v"));
+    s.get_port("p").unused();
+    assert_s0206(
+        &sources,
+        &top,
+        &["top.s.o"],
+        "it is connected to `top.v.v` of type `logic [11:0]`",
+        "module top;\n  wire [11:0] s_o;\n  up_src s (\n    .o(s_o),\n    .p()\n  );\n  \
+         up_vec v (\n    .v(s_o)\n  );\nendmodule\n",
+    );
+
+    // Through bit slices.
+    let top = ModDef::new("top");
+    let s = top.instantiate(&src, Some("s"), None);
+    let v = top.instantiate(&vec, Some("v"), None);
+    s.get_port("o")
+        .slice(11, 4)
+        .connect(&v.get_port("v").slice(7, 0));
+    s.get_port("o").slice(3, 0).unused();
+    v.get_port("v").slice(11, 8).tieoff(0);
+    s.get_port("p").unused();
+    assert_s0206(
+        &sources,
+        &top,
+        &["top.s.o"],
+        "only bits [11:4] of it are connected",
+        "module top;\n  wire [11:0] s_o;\n  up_src s (\n    .o({s_o[11:4], s_o[3:0]}),\n    \
+         .p()\n  );\n  up_vec v (\n    .v({4'h0, s_o[11:4]})\n  );\nendmodule\n",
+    );
+}
+
+#[test]
+fn anonymous_unpacked_struct_reports_s0206() {
+    let sources = crate::common::slang::Sources::new(&[UNPACKED]);
+    let (src, dst) = (sources.import("up_anon_src"), sources.import("up_anon_dst"));
+    assert!(
+        src.get_port("o")
+            .port_type()
+            .unwrap()
+            .equivalent(&dst.get_port("i").port_type().unwrap())
+            .is_ok()
+    );
+    let top = ModDef::new("top");
+    let s = top.instantiate(&src, Some("s"), None);
+    let d = top.instantiate(&dst, Some("d"), None);
+    s.get_port("o").connect(&d.get_port("i"));
+    assert_s0206(
+        &sources,
+        &top,
+        &["top.s.o", "top.d.i"],
+        "`struct {logic [3:0] a;}` is not named with its package, so no net can be declared with it",
+        "module top;\n  wire [3:0] s_o;\n  up_anon_src s (\n    .o(s_o)\n  );\n  \
+         up_anon_dst d (\n    .i(s_o)\n  );\nendmodule\n",
+    );
+}
+
+#[test]
+fn unpacked_struct_tieoff_reports_s0206() {
+    let sources = crate::common::slang::Sources::new(&[UNPACKED]);
+    let dst = sources.import("up_dst");
+    let top = ModDef::new("top");
+    let d = top.instantiate(&dst, Some("d"), None);
+    d.get_port("i").tieoff(0);
+    // A packed struct takes a literal.
+    d.get_port("q").tieoff(0);
+    assert_s0206(
+        &sources,
+        &top,
+        &["top.d.i"],
+        "it is tied off",
+        "module top;\n  up_dst d (\n    .i(12'h000),\n    .q(12'h000)\n  );\nendmodule\n",
+    );
 }

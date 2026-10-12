@@ -17,6 +17,10 @@ impl ModDef {
     /// Collects structural diagnostics of this module definition and every
     /// module definition it instantiates, directly or indirectly.
     ///
+    /// Reports S0206 for each port of an unpacked struct or union type that
+    /// would be emitted other than whole through a net of its type (see
+    /// `doc/errors/S0206.md`).
+    ///
     /// Reports S0201 for each connection between aggregate-typed ends
     /// (structs, unions or enums, as whole typed ports, fields or elements)
     /// whose types are not equivalent. Connections with a logic vector or a
@@ -34,16 +38,19 @@ impl ModDef {
             }
             // Collect the records first so that no lock on `core` is held
             // while the ends' types are looked up.
-            let (records, instances) = {
+            let (records, connections, instances) = {
                 let core = core.read();
                 let connections = core.mod_def_connections.values().chain(
                     core.mod_inst_connections
                         .values()
                         .flat_map(|ports| ports.values()),
                 );
-                let records: Vec<ConnectionRecord> = connections
-                    .flat_map(|c| c.read().records().to_vec())
-                    .collect();
+                let (mut records, mut all) = (Vec::new(), Vec::new());
+                for c in connections {
+                    let c = c.read();
+                    records.extend(c.records().iter().cloned());
+                    all.extend(c.into_iter().cloned());
+                }
                 // Definitions whose internals are not emitted are not checked.
                 let instances: Vec<Arc<RwLock<ModDefCore>>> = core
                     .instances
@@ -52,9 +59,10 @@ impl ModDef {
                     .filter(|inst| inst.read().usage == Usage::EmitDefinitionAndDescend)
                     .cloned()
                     .collect();
-                (records, instances)
+                (records, all, instances)
             };
             diagnostics.extend(records.iter().filter_map(check_record));
+            diagnostics.extend(super::unpacked::check_connections(&connections));
             stack.extend(instances);
         }
         // Report in the order of the call sites.

@@ -8,7 +8,7 @@ a file with `## Example` and `## Fix` sections and a row in the table below
 must be exactly those of the `rust` blocks (ignoring whitespace and comments),
 and it must report the entry's code. Where an entry shows the output, its
 header, notes and helps must be those of the run and the source lines it
-quotes must be in the example (S0301 and S0302: the whole output).
+quotes must be in the example (S0206, S0301 and S0302: the whole output).
 
 | Code | Title |
 | --- | --- |
@@ -22,5 +22,6 @@ quotes must be in the example (S0301 and S0302: the whole output).
 | [S0203](S0203.md) | index out of range |
 | [S0204](S0204.md) | field access through union |
 | [S0205](S0205.md) | field access on an unpacked struct |
+| [S0206](S0206.md) | unpacked aggregate connected as bits |
 | [S0301](S0301.md) | module defined twice in the build |
 | [S0302](S0302.md) | macro defined differently in the build |
