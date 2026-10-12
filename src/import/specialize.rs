@@ -356,7 +356,7 @@ pub(crate) fn validate(
         if !IDENTIFIER.is_match(name) {
             let mut d = error_at(
                 codes::S0101,
-                format!("`{module}` has no parameter `{name}`"),
+                format!("`{module}` has no overridable parameter `{name}`"),
                 caller,
                 "overridden here",
             );
@@ -590,7 +590,7 @@ fn check_extra_arguments(
     }
     let mut d = error_at(
         codes::S0102,
-        format!("cannot elaborate a specialization of `{module}`"),
+        format!("cannot elaborate `{module}`"),
         caller,
         "specialized here",
     );
@@ -706,7 +706,7 @@ fn elaboration_top(
 fn elaboration_io_failure(module: &str, caller: &Span, note: String) -> ImportError {
     let mut d = error_at(
         codes::S0102,
-        format!("could not elaborate a specialization of `{module}`"),
+        format!("cannot elaborate `{module}`"),
         caller,
         "specialized here",
     );
@@ -854,10 +854,13 @@ pub(crate) fn overridable_parameters(
 fn module_not_found(module: &str, caller: &Span) -> ImportError {
     let mut d = error_at(
         codes::S0102,
-        format!("module definition `{module}` not found in Verilog sources"),
+        format!("cannot elaborate `{module}`"),
         caller,
         "specialized here",
     );
+    d.notes.push(format!(
+        "module definition `{module}` not found in the Verilog sources"
+    ));
     d.helps
         .push("check the sources the module was imported with".to_string());
     import_error(vec![d])
@@ -879,7 +882,7 @@ fn slang_failure(
 ) -> ImportError {
     let mut d = error_at(
         codes::S0102,
-        format!("Slang failed to elaborate a specialization of `{module}`"),
+        format!("cannot elaborate `{module}`"),
         caller,
         "specialized here",
     );

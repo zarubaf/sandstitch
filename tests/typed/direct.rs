@@ -218,10 +218,7 @@ fn no_overrides_is_a_plain_import() {
         .err()
         .unwrap();
     assert_eq!(direct.diagnostics.0[0].code, codes::S0102);
-    assert_eq!(
-        direct.diagnostics.0[0].message,
-        "Slang failed to elaborate `m`"
-    );
+    assert_eq!(direct.diagnostics.0[0].message, "cannot elaborate `m`");
     assert_eq!(direct.to_string(), plain.to_string());
 
     // Elaborating defaults: an unspecialized module.
@@ -275,10 +272,7 @@ fn wrong_kind_reports_s0105_and_bad_type_s0102() {
     let e = result.err().unwrap();
     let d = &e.diagnostics.0[0];
     assert_eq!(d.code, codes::S0102, "{e}");
-    assert_eq!(
-        d.message,
-        "Slang failed to elaborate a specialization of `m`"
-    );
+    assert_eq!(d.message, "cannot elaborate `m`");
     assert_eq!(primary_line(&e), (file!().to_string(), line - 1));
     assert!(
         d.secondary
@@ -329,10 +323,7 @@ endmodule
         .unwrap();
     let d = &e.diagnostics.0[0];
     assert_eq!(d.code, codes::S0102, "{e}");
-    assert_eq!(
-        d.message,
-        "Slang failed to elaborate a specialization of `m`"
-    );
+    assert_eq!(d.message, "cannot elaborate `m`");
     assert!(d.secondary.iter().any(|l| l.text == "expected ')'"), "{e}");
     // Errors on the overrides are consequences of the recovery: no notes.
     assert!(

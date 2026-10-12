@@ -253,11 +253,7 @@ fn s0102() {
         Ok(())
     };
     let err = run().unwrap_err();
-    assert_code(
-        &err,
-        diagnostic::codes::S0102,
-        "Slang failed to elaborate `router`",
-    );
+    assert_code(&err, diagnostic::codes::S0102, "cannot elaborate `router`");
     let label = &err.diagnostics.0[0].primary.text;
     assert!(label.contains("cfg_pkg"), "{label}");
     entry.finish();

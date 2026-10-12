@@ -425,10 +425,7 @@ fn missing_module_reports_s0102() {
     let err = sources.import("b").err().unwrap();
     assert_eq!(err.diagnostics.0.len(), 1);
     assert_eq!(err.diagnostics.0[0].code, codes::S0102);
-    assert_eq!(
-        err.diagnostics.0[0].message,
-        "module definition `b` not found in Verilog sources"
-    );
+    assert_eq!(err.diagnostics.0[0].message, "cannot elaborate `b`");
 }
 
 #[test]
@@ -443,7 +440,7 @@ endmodule
     let err = sources.import("s").err().unwrap();
     let d = &err.diagnostics.0[0];
     assert_eq!(d.code, codes::S0102);
-    assert_eq!(d.message, "Slang failed to elaborate `s`");
+    assert_eq!(d.message, "cannot elaborate `s`");
     let Span::Sv { file, line, .. } = &d.primary.span else {
         panic!("expected an SV span, got {:?}", d.primary.span);
     };

@@ -479,7 +479,7 @@ pub(crate) fn slang_failure(module: &str, err: &dyn std::error::Error) -> Import
         diagnostics: Diagnostics(vec![Diagnostic {
             code: codes::S0102,
             severity: Severity::Error,
-            message: format!("Slang failed to elaborate `{module}`"),
+            message: format!("cannot elaborate `{module}`"),
             primary,
             secondary,
             notes,
@@ -494,12 +494,16 @@ pub(crate) fn slang_failure(module: &str, err: &dyn std::error::Error) -> Import
 pub(crate) fn module_not_found(module: &str) -> ImportError {
     let mut d = error(
         codes::S0102,
-        format!("module definition `{module}` not found in Verilog sources"),
+        format!("cannot elaborate `{module}`"),
         Label {
             span: Span::None,
             text: "not a top-level module of the elaborated design".into(),
         },
     );
+    d.notes.push(format!(
+        "module definition `{module}` not found in the Verilog sources, or instantiated by \
+         another module"
+    ));
     d.helps.push(format!(
         "check the sources, or select the module with `tops: &[\"{module}\"]`"
     ));
