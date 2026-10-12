@@ -1,0 +1,14 @@
+[package]
+name = "floonoc"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+description = "FlooNoC router and 2x2 mesh design package built on the sandstitch library"
+
+[dependencies]
+topstitch = { path = "../.." }
+sha2 = "0.10.8"
+
+[dev-dependencies]
+tempfile = "3"
