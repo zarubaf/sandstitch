@@ -1,0 +1,10 @@
+# Copyright 2024 ETH Zurich and University of Bologna.
+# Licensed under the Apache License, Version 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+
+# Waive rule for struct typedef in synthesis wrappers
+waive --rule=package-filename --location="hw/synth/floo_synth_params_pkg.sv"
+
+# floo_alu.sv contains a package and multiple modules; only one can match the file name
+waive --rule=package-filename --location="hw/floo_alu.sv"
+waive --rule=module-filename --location="hw/floo_alu.sv"

@@ -1,0 +1,104 @@
+# Copyright 2023 ETH Zurich and University of Bologna.
+# Licensed under the Apache License, Version 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Author: Tim Fischer <fischeti@iis.ee.ethz.ch>
+
+from pydantic import Field, model_validator
+
+from floogen.model.config import ArrayDims, ConfigModel, OneOrMany
+from floogen.model.protocol import ProtocolDesc
+from floogen.model.routing import AddrRange, Coord, SimpleId
+
+
+class EndpointDesc(ConfigModel):
+    """
+    Endpoint class to describe an endpoint with address ranges and configuration parameters.
+
+    Attributes:
+        name (str): Unique identifier for the endpoint. Used in connection definitions.
+        description (Optional[str]): Optional description of the endpoint.
+        array (Optional[Union[Tuple[int], Tuple[int, int]]]): Defines the endpoint as an array (1D or 2D). E.g., `[4]` for a 1D array of size 4, or `[4, 4]` for a 4x4 grid.
+        addr_range (List[AddrRange]): Defines the address regions served by this endpoint (required if it acts as a Subordinate).
+        xy_id_offset (Optional[Union[SimpleId, Coord]]): Offsets for XY coordinates or IDs, used to manually adjust the logical position of the endpoint in the network.
+        mgr_port_protocol (Optional[List[str]]): List of protocol names (defined in `protocols`) that this endpoint uses to send requests (Manager role).
+        sbr_port_protocol (Optional[List[str]]): List of protocol names (defined in `protocols`) that this endpoint uses to receive requests (Subordinate role).
+    """
+
+    name: str
+    description: str | None = ""
+    array: ArrayDims | None = None
+    num: int | None = None
+    """The total number of endpoints based on the `array` configuration."""
+    addr_range: OneOrMany[AddrRange] = Field(default_factory=list)
+    xy_id_offset: SimpleId | Coord | None = None
+    mgr_port_protocol: list[str] | None = None
+    sbr_port_protocol: list[str] | None = None
+
+    @model_validator(mode="after")
+    def check_addr_range(self):
+        """Check if the address range is valid."""
+        # Manager-only endpoints do not need an address range
+        match (self.sbr_port_protocol, self.addr_range):
+            case (None, _):
+                return self
+            case (_, None):
+                raise ValueError("Endpoint is a Subordinate and requires an address range")
+        return self
+
+    @model_validator(mode="after")
+    def set_number_eps(self):
+        """Set the number of endpoints based on `array`"""
+        if self.array is None:
+            self.num = 1
+        elif len(self.array) == 1:
+            self.num = self.array[0]
+        elif len(self.array) == 2:
+            self.num = self.array[0] * self.array[1]
+        else:
+            raise ValueError("Invalid array size")
+        return self
+
+    def is_sbr(self) -> bool:
+        """Return true if the endpoint is a subordinate."""
+        return self.sbr_port_protocol is not None
+
+    def is_mgr(self) -> bool:
+        """Return true if the endpoint is a manager."""
+        return self.mgr_port_protocol is not None
+
+    def is_only_sbr(self) -> bool:
+        """Return true if the endpoint is only a subordinate."""
+        return self.is_sbr() and not self.is_mgr()
+
+    def is_only_mgr(self) -> bool:
+        """Return true if the endpoint is only a manager."""
+        return self.is_mgr() and not self.is_sbr()
+
+    def is_collective_ep(self) -> bool:
+        """Return true if the endpoint supports collective operations."""
+        return any(b for b in self.addr_range if b.en_collective)
+
+    def get_ni_name(self, name: str) -> str:
+        """Return the name of the NI."""
+        return name.replace(self.name, f"{self.name}_ni")
+
+    def render_ports(self):
+        """Render the ports of the endpoint."""
+
+
+class Endpoint(EndpointDesc):
+    """Endpoint class to describe an endpoint with address ranges and configuration parameters."""
+
+    mgr_ports: list[ProtocolDesc] = Field(default_factory=list)
+    sbr_ports: list[ProtocolDesc] = Field(default_factory=list)
+
+    def render_ports(self, pkg_name=""):
+        """Render the ports of the endpoint."""
+        ports = []
+        collective_prefix = "collective" if self.is_collective_ep() else ""
+        for port in self.mgr_ports:
+            ports += port.render_port(pkg_name, prefix=collective_prefix)
+        for port in self.sbr_ports:
+            ports += port.render_port(pkg_name, prefix=collective_prefix)
+        return ports

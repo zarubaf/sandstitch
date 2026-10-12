@@ -1,0 +1,63 @@
+# Copyright 2023 ETH Zurich and University of Bologna.
+# Solderpad Hardware License, Version 0.51, see LICENSE for details.
+# SPDX-License-Identifier: SHL-0.51
+
+# Author: Tim Fischer <fischeti@iis.ee.ethz.ch>
+
+name: lint
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  ################
+  # Verible Lint #
+  ################
+  verible-lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7.0.1
+    - uses: chipsalliance/verible-linter-action@main
+      with:
+        config_file: ''
+        paths: |
+          ./hw
+        extra_args: "--waiver_files util/verible.waiver"
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        fail_on_error: true
+        reviewdog_reporter: github-check
+
+  #########
+  # Hooks #
+  #########
+  # Runs the pre-commit hooks from `.pre-commit-config.yaml`, which cover `ruff`
+  # and `ty` as well as whitespace, YAML/TOML and REUSE header checks. This makes
+  # the checks identical for contributors who have the hooks installed locally
+  # and those who have not.
+  hooks:
+    runs-on: ubuntu-latest
+    env:
+      # Report `ruff` violations as inline annotations.
+      RUFF_OUTPUT_FORMAT: github
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.0.1
+      - run: uv run prek run --all-files --show-diff-on-failure
+
+  #########
+  # REUSE #
+  #########
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: fsfe/reuse-action@v6

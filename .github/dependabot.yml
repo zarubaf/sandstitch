@@ -1,0 +1,45 @@
+# Copyright 2024 ETH Zurich and University of Bologna.
+# Solderpad Hardware License, Version 0.51, see LICENSE for details.
+# SPDX-License-Identifier: SHL-0.51
+
+version: 2
+updates:
+  # Python dependencies managed by uv (pyproject.toml + uv.lock)
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    # Only update to versions that have been published for at least 7 days,
+    # to avoid pulling in compromised releases that get yanked quickly.
+    cooldown:
+      default-days: 7
+    ignore:
+      # Dependabot currently detects uv_build from [build-system.requires]
+      # as uv-build, but cannot determine its previous version.
+      - dependency-name: "uv-build"
+    groups:
+      python-deps:
+        patterns: ["*"]
+
+  # Hook repositories pinned by `rev` in .pre-commit-config.yaml. The hooks that
+  # run through `uv` are covered by the `uv` ecosystem above instead.
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    groups:
+      pre-commit-hooks:
+        patterns: ["*"]
+
+  # GitHub Actions used in .github/workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
