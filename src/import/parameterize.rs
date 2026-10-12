@@ -100,10 +100,10 @@ impl ModDef {
     /// Imports module `name` from the sources in `cfg` directly with the
     /// parameter `overrides`; the module's defaults need not elaborate (its
     /// definition is elaborated alone only to read its declarations, and a
-    /// failure there is tolerated). Use this for a
-    /// module whose defaults do not elaborate, for example a type parameter defaulting to `logic` that the
-    /// module uses as a struct, or a count defaulting to 0 that is used as an
-    /// index. Otherwise the result is the same as
+    /// failure there is tolerated). Use this for a module whose defaults do
+    /// not elaborate, for example a type parameter defaulting to `logic` that
+    /// the module uses as a struct, or a count defaulting to 0 that is used as
+    /// an index. Otherwise the result is the same as
     /// [`ModDef::try_from_verilog_with_config`] followed by
     /// [`ModDef::try_parameterize`] with the same overrides: the same ports
     /// and types, [`ModDef::specialization_key`], emitted `#(...)` override

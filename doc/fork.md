@@ -101,8 +101,10 @@ Typed specialization (#4, [design](design/typed-specialization.md)):
   are base overrides of its specializations.
 - Typed connections: `field`, `index` and `Select` on port slices
   (S0202 to S0205), `connect_bits`, and `ModDef::check` (S0201 for
-  non-equivalent aggregate ends). `emit` runs `check` first and panics on errors; connections with a
-  logic vector or untyped end are width-checked only, as upstream.
+  non-equivalent aggregate ends, S0206 for unpacked aggregates that would be
+  emitted as bits). `emit` runs `check` first and panics on errors;
+  connections with a logic vector or untyped end are width-checked only, as
+  upstream.
 - Typed emission: nets and ports of package-named structs and unions whose
   uses are all typed are declared with that type and connected with member
   selects and indices; everything else stays flat as upstream. Designs
@@ -194,5 +196,6 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
 ### Third-party RTL
 
 `third_party/` holds squashed subtrees of FlooNoC, common_cells and axi for
-tests only; see `third_party/README.md`. `third_party/` and `crates/slang-rs/` keep
-their upstream licence headers and are excluded from the root SPDX test (`crates/xlsynth-vast/` is checked).
+tests only; see `third_party/README.md`. `third_party/` and `crates/slang-rs/`
+keep their upstream licence headers and are excluded from the root SPDX test
+(`crates/xlsynth-vast/` is checked).
