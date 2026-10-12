@@ -11,8 +11,8 @@ homepage = "https://github.com/zarubaf/sandstitch"
 [dependencies]
 num-bigint = "0.4.3"
 indexmap = "2.5.0"
-xlsynth-vast = "0.65.0"
-slang-rs = "0.22.0"
+xlsynth-vast = "=0.65.0"
+slang-rs = "=0.22.0"
 itertools = "0.10"
 regex = "1.11.0"
 nalgebra = { version = "0.32", default-features = false, features = ["macros"] }
