@@ -43,6 +43,12 @@ codes! {
     S0205;
     /// Unpacked struct or union connected as bits.
     S0206;
+    /// Interface member without a partner.
+    S0207;
+    /// Interface member repeated in one direction.
+    S0208;
+    /// Name-based interface operation on a member present in both directions.
+    S0209;
     /// Module defined both by emitted RTL and by a manifest source.
     S0301;
     /// Macro defined differently by two imports in the build.

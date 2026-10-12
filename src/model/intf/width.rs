@@ -3,6 +3,7 @@
 use crate::Intf;
 
 impl Intf {
+    #[track_caller]
     pub fn width(&self) -> usize {
         self.get_port_slices()
             .values()

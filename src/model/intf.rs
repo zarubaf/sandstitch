@@ -3,8 +3,6 @@
 use parking_lot::RwLock;
 use std::sync::{Arc, Weak};
 
-use indexmap::IndexMap;
-
 use crate::model::mod_def::ModDefCore;
 use crate::model::mod_inst::HierPathElem;
 use crate::{ConvertibleToPortSliceVec, MetadataKey, MetadataValue, ModInst, PortSlice};
@@ -15,7 +13,7 @@ pub(crate) mod crossover;
 mod debug;
 mod export;
 mod feedthrough;
-mod members;
+pub(crate) mod members;
 mod subdivide;
 mod tieoff;
 mod width;
@@ -57,19 +55,19 @@ impl Intf {
         }
     }
 
-    pub(crate) fn get_port_slices(&self) -> IndexMap<String, PortSlice> {
-        self.members().into_iter().collect()
-    }
-
     /// Returns the port slice for the given function name if present, otherwise `None`.
+    ///
+    /// Panics with S0209 if the interface has the name in both directions;
+    /// use [`Intf::members`] for those.
+    #[track_caller]
     pub fn get(&self, func_name: impl AsRef<str>) -> Option<PortSlice> {
-        self.members()
-            .into_iter()
-            .find(|(name, _)| name == func_name.as_ref())
-            .map(|(_, slice)| slice)
+        self.unique_member(func_name.as_ref())
     }
 
     /// Removes and returns the port slice for the given function name if present.
+    ///
+    /// Panics with S0209 if the interface has the name in both directions.
+    #[track_caller]
     pub fn remove(&self, func_name: impl AsRef<str>) -> Option<PortSlice> {
         let slice = self.get(func_name.as_ref())?;
         let core = match self {
@@ -87,16 +85,19 @@ impl Intf {
     }
 
     /// Returns an iterator over the interface functions and their port slices.
+    #[track_caller]
     pub fn iter(&self) -> indexmap::map::IntoIter<String, PortSlice> {
         self.get_port_slices().into_iter()
     }
 
     /// Returns an iterator over the interface function names.
+    #[track_caller]
     pub fn keys(&self) -> indexmap::map::IntoKeys<String, PortSlice> {
         self.get_port_slices().into_keys()
     }
 
     /// Returns an iterator over the interface port slices.
+    #[track_caller]
     pub fn values(&self) -> indexmap::map::IntoValues<String, PortSlice> {
         self.get_port_slices().into_values()
     }

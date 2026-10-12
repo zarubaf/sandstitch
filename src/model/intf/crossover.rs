@@ -18,11 +18,13 @@ impl Intf {
     /// `data_tx` function on this interface (mapped to `a_data_tx`) to the
     /// `data_rx` function on the other interface (mapped to `b_data_rx`), and
     /// vice versa.
+    #[track_caller]
     pub fn crossover(&self, other: &Intf, pattern_a: impl AsRef<str>, pattern_b: impl AsRef<str>) {
         self.crossover_generic(other, pattern_a, pattern_b, None, None::<&[&str]>);
     }
 
     /// Connects this interface to another interface, skipping the specified functions.
+    #[track_caller]
     pub fn crossover_except<'a, I, T>(
         &self,
         other: &Intf,
@@ -36,6 +38,7 @@ impl Intf {
         self.crossover_generic(other, pattern_a, pattern_b, None, skip);
     }
 
+    #[track_caller]
     pub fn crossover_pipeline(
         &self,
         other: &Intf,
@@ -46,6 +49,7 @@ impl Intf {
         self.crossover_generic(other, pattern_a, pattern_b, Some(pipeline), None::<&[&str]>);
     }
 
+    #[track_caller]
     pub fn crossover_pipeline_except<'a, I, T>(
         &self,
         other: &Intf,
@@ -60,6 +64,7 @@ impl Intf {
         self.crossover_generic(other, pattern_a, pattern_b, Some(pipeline), skip);
     }
 
+    #[track_caller]
     fn crossover_generic<'a, I, T>(
         &self,
         other: &Intf,
@@ -101,6 +106,7 @@ impl Intf {
     /// crossover pattern. For example, one could have "^(.*)_tx$" and
     /// "^(.*)_rx$" as the patterns, and this would connect the "tx" signals
     /// on this interface to the "rx" signals on the other interface.
+    #[track_caller]
     pub fn crossover_through(
         &self,
         other: &Intf,
@@ -130,6 +136,7 @@ impl Intf {
     /// "^(.*)_rx$" as the patterns, and this would connect the "tx" signals
     /// on this interface to the "rx" signals on the other interface.
     /// Optional pipelining is used for each connection.
+    #[track_caller]
     pub fn crossover_through_generic(
         &self,
         other: &Intf,

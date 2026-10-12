@@ -1,7 +1,7 @@
 error[S0203]: index 8 is out of range for `sel_pkg::hdr_t [7:0]`
-  --> tests/diagnostics/typed.rs:80:32
+  --> tests/diagnostics/typed.rs:62:32
    |
-80 |         sel.get_port("hdrs_i").index(8);
+62 |         sel.get_port("hdrs_i").index(8);
    |                                ^^^^^ index selected here
    |
   ::: tests/diagnostics/fixtures/typed.sv:23:21

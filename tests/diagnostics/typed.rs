@@ -2,7 +2,7 @@
 
 //! Snapshots of diagnostics produced by typed connections.
 
-use super::check_snapshot;
+use super::{check_snapshot, panic_snapshot};
 use topstitch::*;
 
 const FIXTURE: &str = "tests/diagnostics/fixtures/typed.sv";
@@ -45,24 +45,6 @@ fn s0201_field_mismatch() {
     assert_eq!(diagnostics.0.len(), 1);
     assert_eq!(diagnostics.0[0].code, diagnostic::codes::S0201);
     check_snapshot("s0201_field_mismatch", &diagnostics);
-}
-
-/// Checks the panic message of `f` against a snapshot, with absolute fixture
-/// paths made relative.
-fn panic_snapshot(name: &str, f: impl FnOnce()) {
-    let payload =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).expect_err("expected a panic");
-    let message = payload.downcast::<String>().expect("a String panic");
-    let root = format!("{}/", env!("CARGO_MANIFEST_DIR"));
-    let actual = format!("{}\n", message.replace(&root, ""));
-    let path = format!("tests/diagnostics/snapshots/{name}.txt");
-    if std::env::var("UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
-        std::fs::write(&path, &actual).unwrap();
-        return;
-    }
-    let expected = std::fs::read_to_string(&path)
-        .unwrap_or_else(|_| panic!("missing snapshot {path}; run with UPDATE_SNAPSHOTS=1"));
-    assert_eq!(actual, expected, "snapshot {name} differs");
 }
 
 #[test]

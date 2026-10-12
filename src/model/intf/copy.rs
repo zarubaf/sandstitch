@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 use crate::{ConvertibleToModDef, Intf};
 
 impl Intf {
+    #[track_caller]
     pub fn flip_to(&self, mod_def_or_mod_inst: &impl ConvertibleToModDef) -> Intf {
         let mut mapping = IndexMap::new();
         for (func_name, port_slice) in self.get_port_slices() {
@@ -19,6 +20,7 @@ impl Intf {
         mod_def_or_mod_inst.get_intf(self.get_intf_name())
     }
 
+    #[track_caller]
     pub fn copy_to(&self, mod_def_or_mod_inst: &impl ConvertibleToModDef) -> Intf {
         let mut mapping = IndexMap::new();
         for (func_name, port_slice) in self.get_port_slices() {
@@ -34,6 +36,7 @@ impl Intf {
         mod_def_or_mod_inst.get_intf(self.get_intf_name())
     }
 
+    #[track_caller]
     pub fn copy_to_with_prefix(
         &self,
         mod_def_or_mod_inst: &impl ConvertibleToModDef,
@@ -53,6 +56,7 @@ impl Intf {
         mod_def_or_mod_inst.get_intf(&name)
     }
 
+    #[track_caller]
     pub fn copy_to_with_name_underscore(
         &self,
         mod_def_or_mod_inst: &impl ConvertibleToModDef,
@@ -62,6 +66,7 @@ impl Intf {
         self.copy_to_with_prefix(mod_def_or_mod_inst, name, prefix)
     }
 
+    #[track_caller]
     pub fn flip_to_with_prefix(
         &self,
         mod_def_or_mod_inst: &impl ConvertibleToModDef,
@@ -81,6 +86,7 @@ impl Intf {
         mod_def_or_mod_inst.get_intf(&name)
     }
 
+    #[track_caller]
     pub fn flip_to_with_name_underscore(
         &self,
         mod_def_or_mod_inst: &impl ConvertibleToModDef,

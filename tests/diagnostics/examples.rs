@@ -390,6 +390,57 @@ fn s0205() {
     });
 }
 
+/// The examples that define interfaces on `node` and panic.
+fn node_panic(code: Code, run: impl FnOnce(&Entry, &ModDef)) {
+    let entry = Entry::load(code);
+    let paths = entry.paths();
+    let cfg = config(&paths);
+    documented! { entry;
+        let node = ModDef::from_verilog_with_config("node", &cfg);
+    }
+    let rendered = panic_message(|| run(&entry, &node));
+    entry.finish();
+    assert!(
+        rendered.starts_with(&format!("error[{}]: ", code.0)),
+        "{rendered}"
+    );
+    entry.assert_summary(&rendered);
+}
+
+#[test]
+fn s0207() {
+    node_panic(diagnostic::codes::S0207, |entry, node| {
+        // The example owns `node`.
+        let node = node.clone();
+        documented! { entry;
+            node.def_intf_members("link", [("req", node.get_port("req_o").index(0)), ("req", node.get_port("req_i").index(0)), ("rsp", node.get_port("rsp_o").index(0))]);
+            let top = ModDef::new("top");
+            let a = top.instantiate(&node, Some("a"), None);
+            let b = top.instantiate(&node, Some("b"), None);
+            a.get_intf("link").connect(&b.get_intf("link"), false);
+        }
+    });
+}
+
+#[test]
+fn s0208() {
+    node_panic(diagnostic::codes::S0208, |entry, node| {
+        documented! { entry;
+            node.def_intf_members("link", [("req", node.get_port("req_o").index(0)), ("req", node.get_port("req_o").index(1))]);
+        }
+    });
+}
+
+#[test]
+fn s0209() {
+    node_panic(diagnostic::codes::S0209, |entry, node| {
+        documented! { entry;
+            let link = node.def_intf_members("link", [("req", node.get_port("req_o").index(0)), ("req", node.get_port("req_i").index(0))]);
+            link.get("req");
+        }
+    });
+}
+
 #[test]
 fn s0206() {
     let entry = Entry::load(diagnostic::codes::S0206);

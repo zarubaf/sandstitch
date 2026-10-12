@@ -40,7 +40,7 @@ let link = router.def_intf_members(
 
 Every slice must belong to a port of that `ModDef`; anything else panics, as `def_intf` does for unknown ports. `def_intf`, `def_intf_from_prefix(es)`, `def_intf_from_name_underscore` and `def_intf_from_regex(es)` keep their signatures and build members from their `(port, msb, lsb)` mappings; a range covering the whole port is a typed whole-port member, any other range a plain bit slice, as today.
 
-`Intf::get(name)` and `Intf::remove(name)` return the member of that name; on a name present in both directions they are S0209. `get_member(name, direction)` reads either.
+`Intf::get(name)` and `Intf::remove(name)` return the member of that name; on a name present in both directions they are S0209. `Intf::members()` lists every member as `(name, slice)` in definition order; the slice gives its direction.
 
 ## Direction rule
 
@@ -53,7 +53,7 @@ A member's *driving direction* says which side drives it when seen from the modu
 | the module being built (`Intf::ModDef`) | input | into the module's body |
 | the module being built | output | out of the module's body |
 
-So an input port of the parent drives the parent's body, like an output of a child. `connect` pairs a driving member with a driven one in every case.
+So an input port of the parent drives the parent's body, like an output of a child. This is `PortDirectionality` (`Driver`, `Receiver`, `InOut`). `connect` pairs a driving member with a driven one, and an inout with an inout.
 
 ## Operations
 
@@ -63,9 +63,9 @@ So an input port of the parent drives the parent's body, like an output of a chi
 | `intf.export_with_prefix(name, prefix)` | Exports each member to the parent as port `<prefix><member>`, with the member's type and direction, and defines interface `name` on the parent with the same members. When a name is present in both directions the ports are `<prefix><member>_i` and `<prefix><member>_o`. `export_with_name_underscore` and `export` follow the same rule. |
 | `intf.unused_and_tieoff(value)` | Ties off every member driven into the instance and marks every member driven out of it unused. `tieoff` and `unused` alone touch only their own direction. |
 
-Interfaces with unique names keep today's results for all three: the only member of a name pairs with the same name on the other side, as upstream's name matching does, and exported names gain no suffix.
+Interfaces with unique names keep today's results for all three: when neither interface repeats a name, members pair by name alone, as upstream, so a wrong direction is still the connect-time direction error; exported names gain no suffix.
 
-`connect_except`, `connect_pipeline(_except)`, `connect_through(_generic)`, `crossover*`, `subdivide`, `copy_to*`, `flip_to*` and `feedthrough*` are unchanged for interfaces with unique names. On an interface that repeats a name they report S0209 instead of producing a wrong result.
+`connect_except` skips a name in both directions. `connect_pipeline(_except)`, `connect_through(_generic)`, `crossover*`, `subdivide`, `copy_to*`, `flip_to*`, `feedthrough*`, `width`, `iter`, `keys` and `values` are unchanged for interfaces with unique names; on an interface that repeats a name they report S0209 instead of producing a wrong result.
 
 ## Diagnostics
 

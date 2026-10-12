@@ -23,5 +23,8 @@ quotes must be in the example (S0206, S0301 and S0302: the whole output).
 | [S0204](S0204.md) | field access through union |
 | [S0205](S0205.md) | field access on an unpacked struct |
 | [S0206](S0206.md) | unpacked aggregate connected as bits |
+| [S0207](S0207.md) | member without a partner |
+| [S0208](S0208.md) | interface member repeated in one direction |
+| [S0209](S0209.md) | name-based operation on a member in both directions |
 | [S0301](S0301.md) | module defined twice in the build |
 | [S0302](S0302.md) | macro defined differently in the build |
