@@ -62,10 +62,10 @@ fn find_missing_spdx_files(root: &Path) -> Vec<PathBuf> {
 
             if path.is_dir() {
                 // Exclude directories that should not be checked
-                // `crates/` (forks) and `third_party/` keep their upstream headers.
-                let is_vendored = path.parent().is_some_and(|p| {
-                    p == root
-                        && matches!(entry.file_name().to_str(), Some("crates" | "third_party"))
+                // `third_party/` and `crates/slang-rs/` (which has its own SPDX
+                // test) keep their upstream headers.
+                let is_vendored = path.strip_prefix(root).is_ok_and(|rel| {
+                    rel == Path::new("third_party") || rel == Path::new("crates/slang-rs")
                 });
                 if entry.file_name() != "target"
                     && entry.file_name() != ".git"
