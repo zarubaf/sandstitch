@@ -45,7 +45,7 @@ The first example is a small mesh connecting repeated compute tiles and memory e
 | Documentation | Module descriptions, parameter values, interface tables, hierarchy views, and diagnostics |
 | Release package | Prebuilt engine, importer support, and browser assets for the initial supported platform |
 
-The Python binding approach is settled at the technology level: a thin authoring API over native functionality. It should not become a separate model implementation or a broad API-design project before the core workflow works.
+The first release is Rust-first: designs and generators are authored in Rust against the library API, and the CLI builds them. Language bindings, including Python, are deferred. When added, a binding is a thin authoring API over native functionality; it must not become a separate model implementation or a broad API-design project before the core workflow works.
 
 ## Technology and reuse
 
@@ -57,7 +57,8 @@ The Python binding approach is settled at the technology level: a thin authoring
 | Browser UI | React and TypeScript with React Flow | Hardware blocks, interface views, hierarchy navigation, and inspection |
 | Layout | ELK.js; generator-provided mesh coordinates | Layout settings and hardware-specific presentation |
 | Serialization | Serde and JSON | A small versioned structural snapshot |
-| Python packaging | PyO3 and Maturin | A narrow binding surface and tested wheels |
+| Distribution | Cargo; prebuilt release binaries | A self-contained CLI with bundled Slang support and explorer assets |
+| Language bindings (deferred) | PyO3 and Maturin for Python, when needed | A narrow binding surface over the Rust API |
 | Documentation | Existing Markdown and HTML rendering components | Templates driven by the structural snapshot |
 
 Topstitch 0.100.0 declares xlsynth-vast and slang-rs dependencies. The XLSynth project describes xlsynth-vast as a standalone Rust-native AST builder and emitter that does not require libxls. Preserve this dependency separation in the fork. [Topstitch dependencies](https://docs.rs/crate/topstitch/0.100.0/source/Cargo.toml.orig) · [XLSynth project structure](https://github.com/xlsynth/xlsynth-crate)
@@ -157,9 +158,9 @@ Simulation, lint, CDC/RDC, protocol verification, synthesis, and signoff remain 
 
 ## Distribution and development loop
 
-The proposed first supported target is Linux x86-64. In milestone 1, pin the exact fork, slang-rs and Slang combination, supported Python versions, minimum glibc and C++ runtime requirements, and the oldest supported host environment. Install the actual wheel in that clean environment immediately; compatibility with a GitHub runner alone is insufficient. Ship prebuilt wheels containing the engine, compatible Slang support, and built explorer assets. A local CLI serves the explorer; no hosted service is required. Other platforms follow explicit release testing.
+The proposed first supported target is Linux x86-64. In milestone 1, pin the exact fork, slang-rs and Slang combination, Rust toolchain version, minimum glibc and C++ runtime requirements, and the oldest supported host environment. Run the actual release binary in that clean environment immediately; compatibility with a GitHub runner alone is insufficient. Ship prebuilt CLI binaries containing the engine, compatible Slang support, and built explorer assets. Design authors depend on the library crate through Cargo. A local CLI serves the explorer; no hosted service is required. Other platforms follow explicit release testing.
 
-Normal installation on a supported target must not compile Rust or C++, download toolchain sources, or require Node. Unsupported targets should fail clearly rather than unexpectedly starting a source build. PyO3 and Maturin provide the extension packaging path; native dependency bundling still requires clean-environment verification. [Maturin distribution](https://www.maturin.rs/distribution.html)
+Installing the prebuilt CLI on a supported target must not compile Rust or C++, download toolchain sources, or require Node. Building a Rust design package compiles only the design and links prebuilt native dependencies; it must not rebuild Slang. Unsupported targets should fail clearly rather than unexpectedly starting a source build. Native dependency bundling requires clean-environment verification.
 
 Keep native dependency builds separate from ordinary product CI. First evaluate upstream prebuilt Slang artifacts for the exact pinned integration and runtime baseline. Reuse them when compatible; publish our own pinned artifact or build image only where needed. Features described for a newer slang-rs release must not be assumed to exist in the fork's pinned version. Rebuild native dependencies only when their inputs change. Compile only the fork and affected product code during normal development; build browser assets only for relevant changes or releases.
 
@@ -169,7 +170,7 @@ There is no LLVM/CIRCT build in the baseline. Benchmark both repeated identical 
 
 | Milestone | Deliverable | Exit condition |
 | --- | --- | --- |
-| 1 Packaged real IP baseline | Pinned hard fork and dependencies, existing emitter, representative router import, and an actual wheel | Select the router before implementation; import its required types; emit one design containing two parameter specializations and repeated instances of each; elaborate with original RTL and verify widths, overrides, and names; install and run in the oldest supported clean runtime without compilation or runtime downloads |
+| 1 Packaged real IP baseline | Pinned hard fork and dependencies, existing emitter, representative router import, and an actual release binary | Select the router before implementation; import its required types; emit one design containing two parameter specializations and repeated instances of each; elaborate with original RTL and verify widths, overrides, and names; install and run in the oldest supported clean runtime without compilation or runtime downloads |
 | 2 Resolved connection contract | Executable connection examples, read-only snapshot, provenance, and structured diagnostics | Bit mappings, fan-out, constants, open ports, and nested exposed ports have precise semantics; emission and tracing share those mappings; independent expected connections or downstream simulation catch shared normalization mistakes; two differently configured generated components coexist correctly |
 | 3 Working reference NoC | Mesh, nested compute tile, two system configurations, and required routing/configuration artifacts | Original RTL plus wrappers elaborate; end-to-end traffic crosses multiple routers and reaches the intended memory endpoint in both configurations; routing artifacts are recorded in the manifest; repeated and unique parameter workloads are measured |
 | 4 Explorable specification | Browser explorer and generated module documentation | A reviewer can navigate from mesh to tile with breadcrumbs, expand bundled interfaces, trace selected connections, and inspect concrete properties from the same build; both reference configurations render without per-instance manual layout; UI work starts after the connection contract passes |
@@ -191,6 +192,6 @@ Acceptance includes useful diagnostics for deliberately broken wiring, no silent
 
 ## Immediate decisions
 
-Proceed with the hard fork, preserve the VAST emitter, reuse Slang, and make the structural snapshot the shared contract for the explorer and documentation. Use React Flow and ELK.js as the initial UI and layout candidates. Keep the binding layer thin.
+Proceed with the hard fork, preserve the VAST emitter, reuse Slang, and make the structural snapshot the shared contract for the explorer and documentation. Use React Flow and ELK.js as the initial UI and layout candidates. Author designs in Rust first; defer language bindings and keep them thin when added.
 
-Before implementation, choose the redistributable representative router and source configuration. Milestone 1 then verifies its real interface and pins the upstream revision, native dependency combination, Python versions, and runtime baseline. Define and test the resolved connection contract before implementing the explorer. These are focused entry and exit conditions for the agreed architecture, not a new language or compiler selection exercise.
+Before implementation, choose the redistributable representative router and source configuration. Milestone 1 then verifies its real interface and pins the upstream revision, native dependency combination, Rust toolchain version, and runtime baseline. Define and test the resolved connection contract before implementing the explorer. These are focused entry and exit conditions for the agreed architecture, not a new language or compiler selection exercise.
