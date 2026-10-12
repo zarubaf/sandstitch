@@ -7,7 +7,7 @@ files and headers untouched.
 
 | Directory | Upstream | Pinned commit | Licence |
 | --- | --- | --- | --- |
-| `floonoc/` | https://github.com/pulp-platform/FlooNoC.git | `6ea0648407e7d989b7ec3a1ce6eaa2045b7cd114` (v0.9.0) | SHL-0.51 (`LICENSE-SHL`, `LICENSE-APACHE`) |
+| `floonoc/` | https://github.com/pulp-platform/FlooNoC.git | `6ea0648407e7d989b7ec3a1ce6eaa2045b7cd114` (v0.9.0) | SHL-0.51 (hardware, `LICENSE-SHL`) / Apache-2.0 (software and docs, `LICENSE-APACHE`) |
 | `common_cells/` | https://github.com/pulp-platform/common_cells.git | `63b7c50d43e462b59506f69d341ff1e40202866d` | SHL-0.51 (`LICENSE`) |
 | `axi/` | https://github.com/pulp-platform/axi.git | `0ccc838fe06aeeb857eb83c6be9a915c4bf99566` | SHL-0.51 (`LICENSE`) |
 

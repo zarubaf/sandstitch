@@ -50,7 +50,12 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
 - Upstreaming: `git subtree push --prefix crates/slang-rs <fork-url> <branch>`
   or `git format-patch` on commits touching `crates/slang-rs/`.
 - Divergences: `tests/spdx_test.rs` scans only the crate directory
-  (`CARGO_MANIFEST_DIR`) instead of the whole workspace root.
+  (`CARGO_MANIFEST_DIR`) instead of the whole workspace root;
+  `tests/version_test.rs` is deleted (it compared the root package version with
+  crates.io and needed network) together with the dev-dependencies only it
+  used (`curl`, `toml`, `semver`, `cargo_metadata`, `log`, `env_logger`);
+  `[lints.clippy]` allows `collapsible_if`, `unneeded_wildcard_pattern` and
+  `while_let_loop` for pre-existing upstream code.
 
 ### xlsynth-vast (vendored)
 
@@ -61,12 +66,23 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
   subtree-friendly). The normalized `Cargo.toml` is kept, because the original
   uses `lints.workspace = true`, which has no counterpart here.
   `.cargo_vcs_info.json`, `Cargo.lock` and `Cargo.toml.orig` are dropped.
-- Sync: download the new crate version, replace `crates/xlsynth-vast/`
-  wholesale, and update the base above.
+- Sync: do not replace the directory (that would wipe local patches). Download
+  the old and new published crates, `diff -ruN old new`, and apply the diff
+  with `patch -p1` inside `crates/xlsynth-vast/` (or re-apply the commits from
+  `git log -- crates/xlsynth-vast`), then update the base above.
+- Local divergences:
+  - Manifest: the `[[test]]` list, `autotests`, `autolib`, `autobins` and
+    `resolver = "2"` are removed (so new test files run and the workspace
+    resolver applies); `[lints.clippy] write_with_newline` and `clone_on_copy`
+    are allowed for pre-existing upstream code.
+  - Sandstitch extensions (`feat(xlsynth-vast): type expressions, package refs
+    and member selects`): `make_type_expr`, `make_package_ref`,
+    `make_member_select`, `make_member_select_indexable` and
+    `tests/sandstitch_ext_test.rs`.
 - Upstreaming: send patches against the xlsynth-crate monorepo.
 
 ### Third-party RTL
 
 `third_party/` holds squashed subtrees of FlooNoC, common_cells and axi for
-tests only; see `third_party/README.md`. `crates/` and `third_party/` keep
-their upstream licence headers and are excluded from the root SPDX test.
+tests only; see `third_party/README.md`. `third_party/` and `crates/slang-rs/` keep
+their upstream licence headers and are excluded from the root SPDX test (`crates/xlsynth-vast/` is checked).
