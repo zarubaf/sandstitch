@@ -34,6 +34,15 @@ pub struct Manifest {
     /// The include directories of the same imports, absolute (made absolute
     /// at import), deduplicated, in first-seen order.
     pub incdirs: Vec<PathBuf>,
+    /// The library files (Slang `-v`) of the same imports, absolute,
+    /// deduplicated, in first-seen order.
+    pub libfiles: Vec<PathBuf>,
+    /// The library directories (Slang `-y`) of the same imports, absolute,
+    /// deduplicated, in first-seen order.
+    pub libdirs: Vec<PathBuf>,
+    /// The library file extensions (Slang `-Y`) of the same imports,
+    /// deduplicated, in first-seen order.
+    pub libexts: Vec<String>,
     /// The macro definitions (`ParserConfig::defines`, `(name, value)`) of
     /// the same imports, deduplicated, in first-seen order. Two imports
     /// defining one macro differently are an error (S0302).
@@ -173,12 +182,19 @@ fn visit(core: &Arc<RwLock<ModDefCore>>, path: &str, manifest: &mut Manifest, wa
                     manifest.sources.push(source);
                 }
             }
-            for incdir in &import.incdirs {
-                let incdir = PathBuf::from(incdir);
-                if !manifest.incdirs.contains(&incdir) {
-                    manifest.incdirs.push(incdir);
-                }
-            }
+            push_new(
+                &mut manifest.incdirs,
+                import.incdirs.iter().map(PathBuf::from),
+            );
+            push_new(
+                &mut manifest.libfiles,
+                import.libfiles.iter().map(PathBuf::from),
+            );
+            push_new(
+                &mut manifest.libdirs,
+                import.libdirs.iter().map(PathBuf::from),
+            );
+            push_new(&mut manifest.libexts, import.libexts.iter().cloned());
             for (name, value) in &import.defines {
                 add_define(name, value, &core.name, manifest, walk);
             }
@@ -235,4 +251,13 @@ fn add_define(name: &str, value: &str, module: &str, manifest: &mut Manifest, wa
                 .into(),
         ],
     });
+}
+
+/// Appends the `items` not yet in `list`.
+fn push_new<T: PartialEq>(list: &mut Vec<T>, items: impl IntoIterator<Item = T>) {
+    for item in items {
+        if !list.contains(&item) {
+            list.push(item);
+        }
+    }
 }

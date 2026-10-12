@@ -796,3 +796,50 @@ fn manifest_lists_incdirs_and_defines() {
         "macro `WIDTH` is defined as `4` for `hdr_mod` and as `8` for `other`"
     );
 }
+
+#[test]
+fn manifest_lists_library_search() {
+    // `uses_leaf` instantiates `leaf`, found by library search only.
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let lib = dir.path().join("lib");
+    std::fs::create_dir(&lib).unwrap();
+    std::fs::write(
+        lib.join("leaf.sv"),
+        "module leaf (input logic a);\nendmodule\n",
+    )
+    .unwrap();
+    let libfile = dir.path().join("cells.v");
+    std::fs::write(&libfile, "module lcell (input logic c);\nendmodule\n").unwrap();
+    let src = dir.path().join("uses_leaf.sv");
+    std::fs::write(
+        &src,
+        "module uses_leaf (input logic x);\n  leaf u_leaf (.a(x));\n  lcell u_cell (.c(x));\nendmodule\n",
+    )
+    .unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    let rel = |p: &Path| p.strip_prefix(&cwd).unwrap().to_str().unwrap().to_string();
+    let (rel_lib, rel_libfile) = (rel(&lib), rel(&libfile));
+    let sources = [src.to_str().unwrap()];
+    let m = ModDef::from_verilog_with_config(
+        "uses_leaf",
+        &ParserConfig {
+            sources: &sources,
+            libdirs: &[rel_lib.as_str()],
+            libexts: &[".sv"],
+            libfiles: &[rel_libfile.as_str()],
+            ignore_unknown_modules: false,
+            ..Default::default()
+        },
+    );
+    let top = ModDef::new("top");
+    top.instantiate(&m, Some("u"), None).get_port("x").tieoff(0);
+    let manifest = top.manifest();
+    assert_eq!(manifest.sources, vec![src.clone()]);
+    assert_eq!(manifest.libdirs, vec![lib.clone()]);
+    assert_eq!(manifest.libfiles, vec![libfile.clone()]);
+    assert_eq!(manifest.libexts, vec![".sv".to_string()]);
+    let emitted = top.emit(EmitOptions::default());
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+    let files: Vec<&Path> = manifest.sources.iter().map(PathBuf::as_path).collect();
+    assert!(elaborate(&files, &emitted, "top").is_err());
+}

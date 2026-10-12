@@ -28,8 +28,8 @@ pub fn elaborate(files: &[&Path], emitted: &str, top: &str) -> Result<(), String
     elaborate_with(files, &[], emitted, top)
 }
 
-/// [`elaborate`] with the sources, include directories and macro
-/// definitions of `manifest`: the build the manifest describes.
+/// [`elaborate`] with the sources, include directories, macro definitions
+/// and library search of `manifest`: the build the manifest describes.
 pub fn elaborate_manifest(manifest: &Manifest, emitted: &str, top: &str) -> Result<(), String> {
     let files: Vec<&Path> = manifest.sources.iter().map(PathBuf::as_path).collect();
     let mut args = Vec::new();
@@ -40,6 +40,16 @@ pub fn elaborate_manifest(manifest: &Manifest, emitted: &str, top: &str) -> Resu
     for (name, value) in &manifest.defines {
         args.push("-D".to_string());
         args.push(format!("{name}={value}"));
+    }
+    for (flag, paths) in [("-v", &manifest.libfiles), ("-y", &manifest.libdirs)] {
+        for path in paths {
+            args.push(flag.to_string());
+            args.push(path.to_str().unwrap().to_string());
+        }
+    }
+    for ext in &manifest.libexts {
+        args.push("-Y".to_string());
+        args.push(ext.clone());
     }
     elaborate_with(&files, &args, emitted, top)
 }

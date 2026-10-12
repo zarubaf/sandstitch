@@ -60,7 +60,7 @@ let r5 = ModDef::try_from_verilog_parameterized::<ParameterValue>(
 )?;                                                         // Result<ModDef, ImportError>
 ```
 
-The result is the same as importing and then calling `try_parameterize` (ports, key, emitted overrides, manifest sources), and it can be parameterized again. Overrides are checked against the parameters the definition declares, read from the AST Slang dumps for the definition alone even when that elaboration fails; Slang's `-G` values (`ParserConfig::parameters`) are kept by the import and applied as overrides of every specialization in both flows, with explicit overrides replacing them; a specialization never elaborates with `-G` itself, which Slang applies only to value parameters of tops.
+The result is the same as importing and then calling `try_parameterize` (ports, key, emitted overrides, manifest sources), and it can be parameterized again. Overrides are checked against the parameters the definition declares, read from the AST Slang dumps for the definition alone even when that elaboration fails; Slang's `-G` values (`ParserConfig::parameters`) of parameters the module declares are kept by the import: a plain import emits them as `#(...)` overrides of its instances, and every specialization applies them, with explicit overrides replacing them. `-G` values of parameters the module does not declare are ignored, as by Slang, so one configuration can serve several modules; explicit overrides stay strict (S0101). A specialization never elaborates with `-G` itself, which Slang applies only to value parameters of tops.
 
 - **Identity**: original module name, ordered overrides, and the import configuration including each source file's content hash and the Slang version. The key has a stable short hash recorded for provenance.
 - **Elaboration**: on a cache miss, write a portless top that instantiates the original with the overrides into a temporary directory; Slang elaborates it (with `--ast-json-source-info`); read the instance's ports with resolved types. Slang's JSON leaves ports typed by a type parameter unresolved (`child.T[2:0]`); the slang-rs fork substitutes the instance's `TypeParameter` type and re-applies the dimensions. Value-only overrides use the same path.
@@ -91,7 +91,7 @@ Logic vectors nested inside aggregates are compared structurally; only a `Logic`
 - Instances: `mod #(.P(5), .T(cfg_pkg::flit_t)) inst (...)`.
 - Nets take the driver's type: `cfg_pkg::flit_t [4:0] n;` when named; `logic [W-1:0]` otherwise.
 - Field and index connections emit member selects and indices; `connect_bits` emits a flat assignment.
-- The build manifest lists every source the RTL depends on (including generated packages) in compile order, with the include directories (absolute) and macro definitions of those imports; two imports defining one macro differently are an error (S0302). The emitted RTL plus the manifest elaborate on their own.
+- The build manifest lists every source the RTL depends on (including generated packages) in compile order, with the include directories, library files and directories (absolute), library extensions and macro definitions of those imports; two imports defining one macro differently are an error (S0302). The emitted RTL plus the manifest elaborate on their own.
 - Type expressions in `#(...)` go through VAST's expression API, not hand-printed strings.
 
 ## Diagnostics
