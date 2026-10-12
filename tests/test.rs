@@ -3,6 +3,7 @@
 mod basic;
 mod checks;
 mod connections;
+mod diagnostics;
 mod emit;
 mod feedthroughs;
 mod interfaces;

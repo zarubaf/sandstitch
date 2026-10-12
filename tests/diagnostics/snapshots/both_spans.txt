@@ -1,0 +1,13 @@
+error[S0201]: incompatible types in connection
+ --> tests/diagnostics/fixtures/caller.rs.txt:3:5
+  |
+3 |     a.connect(&b);
+  |     ^ connected here
+  |
+ ::: tests/diagnostics/fixtures/child.sv:5:9
+  |
+5 |   input T req
+  |         --- port declared here
+  |
+  = note: `req_t` and `req2_t` have equal width but different layouts
+  = help: first differing field is `addr`

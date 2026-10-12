@@ -25,6 +25,9 @@ pub use mod_def::{
 pub mod lefdef;
 pub use lefdef::{LefDefOptions, MultiplePinShapesPolicy};
 
+pub mod diagnostic;
+pub use diagnostic::{Code, Diagnostic, Diagnostics, ImportError, Label, Severity, Span};
+
 mod usage;
 pub use usage::Usage;
 

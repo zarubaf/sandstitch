@@ -24,6 +24,9 @@ paste = "1.0.15"
 geo = "0.31.0"
 rstar = "0.12.2"
 parking_lot = "0.12"
+annotate-snippets = "=0.12.16"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.128"
 
 [dev-dependencies]
 cargo_metadata = "0.18"

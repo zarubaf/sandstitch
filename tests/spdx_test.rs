@@ -84,6 +84,7 @@ fn find_missing_spdx_files(root: &Path) -> Vec<PathBuf> {
                 if extension == "md"
                     || extension == "lock"
                     || extension == "toml"
+                    || extension == "txt"
                     || extension == "supp"
                     || extension == "swp"
                 {
