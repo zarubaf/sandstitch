@@ -2,14 +2,6 @@
 
 use crate::physical::lefdef::{DefDieArea, DefPoint};
 use crate::physical::tracks::{TrackDefinition, TrackOrientation};
-#[derive(Clone)]
-pub(crate) struct VerilogImport {
-    pub(crate) sources: Vec<String>,
-    pub(crate) incdirs: Vec<String>,
-    pub(crate) defines: Vec<(String, String)>,
-    pub(crate) skip_unsupported: bool,
-    pub(crate) ignore_unknown_modules: bool,
-}
 
 // Floorplanning-related types
 

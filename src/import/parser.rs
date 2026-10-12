@@ -9,8 +9,16 @@ use indexmap::IndexMap;
 
 use crate::import::parameterize::ParameterType;
 use crate::import::parser_cfg::ParserConfig;
-use crate::physical::geometry::VerilogImport;
 use crate::{IO, ModDef, ModDefCore, Usage};
+
+#[derive(Clone)]
+pub(crate) struct VerilogImport {
+    pub(crate) sources: Vec<String>,
+    pub(crate) incdirs: Vec<String>,
+    pub(crate) defines: Vec<(String, String)>,
+    pub(crate) skip_unsupported: bool,
+    pub(crate) ignore_unknown_modules: bool,
+}
 
 pub(crate) fn parser_port_to_port(parser_port: &slang_rs::Port) -> Result<(String, IO), String> {
     let size = parser_port.ty.width().unwrap();

@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
-use crate::physical::geometry::{PhysicalPin, VerilogImport};
+use crate::import::parser::VerilogImport;
+use crate::physical::geometry::PhysicalPin;
 use crate::physical::tracks::{TrackDefinitions, TrackOccupancies};
 
 use crate::model::connection::PortSliceConnections;
