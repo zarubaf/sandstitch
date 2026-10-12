@@ -10,7 +10,10 @@ Sandstitch is a hard fork of Topstitch.
 
 - Compatible upstream fixes are taken with `git cherry-pick -x`, so the
   original commit is recorded in the message.
-- Upstream paths stay at the repository root to keep cherry-picks applying.
+- Larger syncs merge an upstream tag (`git merge <tag>`), the one allowed
+  exception to linear history. Update the base above when doing so.
+- Upstream paths stay at the repository root to keep cherry-picks and merges
+  applying.
 - Divergences are listed below as they happen.
 
 ## Divergences from upstream

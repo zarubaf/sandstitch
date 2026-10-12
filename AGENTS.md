@@ -31,6 +31,8 @@ Sandstitch is an executable hardware specification library. `doc/product.md` is 
 
 - Use [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): summary`, e.g. `feat(import): resolve packed struct ports`. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `build`, `ci`, `chore`.
 - Reference issues in the body (`Refs #N`; `Closes #N` only when acceptance criteria are met).
+- No AI or assistant attribution (`Co-Authored-By`, "Generated with") in commits, PRs or issues.
+- Prefer linear history: rebase branches onto `main` and land PRs by rebase or fast-forward, without merge commits. The exception is syncing upstream Topstitch, which is merged by tag (`git merge <upstream-tag>`, as for the v0.100.0 import); single upstream fixes may be cherry-picked with `git cherry-pick -x`. See `doc/fork.md`.
 
 ## Licensing
 
