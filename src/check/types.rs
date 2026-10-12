@@ -62,7 +62,8 @@ impl ModDef {
                 (records, all, instances)
             };
             diagnostics.extend(records.iter().filter_map(check_record));
-            diagnostics.extend(super::unpacked::check_connections(&connections));
+            let is_root = Arc::ptr_eq(&core, &self.core);
+            diagnostics.extend(super::unpacked::check_connections(&connections, is_root));
             stack.extend(instances);
         }
         // Report in the order of the call sites.

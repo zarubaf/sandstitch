@@ -8,6 +8,8 @@
 //! ([`declarable`](crate::emit::declarable)) whose uses are all whole and of
 //! equivalent types; anything else would be a flat vector, a bit slice or a
 //! literal, which SystemVerilog does not assign to an unpacked aggregate.
+//! Unpacked types are also nominal: an end of another named type with the
+//! same layout does not connect either.
 
 use std::collections::HashSet;
 
@@ -73,6 +75,13 @@ fn problem(connection: &PortSliceConnection, ty: &PortType) -> Option<String> {
             "it is connected to `{name}` of type `{other_ty}`, which is not named with its \
              package"
         )),
+        // Unpacked types are nominal: equal layouts of different types do
+        // not connect. A typedef alias is reported under its own name, so an
+        // alias connected to the type it names is reported too.
+        Some(other_ty) if declarable(&other_ty) != declarable(ty) => Some(format!(
+            "it is connected to `{name}` of type `{other_ty}`, a different type with the same \
+             layout; unpacked types connect only to the same named type"
+        )),
         Some(_) => None,
     }
 }
@@ -82,10 +91,16 @@ fn problem(connection: &PortSliceConnection, ty: &PortType) -> Option<String> {
 /// through a net of its type. One diagnostic per port.
 ///
 /// Instance ports keep their declared type, so each is checked. A port of
-/// the module itself is declared by emission, flat if need be, which is
-/// legal on its own; it is checked only when it is connected to an instance
-/// port, whose unpacked value it then carries.
-pub(super) fn check_connections(connections: &[PortSliceConnection]) -> Vec<Diagnostic> {
+/// the module itself is declared by emission, flat if need be. In an
+/// instantiated definition (`!is_root`) it is always checked: its instances
+/// in the parent connect to it as declared by its imported type. In the root
+/// (the module emitted, which nothing instantiates) a flat declaration is
+/// legal on its own, so it is checked only when it is connected to an
+/// instance port, whose unpacked value it then carries.
+pub(super) fn check_connections(
+    connections: &[PortSliceConnection],
+    is_root: bool,
+) -> Vec<Diagnostic> {
     let carries_instance_value: HashSet<String> = connections
         .iter()
         .filter_map(|c| match (&c.this.port, &c.other) {
@@ -102,6 +117,7 @@ pub(super) fn check_connections(connections: &[PortSliceConnection]) -> Vec<Diag
     for connection in connections {
         let port = &connection.this.port;
         if let Port::ModDef { name, .. } = port
+            && is_root
             && !carries_instance_value.contains(name)
         {
             continue;

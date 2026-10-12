@@ -836,15 +836,15 @@ fn check_skips_definitions_that_are_not_emitted() {
 }
 
 /// Checks that `top` reports S0206 exactly for `ports`, the first with
-/// `note` first, that
-/// `emit` panics with it, and that `old_rtl`, what emission produced before
-/// the check, is rejected by Slang.
+/// `note` first, and that `emit` panics with it. `old` is Slang's result for
+/// the RTL emission produced before the check; it must fail with
+/// `slang_error`.
 fn assert_s0206(
-    sources: &crate::common::slang::Sources,
     top: &ModDef,
     ports: &[&str],
     note: &str,
-    old_rtl: &str,
+    old: Result<(), String>,
+    slang_error: &str,
 ) {
     let diagnostics = top.check();
     assert_eq!(diagnostics.0.len(), ports.len(), "{}", diagnostics.render());
@@ -862,8 +862,8 @@ fn assert_s0206(
         top.emit(EmitOptions::default());
     });
     assert!(message.starts_with("error[S0206]"), "{message}");
-    let slang = sources.elaborate(old_rtl, "top").unwrap_err();
-    assert!(slang.contains("error"), "{slang}");
+    let slang = old.unwrap_err();
+    assert!(slang.contains(slang_error), "{slang}");
 }
 
 #[test]
@@ -876,12 +876,15 @@ fn unpacked_struct_to_vector_reports_s0206() {
     s.get_port("o").connect(&v.get_port("v"));
     s.get_port("p").unused();
     assert_s0206(
-        &sources,
         &top,
         &["top.s.o"],
         "it is connected to `top.v.v` of type `logic [11:0]`",
-        "module top;\n  wire [11:0] s_o;\n  up_src s (\n    .o(s_o),\n    .p()\n  );\n  \
+        sources.elaborate(
+            "module top;\n  wire [11:0] s_o;\n  up_src s (\n    .o(s_o),\n    .p()\n  );\n  \
          up_vec v (\n    .v(s_o)\n  );\nendmodule\n",
+            "top",
+        ),
+        "value of type 'hdr_t' cannot be assigned",
     );
 
     // Through bit slices.
@@ -895,12 +898,15 @@ fn unpacked_struct_to_vector_reports_s0206() {
     v.get_port("v").slice(11, 8).tieoff(0);
     s.get_port("p").unused();
     assert_s0206(
-        &sources,
         &top,
         &["top.s.o"],
         "only bits [11:4] of it are connected",
-        "module top;\n  wire [11:0] s_o;\n  up_src s (\n    .o({s_o[11:4], s_o[3:0]}),\n    \
+        sources.elaborate(
+            "module top;\n  wire [11:0] s_o;\n  up_src s (\n    .o({s_o[11:4], s_o[3:0]}),\n    \
          .p()\n  );\n  up_vec v (\n    .v({4'h0, s_o[11:4]})\n  );\nendmodule\n",
+            "top",
+        ),
+        "value of type 'hdr_t' cannot be assigned",
     );
 }
 
@@ -920,12 +926,15 @@ fn anonymous_unpacked_struct_reports_s0206() {
     let d = top.instantiate(&dst, Some("d"), None);
     s.get_port("o").connect(&d.get_port("i"));
     assert_s0206(
-        &sources,
         &top,
         &["top.s.o", "top.d.i"],
         "`struct {logic [3:0] a;}` is not named with its package, so no net can be declared with it",
-        "module top;\n  wire [3:0] s_o;\n  up_anon_src s (\n    .o(s_o)\n  );\n  \
+        sources.elaborate(
+            "module top;\n  wire [3:0] s_o;\n  up_anon_src s (\n    .o(s_o)\n  );\n  \
          up_anon_dst d (\n    .i(s_o)\n  );\nendmodule\n",
+            "top",
+        ),
+        "value of type 'struct{logic[3:0] a}' cannot be assigned",
     );
 }
 
@@ -939,10 +948,171 @@ fn unpacked_struct_tieoff_reports_s0206() {
     // A packed struct takes a literal.
     d.get_port("q").tieoff(0);
     assert_s0206(
-        &sources,
         &top,
         &["top.d.i"],
         "it is tied off",
-        "module top;\n  up_dst d (\n    .i(12'h000),\n    .q(12'h000)\n  );\nendmodule\n",
+        sources.elaborate(
+            "module top;\n  up_dst d (\n    .i(12'h000),\n    .q(12'h000)\n  );\nendmodule\n",
+            "top",
+        ),
+        "no implicit conversion from 'bit[11:0]' to 'hdr_t'",
     );
+}
+
+const NOMINAL_PKG: &str = "
+package nm_pkg;
+  typedef struct { logic [3:0] dst_id; logic [7:0] len; } hdr_t;
+  typedef union { logic [1:0] a; logic [2:0] b; } u_t;
+endpackage
+package nm2_pkg;
+  typedef struct { logic [3:0] dst_id; logic [7:0] len; } hdr_t;
+endpackage
+package nm_alias_pkg;
+  typedef nm_pkg::hdr_t hdr_alias_t;
+endpackage
+";
+
+/// Modules re-emitted or stubbed from the model, in a file of their own so
+/// that the emitted RTL can be elaborated without it.
+const NOMINAL_SRC: &str = "
+module nm_src (output nm_pkg::hdr_t o);
+endmodule
+module nm_ua (output nm_pkg::u_t x);
+endmodule
+";
+
+const NOMINAL_DST: &str = "
+module nm_dst (input nm_pkg::hdr_t i);
+endmodule
+module nm_ub (input nm_pkg::u_t y);
+endmodule
+module nm_other (output nm2_pkg::hdr_t o);
+endmodule
+module nm_alias (output nm_alias_pkg::hdr_alias_t o);
+endmodule
+";
+
+/// The nominal fixture, and Slang's result for `emitted` built without the
+/// file of the modules emitted from the model.
+struct Nominal(crate::common::slang::Sources);
+
+impl Nominal {
+    fn new() -> Self {
+        Nominal(crate::common::slang::Sources::new(&[
+            NOMINAL_PKG,
+            NOMINAL_SRC,
+            NOMINAL_DST,
+        ]))
+    }
+
+    fn import(&self, name: &str) -> ModDef {
+        self.0.import(name)
+    }
+
+    fn elaborate(&self, emitted: &str) -> Result<(), String> {
+        let files = [self.0.files[0].path(), self.0.files[2].path()];
+        crate::common::slang::elaborate(&files, emitted, "top")
+    }
+}
+
+#[test]
+fn stub_with_tied_off_unpacked_port_connects_typed() {
+    // A stub declares its ports with their types, whatever ties them off.
+    let sources = Nominal::new();
+    let (src, dst) = (sources.import("nm_src"), sources.import("nm_dst"));
+    src.set_usage(Usage::EmitStubAndStop);
+    src.get_port("o").tieoff(0);
+    let top = ModDef::new("top");
+    let s = top.instantiate(&src, Some("s"), None);
+    let d = top.instantiate(&dst, Some("d"), None);
+    s.get_port("o").connect(&d.get_port("i"));
+    assert!(!top.check().has_errors(), "{}", top.check().render());
+    let emitted = top.emit(EmitOptions::default());
+    assert!(
+        emitted.contains("module nm_src(\n  output nm_pkg::hdr_t o\n);"),
+        "{emitted}"
+    );
+    sources
+        .elaborate(&emitted)
+        .unwrap_or_else(|e| panic!("{emitted}\n{e}"));
+}
+
+#[test]
+fn re_emitted_definition_with_flat_unpacked_port_reports_s0206() {
+    // `unpacked_union_tieoff_stays_flat` (tests/typed/emit.rs) emits `ua`
+    // with a flat port; instantiated and connected typed in a parent, that
+    // flat port meets a net of the union type.
+    let sources = Nominal::new();
+    let (ua, ub) = (sources.import("nm_ua"), sources.import("nm_ub"));
+    ua.set_usage(Usage::EmitDefinitionAndDescend);
+    ua.get_port("x").tieoff(0);
+    // On its own, as the root, the flat port is fine.
+    assert!(!ua.check().has_errors(), "{}", ua.check().render());
+    let top = ModDef::new("top");
+    let a = top.instantiate(&ua, Some("a"), None);
+    let b = top.instantiate(&ub, Some("b"), None);
+    a.get_port("x").connect(&b.get_port("y"));
+    assert_s0206(
+        &top,
+        &["nm_ua.x"],
+        "it is tied off",
+        sources.elaborate(
+            "module nm_ua(\n  output wire [2:0] x\n);\n  assign x = 3'h0;\nendmodule\n\
+             module top;\n  wire nm_pkg::u_t a_x;\n  nm_ua a (\n    .x(a_x)\n  );\n  \
+             nm_ub b (\n    .y(a_x)\n  );\nendmodule\n",
+        ),
+        "cannot be assigned",
+    );
+}
+
+#[test]
+fn unpacked_structs_of_different_names_report_s0206() {
+    let sources = Nominal::new();
+    let (other, dst) = (sources.import("nm_other"), sources.import("nm_dst"));
+    let (a, b) = (
+        other.get_port("o").port_type().unwrap(),
+        dst.get_port("i").port_type().unwrap(),
+    );
+    assert_eq!(a.equivalent(&b), Ok(()));
+    let top = ModDef::new("top");
+    let s = top.instantiate(&other, Some("s"), None);
+    let d = top.instantiate(&dst, Some("d"), None);
+    s.get_port("o").connect(&d.get_port("i"));
+    assert_s0206(
+        &top,
+        &["top.s.o", "top.d.i"],
+        "it is connected to `top.d.i` of type `nm_pkg::hdr_t`, a different type with the same \
+         layout; unpacked types connect only to the same named type",
+        sources.elaborate(
+            "module top;\n  wire nm2_pkg::hdr_t s_o;\n  nm_other s (\n    .o(s_o)\n  );\n  \
+             nm_dst d (\n    .i(s_o)\n  );\nendmodule\n",
+        ),
+        "no implicit conversion from 'nm2_pkg::hdr_t' to 'nm_pkg::hdr_t'",
+    );
+}
+
+#[test]
+fn unpacked_alias_is_reported_although_it_connects() {
+    // Known limitation: Slang reports a port of a typedef alias under the
+    // alias's name, so the alias and the type it names look like different
+    // types. SystemVerilog connects them; S0206 is reported anyway.
+    let sources = Nominal::new();
+    let (alias, dst) = (sources.import("nm_alias"), sources.import("nm_dst"));
+    assert_eq!(
+        alias.get_port("o").port_type().unwrap().to_string(),
+        "nm_alias_pkg::hdr_alias_t"
+    );
+    let top = ModDef::new("top");
+    let s = top.instantiate(&alias, Some("s"), None);
+    let d = top.instantiate(&dst, Some("d"), None);
+    s.get_port("o").connect(&d.get_port("i"));
+    let diagnostics = top.check();
+    assert_eq!(diagnostics.0.len(), 2, "{}", diagnostics.render());
+    assert!(diagnostics.0.iter().all(|d| d.code == codes::S0206));
+    sources
+        .elaborate(
+            "module top;\n  wire nm_alias_pkg::hdr_alias_t s_o;\n  nm_alias s (\n    .o(s_o)\n  \
+             );\n  nm_dst d (\n    .i(s_o)\n  );\nendmodule\n",
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
 }
