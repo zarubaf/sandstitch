@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::mod_def::dtypes::{EdgeOrientation, Polygon, Range};
+use crate::physical::geometry::{EdgeOrientation, Polygon, Range};
 use indexmap::IndexMap;
 
 use fixedbitset::FixedBitSet;
 
-use crate::mod_def::{
+use crate::physical::edges::{
     BOTTOM_EDGE_INDEX, EAST_EDGE_INDEX, LEFT_EDGE_INDEX, NORTH_EDGE_INDEX, RIGHT_EDGE_INDEX,
     SOUTH_EDGE_INDEX, TOP_EDGE_INDEX, WEST_EDGE_INDEX,
 };

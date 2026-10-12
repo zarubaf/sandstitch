@@ -2,8 +2,8 @@
 
 use indexmap::IndexMap;
 
-use crate::mod_def::dtypes::{BoundingBox, Mat3};
-use crate::validate::inst_overlap;
+use crate::physical::geometry::{BoundingBox, Mat3};
+use crate::physical::validate::inst_overlap;
 use crate::{LefDefOptions, ModDef, Usage};
 
 impl ModDef {

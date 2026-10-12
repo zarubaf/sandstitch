@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-pub use self::pins::SpreadPinsOptions;
+pub use crate::physical::pins::SpreadPinsOptions;
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
@@ -14,8 +14,7 @@ use crate::{Intf, MetadataKey, MetadataValue, Port, Usage};
 mod core;
 pub use core::ModDefCore;
 
-mod dtypes;
-pub use dtypes::{
+pub use crate::physical::geometry::{
     BoundingBox, Coordinate, Edge, EdgeOrientation, Mat3, Orientation, PhysicalPin, Placement,
     Polygon, Range,
 };
@@ -26,32 +25,26 @@ mod feedthrough;
 mod instances;
 mod intf;
 mod parameterize;
-mod placement;
+pub use crate::physical::placement::CalculatedPlacement;
 pub use parameterize::ParameterValue;
 pub use parameterize::{ParameterSpec, ParameterType};
-pub use placement::CalculatedPlacement;
-mod lefdef;
 mod parser;
 mod parser_cfg;
 pub use parser_cfg::ParserConfig;
-mod pins;
 mod ports;
 mod stub;
 mod validate;
 mod wrap;
 use parser::{parser_param_to_param, parser_port_to_port};
-mod def_parse;
 mod hierarchy;
-mod lef_parse;
-mod tracks;
-pub use tracks::{PinPlacementError, TrackDefinition, TrackDefinitions, TrackOrientation};
-use tracks::{TrackOccupancies, TrackOccupancy};
-mod edges;
-mod shape;
-pub use edges::{
+pub use crate::physical::edges::{
     BOTTOM_EDGE_INDEX, EAST_EDGE_INDEX, LEFT_EDGE_INDEX, NORTH_EDGE_INDEX, RIGHT_EDGE_INDEX,
     SOUTH_EDGE_INDEX, TOP_EDGE_INDEX, WEST_EDGE_INDEX,
 };
+pub use crate::physical::tracks::{
+    PinPlacementError, TrackDefinition, TrackDefinitions, TrackOrientation,
+};
+use crate::physical::tracks::{TrackOccupancies, TrackOccupancy};
 
 /// Represents a module definition, like `module <mod_def_name> ... endmodule`
 /// in Verilog.
@@ -63,14 +56,14 @@ pub struct ModDef {
 #[macro_export]
 macro_rules! for_each_edge_direction {
     ($macro_name:ident) => {
-        $macro_name!(west, $crate::mod_def::WEST_EDGE_INDEX);
-        $macro_name!(left, $crate::mod_def::LEFT_EDGE_INDEX);
-        $macro_name!(north, $crate::mod_def::NORTH_EDGE_INDEX);
-        $macro_name!(top, $crate::mod_def::TOP_EDGE_INDEX);
-        $macro_name!(east, $crate::mod_def::EAST_EDGE_INDEX);
-        $macro_name!(right, $crate::mod_def::RIGHT_EDGE_INDEX);
-        $macro_name!(south, $crate::mod_def::SOUTH_EDGE_INDEX);
-        $macro_name!(bottom, $crate::mod_def::BOTTOM_EDGE_INDEX);
+        $macro_name!(west, $crate::physical::edges::WEST_EDGE_INDEX);
+        $macro_name!(left, $crate::physical::edges::LEFT_EDGE_INDEX);
+        $macro_name!(north, $crate::physical::edges::NORTH_EDGE_INDEX);
+        $macro_name!(top, $crate::physical::edges::TOP_EDGE_INDEX);
+        $macro_name!(east, $crate::physical::edges::EAST_EDGE_INDEX);
+        $macro_name!(right, $crate::physical::edges::RIGHT_EDGE_INDEX);
+        $macro_name!(south, $crate::physical::edges::SOUTH_EDGE_INDEX);
+        $macro_name!(bottom, $crate::physical::edges::BOTTOM_EDGE_INDEX);
     };
 }
 

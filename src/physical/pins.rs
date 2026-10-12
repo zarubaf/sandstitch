@@ -5,7 +5,7 @@ use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::mod_def::dtypes::{PhysicalPin, Polygon, Range};
+use crate::physical::geometry::{PhysicalPin, Polygon, Range};
 use crate::{
     ConvertibleToPortSlice, ModDef, PinPlacementError, Port, PortSlice, for_each_edge_direction,
 };
@@ -281,7 +281,7 @@ impl Default for SpreadPinsOptions {
 impl ModDef {
     /// Creates a scratch copy of the module for speculative placement checks.
     fn clone_for_pin_placement(&self) -> ModDef {
-        use crate::mod_def::tracks::{TrackOccupancies, TrackOccupancy};
+        use crate::physical::tracks::{TrackOccupancies, TrackOccupancy};
         let core = self.core.read();
 
         // Deep-copy track occupancies if present

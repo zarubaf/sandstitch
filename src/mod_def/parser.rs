@@ -8,8 +8,8 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use crate::mod_def::ParameterType;
-use crate::mod_def::dtypes::VerilogImport;
 use crate::mod_def::parser_cfg::ParserConfig;
+use crate::physical::geometry::VerilogImport;
 use crate::{IO, ModDef, ModDefCore, Usage};
 
 pub(crate) fn parser_port_to_port(parser_port: &slang_rs::Port) -> Result<(String, IO), String> {

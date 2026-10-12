@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::lefdef::{DefDieArea, DefPoint};
-use crate::mod_def::tracks::{TrackDefinition, TrackOrientation};
+use crate::physical::lefdef::{DefDieArea, DefPoint};
+use crate::physical::tracks::{TrackDefinition, TrackOrientation};
 #[derive(Clone)]
 pub(crate) struct VerilogImport {
     pub(crate) sources: Vec<String>,

@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 use indexmap::IndexMap;
 
-use super::lefdef::{ImportedPinGeometry, resolve_pin_geometry};
+use super::lefdef_io::{ImportedPinGeometry, resolve_pin_geometry};
 use crate::{Coordinate, IO, LefDefOptions, ModDef, Polygon};
 
 type Result<T> = std::result::Result<T, String>;

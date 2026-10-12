@@ -5,11 +5,11 @@ use std::path::Path;
 
 use indexmap::IndexMap;
 
-use crate::lefdef::{self, DefComponent, DefOrientation, DefPin, DefPoint, LefComponent};
 use crate::mod_def::CalculatedPlacement;
-use crate::mod_def::def_parse::mod_def_from_def;
-use crate::mod_def::lef_parse::mod_defs_from_lef;
-use crate::validate::pins_contained;
+use crate::physical::def_parse::mod_def_from_def;
+use crate::physical::lef_parse::mod_defs_from_lef;
+use crate::physical::lefdef::{self, DefComponent, DefOrientation, DefPin, DefPoint, LefComponent};
+use crate::physical::validate::pins_contained;
 use crate::{Coordinate, LefDefOptions, ModDef, MultiplePinShapesPolicy, PhysicalPin, Polygon};
 
 pub(crate) enum ImportedPinGeometry {
@@ -303,10 +303,10 @@ impl ModDef {
 
                         let polygon_abs: Vec<(i64, i64)> =
                             transformed_polygon.0.iter().map(|c| (c.x, c.y)).collect();
-                        lef_pins.push(crate::lefdef::LefPin {
+                        lef_pins.push(crate::physical::lefdef::LefPin {
                             name,
                             direction: port.to_lef_direction(),
-                            shape: crate::lefdef::LefShape {
+                            shape: crate::physical::lefdef::LefShape {
                                 layer: pin.layer.clone(),
                                 polygon: polygon_abs,
                             },
@@ -329,7 +329,7 @@ impl ModDef {
             name,
             width: bbox.max_x,
             height: bbox.max_y,
-            shape: crate::lefdef::LefShape {
+            shape: crate::physical::lefdef::LefShape {
                 layer: layer_name,
                 polygon: shape.0.iter().map(|p| (p.x, p.y)).collect(),
             },

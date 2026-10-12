@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
-use crate::mod_def::dtypes::{PhysicalPin, VerilogImport};
-use crate::mod_def::tracks::{TrackDefinitions, TrackOccupancies};
+use crate::physical::geometry::{PhysicalPin, VerilogImport};
+use crate::physical::tracks::{TrackDefinitions, TrackOccupancies};
 
 use crate::connection::PortSliceConnections;
 use crate::{IO, Metadata, Usage};
@@ -40,10 +40,10 @@ pub struct ModDefCore {
     pub(crate) mod_inst_metadata: HashMap<String, Metadata>,
     pub(crate) mod_inst_port_metadata: HashMap<String, HashMap<String, Metadata>>,
     pub(crate) mod_inst_intf_metadata: HashMap<String, HashMap<String, Metadata>>,
-    pub(crate) shape: Option<crate::mod_def::dtypes::Polygon>,
-    pub(crate) keepout: Option<crate::mod_def::dtypes::Polygon>,
+    pub(crate) shape: Option<crate::physical::geometry::Polygon>,
+    pub(crate) keepout: Option<crate::physical::geometry::Polygon>,
     pub(crate) layer: Option<String>,
-    pub(crate) inst_placements: IndexMap<String, crate::mod_def::dtypes::Placement>,
+    pub(crate) inst_placements: IndexMap<String, crate::physical::geometry::Placement>,
     pub(crate) physical_pins: PhysicalPinMap,
     pub(crate) port_max_distances: MaxDistanceMap,
     pub(crate) track_definitions: Option<TrackDefinitions>,

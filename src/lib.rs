@@ -22,8 +22,9 @@ pub use mod_def::{
     Orientation, PinPlacementError, Placement, Polygon, RIGHT_EDGE_INDEX, Range, SOUTH_EDGE_INDEX,
     TOP_EDGE_INDEX, TrackDefinition, TrackDefinitions, TrackOrientation, WEST_EDGE_INDEX,
 };
-pub mod lefdef;
+mod physical;
 pub use lefdef::{LefDefOptions, MultiplePinShapesPolicy};
+pub use physical::lefdef;
 
 pub mod diagnostic;
 pub use diagnostic::{Code, Diagnostic, Diagnostics, ImportError, Label, Severity, Span};
@@ -33,8 +34,6 @@ pub use usage::Usage;
 
 mod mod_inst;
 pub use mod_inst::ModInst;
-
-mod validate;
 
 mod intf;
 pub use intf::Intf;
