@@ -24,7 +24,8 @@ pub fn check_repo(root: &Path) -> Vec<String> {
     // `axi` must start a token ("s_axi_aw" counts, "taxing" does not).
     let re = Regex::new(r"(?i)floo|pulp|(^|[^a-z0-9])axi").unwrap();
     // Ordinary phrases that merely resemble the forbidden names.
-    let benign = Regex::new(r"(?i)floor|axis-aligned|[xy] axis|(?-i:\baxis\b)").unwrap();
+    let benign =
+        Regex::new(r"(?i)floor|axis-aligned|[xy] axis|(?-i:\baxis(_coordinate)?\b)").unwrap();
     let mut files = Vec::new();
     collect(&root.join("src"), &mut files);
     if let Ok(rd) = std::fs::read_dir(root.join("crates")) {
