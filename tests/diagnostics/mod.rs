@@ -45,7 +45,8 @@ fn diag(primary: Label, secondary: Vec<Label>) -> Diagnostic {
 
 fn check_snapshot(name: &str, ds: &Diagnostics) {
     let path = PathBuf::from(format!("tests/diagnostics/snapshots/{name}.txt"));
-    let actual = ds.render();
+    // Snapshot files end with exactly one newline (renderer output has none).
+    let actual = format!("{}\n", ds.render());
     if std::env::var("UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
         std::fs::write(&path, &actual).unwrap();
         return;
