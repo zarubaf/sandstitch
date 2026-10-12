@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use num_bigint::BigInt;
 use topstitch::*;
 
-use crate::common::slang::{Sources, elaborate};
+use crate::common::slang::{Sources, elaborate, elaborate_manifest};
 
 const PKG: &str = "
 package cfg_pkg;
@@ -632,8 +632,10 @@ fn manifest_lists_sources_and_specializations() {
     // `blk` is stubbed: its source would define it twice; `child` brings
     // the package.
     assert_eq!(manifest.sources, vec![abs(p), abs(c), cwd.join(&relative)]);
-    let files: Vec<&Path> = manifest.sources.iter().map(PathBuf::as_path).collect();
-    elaborate(&files, &top.emit(EmitOptions::default()), "top2").unwrap_or_else(|e| panic!("{e}"));
+    assert!(manifest.incdirs.is_empty());
+    assert!(manifest.defines.is_empty());
+    elaborate_manifest(&manifest, &top.emit(EmitOptions::default()), "top2")
+        .unwrap_or_else(|e| panic!("{e}"));
 
     // Untyped, unimported designs have an empty manifest.
     assert_eq!(ModDef::new("empty").manifest(), Manifest::default());
@@ -715,5 +717,82 @@ fn manifest_folds_dot_segments() {
     assert_eq!(
         top.manifest().sources,
         vec![srcs.join("pkg.sv"), srcs.join("mods.sv")]
+    );
+}
+
+#[test]
+fn manifest_lists_incdirs_and_defines() {
+    // `hdr_mod` needs its include directory and `WIDTH` to elaborate.
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let inc = dir.path().join("inc");
+    std::fs::create_dir(&inc).unwrap();
+    std::fs::write(inc.join("extra.svh"), "`define EXTRA 2\n").unwrap();
+    let hdr = dir.path().join("hdr_mod.sv");
+    std::fs::write(
+        &hdr,
+        "`include \"extra.svh\"\nmodule hdr_mod (input logic [`WIDTH+`EXTRA-1:0] a);\nendmodule\n",
+    )
+    .unwrap();
+    let other = dir.path().join("other.sv");
+    std::fs::write(
+        &other,
+        "module other (input logic [`WIDTH-1:0] b);\nendmodule\n",
+    )
+    .unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    // Relative at import, absolute in the manifest.
+    let rel_inc = inc
+        .strip_prefix(&cwd)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let import = |path: &Path, name: &str, incdirs: &[&str], width: &str| {
+        let sources = [path.to_str().unwrap()];
+        let defines = [("WIDTH", width)];
+        ModDef::from_verilog_with_config(
+            name,
+            &ParserConfig {
+                sources: &sources,
+                incdirs,
+                defines: &defines,
+                ..Default::default()
+            },
+        )
+    };
+    let a = import(&hdr, "hdr_mod", &[rel_inc.as_str()], "4");
+    assert_eq!(a.get_port("a").io().width(), 6);
+    let b = import(&other, "other", &[], "4");
+
+    let top = ModDef::new("top");
+    top.instantiate(&a, Some("a"), None).get_port("a").tieoff(0);
+    top.instantiate(&b, Some("b"), None).get_port("b").tieoff(0);
+    let manifest = top.manifest();
+    assert_eq!(manifest.sources, vec![hdr.clone(), other.clone()]);
+    assert_eq!(manifest.incdirs, vec![inc.clone()]);
+    // Listed once although both imports define it.
+    assert_eq!(
+        manifest.defines,
+        vec![("WIDTH".to_string(), "4".to_string())]
+    );
+    let emitted = top.emit(EmitOptions::default());
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+    // Without them the build fails: the manifest is what makes it work.
+    let files: Vec<&Path> = manifest.sources.iter().map(PathBuf::as_path).collect();
+    assert!(elaborate(&files, &emitted, "top").is_err());
+
+    // Defined differently by two imports: S0302.
+    let wide = import(&other, "other", &[], "8");
+    let top = ModDef::new("top");
+    top.instantiate(&a, Some("a"), None).get_port("a").tieoff(0);
+    top.instantiate(&wide, Some("w"), None)
+        .get_port("b")
+        .tieoff(0);
+    let err = top.try_manifest().unwrap_err();
+    assert_eq!(err.0.len(), 1, "{}", err.render());
+    assert_eq!(err.0[0].code, diagnostic::codes::S0302);
+    assert_eq!(
+        err.0[0].message,
+        "macro `WIDTH` is defined as `4` for `hdr_mod` and as `8` for `other`"
     );
 }

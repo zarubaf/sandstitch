@@ -5,7 +5,7 @@
 //! one-hot checker for the bits a selection reads.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
@@ -25,8 +25,34 @@ pub fn slang() -> String {
 /// concatenations connect to packed-array ports by implicit conversion by
 /// design.)
 pub fn elaborate(files: &[&Path], emitted: &str, top: &str) -> Result<(), String> {
+    elaborate_with(files, &[], emitted, top)
+}
+
+/// [`elaborate`] with the sources, include directories and macro
+/// definitions of `manifest`: the build the manifest describes.
+pub fn elaborate_manifest(manifest: &Manifest, emitted: &str, top: &str) -> Result<(), String> {
+    let files: Vec<&Path> = manifest.sources.iter().map(PathBuf::as_path).collect();
+    let mut args = Vec::new();
+    for incdir in &manifest.incdirs {
+        args.push("-I".to_string());
+        args.push(incdir.to_str().unwrap().to_string());
+    }
+    for (name, value) in &manifest.defines {
+        args.push("-D".to_string());
+        args.push(format!("{name}={value}"));
+    }
+    elaborate_with(&files, &args, emitted, top)
+}
+
+fn elaborate_with(
+    files: &[&Path],
+    args: &[String],
+    emitted: &str,
+    top: &str,
+) -> Result<(), String> {
     let rtl = str2tmpfile(emitted).unwrap();
     let output = Command::new(slang())
+        .args(args)
         .args(files)
         .arg(rtl.path())
         .args(["--top", top])

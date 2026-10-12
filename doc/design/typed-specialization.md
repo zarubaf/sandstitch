@@ -91,7 +91,7 @@ Logic vectors nested inside aggregates are compared structurally; only a `Logic`
 - Instances: `mod #(.P(5), .T(cfg_pkg::flit_t)) inst (...)`.
 - Nets take the driver's type: `cfg_pkg::flit_t [4:0] n;` when named; `logic [W-1:0]` otherwise.
 - Field and index connections emit member selects and indices; `connect_bits` emits a flat assignment.
-- The build manifest lists every source the RTL depends on (including generated packages) in compile order.
+- The build manifest lists every source the RTL depends on (including generated packages) in compile order, with the include directories (absolute) and macro definitions of those imports; two imports defining one macro differently are an error (S0302). The emitted RTL plus the manifest elaborate on their own.
 - Type expressions in `#(...)` go through VAST's expression API, not hand-printed strings.
 
 ## Diagnostics

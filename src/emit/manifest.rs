@@ -5,6 +5,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use indexmap::IndexMap;
+
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -29,11 +31,33 @@ pub struct Manifest {
     /// after import and is not listed: import such modules from files to
     /// build the emitted RTL with them.
     pub sources: Vec<PathBuf>,
+    /// The include directories of the same imports, absolute (made absolute
+    /// at import), deduplicated, in first-seen order.
+    pub incdirs: Vec<PathBuf>,
+    /// The macro definitions (`ParserConfig::defines`, `(name, value)`) of
+    /// the same imports, deduplicated, in first-seen order. Two imports
+    /// defining one macro differently are an error (S0302).
+    pub defines: Vec<(String, String)>,
     /// `(instance path, short hash)` for each instance of a specialization
     /// ([`ModDef::try_parameterize`]), in the same walk order. Instance
     /// paths start with the name of the module the manifest is made for
     /// (`top.u_router.u_fifo`).
     pub specializations: Vec<(String, String)>,
+}
+
+/// Where a listed macro definition came from.
+struct DefineOrigin {
+    value: String,
+    module: String,
+}
+
+/// What a walk collects besides the manifest.
+#[derive(Default)]
+struct Walk {
+    seen_sources: HashSet<PathBuf>,
+    emitted: Vec<EmittedImport>,
+    defines: IndexMap<String, DefineOrigin>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 /// An imported module whose definition is emitted, with the span of its
@@ -55,7 +79,8 @@ impl ModDef {
     /// Fallible form of [`ModDef::manifest`]. Reports S0301 for each
     /// imported module whose definition is emitted (re-emitted or stubbed)
     /// while the file that defines it is also a listed source: the emitted
-    /// RTL and the sources would define it twice.
+    /// RTL and the sources would define it twice. Reports S0302 for each
+    /// macro that two listed imports define with different values.
     ///
     /// The defining file is taken to be the file of the module's first port
     /// declaration that has an SV span. Not checked: modules without ports,
@@ -64,12 +89,17 @@ impl ModDef {
     /// compared instead of the module's).
     pub fn try_manifest(&self) -> Result<Manifest, Diagnostics> {
         let mut manifest = Manifest::default();
-        let mut seen = HashSet::new();
-        let mut emitted = Vec::new();
+        let mut walk = Walk::default();
         let name = self.core.read().name.clone();
-        visit(&self.core, &name, &mut manifest, &mut seen, &mut emitted);
+        visit(&self.core, &name, &mut manifest, &mut walk);
+        let Walk {
+            seen_sources: seen,
+            emitted,
+            diagnostics: mut define_conflicts,
+            ..
+        } = walk;
 
-        let diagnostics: Vec<Diagnostic> = emitted
+        let mut diagnostics: Vec<Diagnostic> = emitted
             .into_iter()
             .filter_map(|module| {
                 let Span::Sv { file, .. } = &module.span else {
@@ -102,6 +132,7 @@ impl ModDef {
                 })
             })
             .collect();
+        diagnostics.append(&mut define_conflicts);
         if diagnostics.is_empty() {
             Ok(manifest)
         } else {
@@ -110,13 +141,7 @@ impl ModDef {
     }
 }
 
-fn visit(
-    core: &Arc<RwLock<ModDefCore>>,
-    path: &str,
-    manifest: &mut Manifest,
-    seen: &mut HashSet<PathBuf>,
-    emitted: &mut Vec<EmittedImport>,
-) {
+fn visit(core: &Arc<RwLock<ModDefCore>>, path: &str, manifest: &mut Manifest, walk: &mut Walk) {
     let core = core.read();
     if let Some(import) = &core.verilog_import {
         if let Some(key) = &import.specialization {
@@ -134,9 +159,9 @@ fn visit(
                 .values()
                 .find(|span| matches!(span, Span::Sv { .. }));
             if let Some(span) = span
-                && !emitted.iter().any(|m| m.name == core.name)
+                && !walk.emitted.iter().any(|m| m.name == core.name)
             {
-                emitted.push(EmittedImport {
+                walk.emitted.push(EmittedImport {
                     name: core.name.clone(),
                     span: span.clone(),
                 });
@@ -144,21 +169,70 @@ fn visit(
         } else if !import.inline {
             for source in &import.sources {
                 let source = PathBuf::from(source);
-                if seen.insert(source.clone()) {
+                if walk.seen_sources.insert(source.clone()) {
                     manifest.sources.push(source);
                 }
+            }
+            for incdir in &import.incdirs {
+                let incdir = PathBuf::from(incdir);
+                if !manifest.incdirs.contains(&incdir) {
+                    manifest.incdirs.push(incdir);
+                }
+            }
+            for (name, value) in &import.defines {
+                add_define(name, value, &core.name, manifest, walk);
             }
         }
     }
     if core.usage == Usage::EmitDefinitionAndDescend {
         for (inst_name, inst) in &core.instances {
-            visit(
-                inst,
-                &format!("{path}.{inst_name}"),
-                manifest,
-                seen,
-                emitted,
-            );
+            visit(inst, &format!("{path}.{inst_name}"), manifest, walk);
         }
     }
+}
+
+/// Lists the macro definition `name=value` of the import of `module`, or
+/// reports S0302 if a listed import defines `name` differently (once per
+/// value).
+fn add_define(name: &str, value: &str, module: &str, manifest: &mut Manifest, walk: &mut Walk) {
+    let Some(first) = walk.defines.get(name) else {
+        walk.defines.insert(
+            name.to_string(),
+            DefineOrigin {
+                value: value.to_string(),
+                module: module.to_string(),
+            },
+        );
+        manifest.defines.push((name.to_string(), value.to_string()));
+        return;
+    };
+    if first.value == value {
+        return;
+    }
+    let message = format!(
+        "macro `{name}` is defined as `{}` for `{}` and as `{value}` for `{module}`",
+        first.value, first.module
+    );
+    if walk.diagnostics.iter().any(|d| d.message == message) {
+        return;
+    }
+    walk.diagnostics.push(Diagnostic {
+        code: codes::S0302,
+        severity: Severity::Error,
+        message,
+        primary: Label {
+            span: Span::None,
+            text: format!("`{module}` was imported with `{name}={value}`"),
+        },
+        secondary: vec![],
+        notes: vec![format!(
+            "`{}` was imported with `{name}={}`; the emitted RTL is built with one set of \
+             definitions",
+            first.module, first.value
+        )],
+        helps: vec![
+            "import the modules with the same definition, or rename the macro in one of them"
+                .into(),
+        ],
+    });
 }

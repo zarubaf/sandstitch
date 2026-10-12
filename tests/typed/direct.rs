@@ -4,11 +4,11 @@
 //! (`ModDef::try_from_verilog_parameterized`), including modules whose
 //! default parameters do not elaborate.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use topstitch::diagnostic::codes;
 use topstitch::*;
 
-use crate::common::slang::{Sources, elaborate};
+use crate::common::slang::{Sources, elaborate_manifest};
 
 /// `T` defaults to `logic`, but `m` reads member `v` of its input: `m`
 /// elaborates only with `T` overridden by a struct with a member `v`.
@@ -145,8 +145,7 @@ fn failing_defaults_import_with_type_override() {
             m.specialization_key().unwrap().short_hash()
         )]
     );
-    let files: Vec<&Path> = manifest.sources.iter().map(PathBuf::as_path).collect();
-    elaborate(&files, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
 }
 
 #[test]

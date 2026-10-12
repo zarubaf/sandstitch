@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use topstitch::*;
 
-use crate::common::slang::{Connection, Sources, check_connections, elaborate, top_nets};
+use crate::common::slang::{Connection, Sources, check_connections, elaborate_manifest, top_nets};
 
 const PKG: &str = "
 package rt_pkg;
@@ -132,7 +132,7 @@ endmodule
     let abs = |s: &str| std::path::absolute(s).unwrap();
     assert_eq!(manifest.sources, vec![abs(p), abs(c), abs(s)]);
     let files: Vec<&Path> = manifest.sources.iter().map(PathBuf::as_path).collect();
-    elaborate(&files, &emitted, "rt_top").unwrap_or_else(|e| panic!("{emitted}\n{e}"));
+    elaborate_manifest(&manifest, &emitted, "rt_top").unwrap_or_else(|e| panic!("{emitted}\n{e}"));
 
     // By hand: `hdr_t` is 1 + 4 + 8 = 13 bits, `flit_t` 13 + 32 = 45.
     let expected: Vec<(&str, (&str, usize))> = vec![

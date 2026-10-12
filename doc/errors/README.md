@@ -18,3 +18,4 @@ each example triggers its code.
 | [S0203](S0203.md) | index out of range |
 | [S0204](S0204.md) | field access through union |
 | [S0301](S0301.md) | module defined twice in the build |
+| [S0302](S0302.md) | macro defined differently in the build |
