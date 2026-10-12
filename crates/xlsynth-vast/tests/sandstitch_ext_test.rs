@@ -110,3 +110,17 @@ fn member_select_chains_indexes_and_assigns() {
     assert!(text.contains("wire cfg_pkg::flit_t [4:0] n;"), "{text}");
     assert!(text.contains("assign m.valid = n[2].hdr.valid;"), "{text}");
 }
+
+#[test]
+fn name_ref_spells_a_bare_identifier() {
+    let mut file = VastFile::new(VastFileType::SystemVerilog);
+    let expr = file.make_name_ref("Depth$1");
+    assert_eq!(file.emit_expression(&expr), "Depth$1");
+}
+
+#[test]
+#[should_panic(expected = "name reference must be a simple identifier")]
+fn name_ref_rejects_scoped_names() {
+    let mut file = VastFile::new(VastFileType::SystemVerilog);
+    file.make_name_ref("pkg::X");
+}

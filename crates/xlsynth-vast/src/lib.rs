@@ -1094,6 +1094,13 @@ impl VastFile {
         })
     }
 
+    /// Creates a reference to a name declared outside the generated file,
+    /// such as a compilation-unit constant used as a parameter override.
+    pub fn make_name_ref(&mut self, name: &str) -> Expr {
+        assert_simple_identifier(name, "name reference");
+        self.make_named_ref(name, None).to_expr()
+    }
+
     /// Creates a member selection `base.field`; results can be selected again.
     pub fn make_member_select(&mut self, base: &Expr, field: &str) -> Expr {
         let base_index = self.check(base.0);
