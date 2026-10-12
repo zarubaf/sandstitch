@@ -15,6 +15,10 @@ pub use extract::{
     extract_parameter_defs, extract_parameter_defs_from_value, extract_ports,
     extract_ports_from_value, extract_type_parameter_names_from_value, parse_type_definition,
 };
+pub use extract::{
+    ParameterKind, extract_instance_parameter_defs_from_value,
+    extract_overridable_parameters_from_value,
+};
 
 mod hierarchy;
 pub use hierarchy::{Instance, extract_hierarchy, extract_hierarchy_from_value};
@@ -90,6 +94,21 @@ fn push_options_to_ignore_protected(args: &mut Vec<&str>) {
     for option in options {
         args.push(option);
     }
+}
+
+/// The output of `slang --version` for the binary [`run_slang`] uses
+/// (`SLANG_PATH`, else `slang` on the PATH), for example
+/// `slang version 11.0.0+7ddf4059f`.
+pub fn slang_version() -> Result<String, Box<dyn std::error::Error>> {
+    let slang_path = std::env::var("SLANG_PATH")
+        .ok()
+        .or_else(find_slang)
+        .ok_or("slang not found: set SLANG_PATH")?;
+    let output = Command::new(slang_path).arg("--version").output()?;
+    if !output.status.success() {
+        return Err(format!("slang --version failed with exit code: {}", output.status).into());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 pub fn run_slang(cfg: &SlangConfig) -> Result<Value, Box<dyn std::error::Error>> {

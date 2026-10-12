@@ -539,6 +539,54 @@ endmodule
 }
 
 #[test]
+fn overridable_parameters_in_declaration_order() {
+    let sv = "
+module vp #(parameter type T = logic, parameter int W = 1, localparam int L = 2,
+            parameter type U = bit) ();
+  localparam int B = 3;
+  parameter int Q = 4;
+endmodule
+";
+    let value = elaborate(&[sv], &["vp"], &[]);
+    let parameters = extract_overridable_parameters_from_value(&value);
+    // A body `parameter` in a module with a parameter port list is a localparam.
+    assert_eq!(
+        parameters["vp"],
+        vec![
+            ("T".to_string(), ParameterKind::Type),
+            ("W".to_string(), ParameterKind::Value),
+            ("U".to_string(), ParameterKind::Type),
+        ]
+    );
+}
+
+#[test]
+fn instance_parameter_defs_apply_overrides() {
+    let child = "
+module pchild #(parameter int W = 8, parameter logic [W-1:0] INIT = '0) ();
+endmodule
+";
+    let top = "
+module top;
+  pchild #(.W(20)) u_wide();
+endmodule
+";
+    let value = elaborate(&[child, top], &["top"], &[]);
+    let defs = extract_instance_parameter_defs_from_value(&value, "top.u_wide").unwrap();
+    let widths: Vec<_> = defs
+        .iter()
+        .map(|p| (p.name.as_str(), p.ty.width().unwrap()))
+        .collect();
+    assert_eq!(widths, vec![("W", 32), ("INIT", 20)]);
+    assert!(extract_instance_parameter_defs_from_value(&value, "top.nope").is_none());
+}
+
+#[test]
+fn slang_version_names_slang() {
+    assert!(slang_version().unwrap().starts_with("slang version "));
+}
+
+#[test]
 fn absolute_path_normalizes() {
     let dir = std::path::Path::new("/a/b/c");
     assert_eq!(absolute_path(dir, "../../x/./y.sv"), "/a/x/y.sv");

@@ -387,6 +387,63 @@ pub fn extract_type_parameter_names_from_value(value: &Value) -> HashMap<String,
         .collect()
 }
 
+/// Whether a parameter takes a value or a type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParameterKind {
+    Value,
+    Type,
+}
+
+/// Lists the overridable parameters (`parameter` and `parameter type`, not
+/// `localparam`) of every top-level module, keyed by module name, in
+/// declaration order.
+pub fn extract_overridable_parameters_from_value(
+    value: &Value,
+) -> HashMap<String, Vec<(String, ParameterKind)>> {
+    let type_resolver = TypeResolver::new(value);
+    top_level_bodies(value, &type_resolver)
+        .map(|(module_name, body)| {
+            let parameters = MemberIter::new(body, &["Parameter", "TypeParameter"])
+                .filter(|member| member["isLocal"].as_bool() != Some(true))
+                .filter_map(|member| {
+                    let kind = match member["kind"].as_str() {
+                        Some("TypeParameter") => ParameterKind::Type,
+                        _ => ParameterKind::Value,
+                    };
+                    Some((member["name"].as_str()?.to_string(), kind))
+                })
+                .collect();
+            (module_name.to_string(), parameters)
+        })
+        .collect()
+}
+
+/// Extracts the value parameters (localparams included) of the instance at
+/// the dot-separated hierarchical `path`, with that instance's overrides
+/// applied, as [`extract_parameter_defs_from_value`] does for top-level
+/// modules. Parameters whose type cannot be parsed are skipped. Returns
+/// `None` if no such instance exists.
+pub fn extract_instance_parameter_defs_from_value(
+    value: &Value,
+    path: &str,
+) -> Option<Vec<ParameterDef>> {
+    let type_resolver = TypeResolver::new(value);
+    let body = find_instance_body(value, &type_resolver, path)?;
+    let type_parameters = type_resolver.type_parameters(body);
+    Some(
+        MemberIter::new(body, &["Parameter"])
+            .filter_map(|member| {
+                let type_str =
+                    type_resolver.resolve_with(member["type"].as_str().unwrap(), &type_parameters);
+                Some(ParameterDef {
+                    name: member["name"].as_str()?.to_string(),
+                    ty: parse_type_definition_no_error(&type_str).ok()?,
+                })
+            })
+            .collect(),
+    )
+}
+
 pub fn extract_parameter_defs_from_value(
     value: &Value,
     skip_unsupported: bool,
