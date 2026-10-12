@@ -167,10 +167,16 @@ fn file_digest(path: &str) -> Option<[u8; 32]> {
 
 /// The dependency list Slang wrote with `--Mall` (paths relative to this
 /// process's working directory), plus the configured sources and library
-/// files, without the generated elaboration top.
-fn dependencies(mall: &Path, import: &VerilogImport, generated: Option<&str>) -> Dependencies {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let listed = std::fs::read_to_string(mall).unwrap_or_default();
+/// files, without the generated elaboration top. Fails if Slang wrote no
+/// list.
+fn dependencies(
+    mall: &Path,
+    import: &VerilogImport,
+    generated: Option<&str>,
+) -> Result<Dependencies, String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("working directory: {e}"))?;
+    let listed = std::fs::read_to_string(mall)
+        .map_err(|e| format!("Slang's dependency list {}: {e}", mall.display()))?;
     let mut paths: Vec<String> = listed
         .lines()
         .map(str::trim)
@@ -184,13 +190,13 @@ fn dependencies(mall: &Path, import: &VerilogImport, generated: Option<&str>) ->
         .collect();
     paths.sort();
     paths.dedup();
-    paths
+    Ok(paths
         .into_iter()
         .map(|path| {
             let digest = file_digest(&path);
             (path, digest)
         })
-        .collect()
+        .collect())
 }
 
 /// A cache whose entries are valid while the files they were elaborated
@@ -228,17 +234,29 @@ impl<V: Clone> DependencyCache<V> {
         })
     }
 
-    /// Records `value`, replacing an entry with the same final key.
+    /// Records `value`. Entries for `pre_key` with the same final key, or
+    /// whose dependencies have changed since, are dropped.
     fn insert(&self, pre_key: [u8; 32], dependencies: Dependencies, value: V) {
         let key = final_key(&pre_key, &dependencies);
         let mut entries = self.entries.write();
         let list = entries.entry(pre_key).or_default();
-        list.retain(|entry| entry.key != key);
+        list.retain(|entry| {
+            entry.key != key
+                && entry
+                    .dependencies
+                    .iter()
+                    .all(|(path, digest)| file_digest(path) == *digest)
+        });
         list.push(CacheEntry {
             dependencies,
             key,
             value,
         });
+    }
+
+    #[cfg(test)]
+    fn entry_count(&self, pre_key: &[u8; 32]) -> usize {
+        self.entries.read().get(pre_key).map_or(0, Vec::len)
     }
 }
 
@@ -395,11 +413,12 @@ pub(crate) fn specialize(
     overrides: &IndexMap<String, ParameterValue>,
     caller: &Span,
 ) -> Result<Specialized, ImportError> {
+    check_extra_arguments(module, import, caller)?;
     let pre_key = pre_key("specialization", module, import, overrides);
     if let Some(specialized) = SPECIALIZATIONS.get(&pre_key) {
         return Ok(specialized);
     }
-    if let Some(definition) = definition(module, import) {
+    if let Some(definition) = definition(module, import, caller)? {
         if !definition.interface_ports.is_empty() {
             return Err(typed::interface_port_error(
                 module,
@@ -465,14 +484,38 @@ fn check_against_definition(
     }
 }
 
-fn definition(module: &str, import: &VerilogImport) -> Option<Definition> {
+/// A temporary directory for one Slang run, and the path of the `--Mall`
+/// dependency list in it.
+fn scratch_dir(
+    module: &str,
+    caller: &Span,
+) -> Result<(tempfile::TempDir, std::path::PathBuf), ImportError> {
+    let dir = tempfile::tempdir()
+        .map_err(|e| elaboration_io_failure(module, caller, format!("temporary directory: {e}")))?;
+    if dir.path().to_str().is_none() {
+        return Err(elaboration_io_failure(
+            module,
+            caller,
+            format!("{} is not valid UTF-8", dir.path().display()),
+        ));
+    }
+    let mall = dir.path().join("deps.txt");
+    Ok((dir, mall))
+}
+
+/// The definition of `module` elaborated alone; `Ok(None)` if it does not
+/// elaborate alone.
+fn definition(
+    module: &str,
+    import: &VerilogImport,
+    caller: &Span,
+) -> Result<Option<Definition>, ImportError> {
     let pre_key = pre_key("definition", module, import, &IndexMap::new());
     if let Some(definition) = DEFINITIONS.get(&pre_key) {
-        return definition;
+        return Ok(definition);
     }
-    let dir = tempfile::tempdir().ok()?;
-    let mall = dir.path().join("deps.txt");
-    let mall_arg = mall.to_str()?;
+    let (_dir, mall) = scratch_dir(module, caller)?;
+    let mall_arg = mall.to_str().expect("checked by scratch_dir");
     let definition = import.with_config(&[], &[], &["--Mall", mall_arg], |cfg| {
         let value = typed::elaborate_definition(module, cfg)?;
         let interface_ports =
@@ -485,12 +528,53 @@ fn definition(module: &str, import: &VerilogImport) -> Option<Definition> {
             parameters,
         })
     });
-    DEFINITIONS.insert(
-        pre_key,
-        dependencies(&mall, import, None),
-        definition.clone(),
+    match dependencies(&mall, import, None) {
+        Ok(dependencies) => DEFINITIONS.insert(pre_key, dependencies, definition.clone()),
+        // A failed run may write no list: the failure is reported by the
+        // specialization's own run, and nothing is cached.
+        Err(_) if definition.is_none() => {}
+        Err(e) => return Err(elaboration_io_failure(module, caller, e)),
+    }
+    Ok(definition)
+}
+
+/// S0102 for extra arguments that would clash with those a specialization
+/// passes to Slang.
+fn check_extra_arguments(
+    module: &str,
+    import: &VerilogImport,
+    caller: &Span,
+) -> Result<(), ImportError> {
+    let conflicting: Vec<&String> = import
+        .extra_arguments
+        .iter()
+        .filter(|a| *a == "--Mall" || a.starts_with("--Mall="))
+        .collect();
+    if conflicting.is_empty() {
+        return Ok(());
+    }
+    let mut d = error_at(
+        codes::S0102,
+        format!("cannot elaborate a specialization of `{module}`"),
+        caller,
+        "specialized here",
     );
-    definition
+    d.notes.push(format!(
+        "the import configuration's extra arguments contain `{}`, which specialization \
+         passes to Slang itself to list the files it reads",
+        conflicting[0]
+    ));
+    d.helps
+        .push("remove `--Mall` from `ParserConfig::extra_arguments`".to_string());
+    Err(import_error(vec![d]))
+}
+
+/// Whether the extra arguments set a timescale (`--timescale v` or
+/// `--timescale=v`).
+fn sets_timescale(extra_arguments: &[String]) -> bool {
+    extra_arguments
+        .iter()
+        .any(|a| a == "--timescale" || a.starts_with("--timescale="))
 }
 
 /// S0101 for an override of a parameter `module` does not declare.
@@ -620,26 +704,19 @@ fn elaborate(
 ) -> Result<Elaborated, ImportError> {
     let top = format!("__sandstitch_elab_{}", short_hash(pre_key));
     let (text, override_lines) = elaboration_top(&top, module, overrides);
-    let dir = tempfile::tempdir()
-        .map_err(|e| elaboration_io_failure(module, caller, format!("temporary directory: {e}")))?;
+    let (dir, mall) = scratch_dir(module, caller)?;
     let file_name = format!("{top}.sv");
     let path = dir.path().join(&file_name);
     std::fs::write(&path, &text)
         .map_err(|e| elaboration_io_failure(module, caller, format!("{}: {e}", path.display())))?;
-    let mall = dir.path().join("deps.txt");
-    let (Some(path), Some(mall_arg)) = (path.to_str(), mall.to_str()) else {
-        return Err(elaboration_io_failure(
-            module,
-            caller,
-            format!("{} is not valid UTF-8", dir.path().display()),
-        ));
-    };
+    let path = path.to_str().expect("checked by scratch_dir");
+    let mall_arg = mall.to_str().expect("checked by scratch_dir");
 
     // The generated top leaves every port unconnected; its warnings must not
     // fail a `-Werror` configuration. A module with `timescale needs one on
     // the generated top too.
     let mut extra_arguments = vec!["--Mall", mall_arg, "--suppress-warnings", path];
-    if import.timescale.is_none() && !import.extra_arguments.iter().any(|a| a == "--timescale") {
+    if import.timescale.is_none() && !sets_timescale(&import.extra_arguments) {
         extra_arguments.extend(["--timescale", "1ns/1ns"]);
     }
 
@@ -659,7 +736,8 @@ fn elaborate(
                 caller,
             )
         })?;
-    let dependencies = dependencies(&mall, import, Some(&file_name));
+    let dependencies = dependencies(&mall, import, Some(&file_name))
+        .map_err(|e| elaboration_io_failure(module, caller, e))?;
 
     let instance = format!("{top}.{INSTANCE}");
     let ports = typed::import_instance_ports(&value, &instance, module, import.skip_unsupported)
@@ -793,9 +871,26 @@ fn slang_failure(
 
 #[cfg(test)]
 mod tests {
-    use super::elaborations;
+    use super::{SPECIALIZATIONS, dependencies, elaborations, pre_key};
+    use crate::import::parser::VerilogImport;
+    use crate::model::parameter::ParameterValue;
     use crate::{ModDef, ParserConfig};
+    use indexmap::IndexMap;
     use std::path::Path;
+
+    fn specialization_pre_key(base: &ModDef, overrides: &[(&str, i64)]) -> [u8; 32] {
+        let core = base.core.read();
+        let overrides: IndexMap<String, ParameterValue> = overrides
+            .iter()
+            .map(|(name, value)| (name.to_string(), (*value).into()))
+            .collect();
+        pre_key(
+            "specialization",
+            &core.name,
+            core.verilog_import.as_ref().unwrap(),
+            &overrides,
+        )
+    }
 
     fn write(path: &Path, text: &str) {
         std::fs::write(path, text).unwrap();
@@ -873,11 +968,25 @@ mod tests {
         assert_eq!(changed.get_port("d").io().width(), 9);
         assert_ne!(first.specialization_key(), changed.specialization_key());
 
-        // Restoring the header restores the first identity.
+        // The stale entry was dropped when the new one was recorded.
+        let pre_key = specialization_pre_key(&base, &[("N", 4)]);
+        assert_eq!(SPECIALIZATIONS.entry_count(&pre_key), 1);
+
+        // Restoring the header re-elaborates and restores the first identity.
         write(&header, "`define EXTRA 2\n");
         let restored = base.parameterize(&[("N", 4)]);
-        assert_eq!(elaborations(), before + 2, "the first entry is valid again");
+        assert_eq!(elaborations(), before + 3);
         assert_eq!(restored.specialization_key(), first.specialization_key());
+        assert_eq!(SPECIALIZATIONS.entry_count(&pre_key), 1);
+    }
+
+    #[test]
+    fn missing_dependency_list_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let import = VerilogImport::new(&ParserConfig::default());
+        let missing = dir.path().join("deps.txt");
+        let e = dependencies(&missing, &import, None).unwrap_err();
+        assert!(e.starts_with("Slang's dependency list "), "{e}");
     }
 
     #[test]

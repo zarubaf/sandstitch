@@ -424,6 +424,51 @@ endmodule
 }
 
 #[test]
+fn user_timescale_argument_is_kept() {
+    let module = "`timescale 1ns/1ps
+module ts2 #(parameter int N = 1) (output logic [N-1:0] o);
+endmodule
+";
+    let sources = Sources::new(&[module]);
+    for extra in [
+        &["--timescale=1ns/1ps"][..],
+        &["--timescale", "1ns/1ps"][..],
+    ] {
+        let spec = sources
+            .import_with("ts2", false, extra)
+            .try_parameterize(&[("N", 3)])
+            .unwrap_or_else(|e| panic!("{extra:?}: {e}"));
+        assert_eq!(spec.get_port("o").io().width(), 3);
+    }
+}
+
+#[test]
+fn user_mall_argument_reports_s0102() {
+    let deps = tempfile::tempdir().unwrap();
+    let list = deps.path().join("deps.txt");
+    let list = list.to_str().unwrap();
+    let sources = Sources::new(&[PKG, CHILD]);
+    let joined = format!("--Mall={list}");
+    for extra in [&["--Mall", list][..], &[joined.as_str()][..]] {
+        let child = sources.import_with("child", false, extra);
+        let (result, line) = (child.try_parameterize(&[("N", 3)]), line!());
+        let e = result.err().unwrap();
+        assert_eq!(e.diagnostics.0.len(), 1, "{extra:?}");
+        let d = &e.diagnostics.0[0];
+        assert_eq!(d.code, codes::S0102, "{extra:?}");
+        assert_eq!(primary_line(&e), rust_span(line));
+        assert!(
+            d.notes[0].contains(&format!("contain `{}`", extra[0])),
+            "{d:?}"
+        );
+        assert_eq!(
+            d.helps,
+            vec!["remove `--Mall` from `ParserConfig::extra_arguments`".to_string()]
+        );
+    }
+}
+
+#[test]
 fn werror_config_specializes() {
     // The generated top leaves the ports unconnected, which Slang warns about.
     let sources = Sources::new(&[PKG, CHILD]);

@@ -84,7 +84,7 @@ impl VerilogImport {
         })
     }
 
-    fn new(cfg: &ParserConfig) -> Self {
+    pub(crate) fn new(cfg: &ParserConfig) -> Self {
         let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect();
         VerilogImport {
             sources: strings(cfg.sources),
