@@ -3,13 +3,16 @@
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs::{self, write};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 mod extract;
 pub use extract::{
-    Field, ParameterDef, Port, PortDir, Range, Type, Variant, extract_modules,
-    extract_modules_from_value, extract_parameter_defs, extract_parameter_defs_from_value,
-    extract_ports, extract_ports_from_value, parse_type_definition,
+    Field, InterfacePort, ParameterDef, Port, PortDir, Range, SourceLoc, Type, Variant,
+    extract_instance_interface_ports_from_value, extract_instance_ports_from_value,
+    extract_interface_ports_from_value, extract_modules, extract_modules_from_value,
+    extract_parameter_defs, extract_parameter_defs_from_value, extract_ports,
+    extract_ports_from_value, extract_type_parameter_names_from_value, parse_type_definition,
 };
 
 mod hierarchy;
@@ -106,7 +109,13 @@ pub fn run_slang(cfg: &SlangConfig) -> Result<Value, Box<dyn std::error::Error>>
     }
 
     let tmp_json = tempfile::NamedTempFile::new()?;
-    let mut args = vec!["--ast-json", tmp_json.path().to_str().unwrap()];
+    // Source info adds `source_file`/`source_line`/`source_column` to each
+    // symbol, which is used to fill in declaration locations (e.g. `Port::loc`).
+    let mut args = vec![
+        "--ast-json",
+        tmp_json.path().to_str().unwrap(),
+        "--ast-json-source-info",
+    ];
 
     if cfg.ignore_unknown_modules {
         args.push("--ignore-unknown-modules");
@@ -174,6 +183,9 @@ pub fn run_slang(cfg: &SlangConfig) -> Result<Value, Box<dyn std::error::Error>>
         args.push(source);
     }
 
+    // Slang reports source paths relative to its working directory, which is
+    // this process's; capture it so they can be made absolute.
+    let working_dir = std::env::current_dir()?;
     let mut cmd = Command::new(slang_path);
 
     cmd.args(args);
@@ -207,9 +219,51 @@ pub fn run_slang(cfg: &SlangConfig) -> Result<Value, Box<dyn std::error::Error>>
     json_deserializer.disable_recursion_limit();
 
     let stacked_deserializer = serde_stacker::Deserializer::new(&mut json_deserializer);
-    let json_value = Value::deserialize(stacked_deserializer)?;
+    let mut json_value = Value::deserialize(stacked_deserializer)?;
+    absolutize_source_files(&mut json_value, &working_dir);
 
     Ok(json_value)
+}
+
+/// Rewrites the `source_file*` fields added by `--ast-json-source-info`
+/// (relative to Slang's working directory) to absolute, lexically normalized
+/// paths. Pseudo-files such as `<command-line>` are left unchanged.
+fn absolutize_source_files(value: &mut Value, working_dir: &Path) {
+    // Iterative: the AST can be nested deeper than the native stack allows.
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            Value::Object(object) => {
+                for (key, child) in object.iter_mut() {
+                    if key.starts_with("source_file") {
+                        if let Value::String(path) = child {
+                            if !path.starts_with('<') {
+                                *path = absolute_path(working_dir, path);
+                            }
+                        }
+                    } else {
+                        stack.push(child);
+                    }
+                }
+            }
+            Value::Array(array) => stack.extend(array.iter_mut()),
+            _ => {}
+        }
+    }
+}
+
+fn absolute_path(working_dir: &Path, path: &str) -> String {
+    let mut normalized = PathBuf::new();
+    for component in working_dir.join(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other),
+        }
+    }
+    normalized.to_string_lossy().into_owned()
 }
 
 pub fn str2tmpfile(s: &str) -> Result<tempfile::NamedTempFile, Box<dyn std::error::Error>> {

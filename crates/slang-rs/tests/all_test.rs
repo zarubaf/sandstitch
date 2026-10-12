@@ -7,6 +7,15 @@ mod tests {
     use std::collections::HashMap;
     use std::rc::Rc;
 
+    /// Source locations are covered by dedicated tests; these tests compare
+    /// port names, directions and types only.
+    fn without_locs(mut ports: HashMap<String, Vec<Port>>) -> HashMap<String, Vec<Port>> {
+        for port in ports.values_mut().flatten() {
+            port.loc = None;
+        }
+        ports
+    }
+
     #[test]
     fn test_extract_all() {
         let verilog = str2tmpfile(
@@ -35,12 +44,13 @@ mod tests {
 
         // check ports
 
-        let ports = extract_ports_from_value(&value, false);
+        let ports = without_locs(extract_ports_from_value(&value, false));
 
         let expected_ports = HashMap::from([(
             "A".to_string(),
             vec![
                 Port {
+                    loc: None,
                     name: "x".to_string(),
                     dir: PortDir::Input,
                     ty: Type::Logic {
@@ -50,6 +60,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     name: "y".to_string(),
                     dir: PortDir::Output,
                     ty: Type::Logic {

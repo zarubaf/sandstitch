@@ -41,11 +41,41 @@ pub enum PortDir {
     InOut,
 }
 
+/// A declaration's position in the source, as reported by Slang's
+/// `--ast-json-source-info` (`source_file`, `source_line`, `source_column`).
+///
+/// `file` is the path in the JSON. Slang writes paths relative to the
+/// directory it ran in; [`crate::run_slang`] rewrites them to absolute paths.
+/// `line` is 1-based. `column` is 1-based, or `None` when Slang reports no
+/// column (column 0), as for declarations produced by a macro expansion,
+/// where `line` is the line of the macro use.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SourceLoc {
+    pub file: String,
+    pub line: u32,
+    pub column: Option<u32>,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Port {
     pub dir: PortDir,
     pub name: String,
     pub ty: Type,
+    /// Where the port is declared, if Slang reported source information.
+    pub loc: Option<SourceLoc>,
+}
+
+/// A port whose type is an interface (`bus_if.mst m_if` or `bus_if s_if`).
+///
+/// Interface-array dimensions (`bus_if m_if [2]`) are not reported: Slang's
+/// JSON for an `InterfacePort` does not include them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InterfacePort {
+    pub name: String,
+    /// The interface definition name; empty for generic (`interface`) ports.
+    pub interface: String,
+    pub modport: Option<String>,
+    pub loc: Option<SourceLoc>,
 }
 
 pub struct ParameterDef {
@@ -131,6 +161,117 @@ where
     }
 }
 
+/// Iterates over the top-level instances of the design, yielding each
+/// instance's name together with its (link-resolved) body.
+fn top_level_bodies<'a>(
+    value: &'a Value,
+    type_resolver: &TypeResolver<'a>,
+) -> impl Iterator<Item = (&'a str, &'a Value)> {
+    MemberIter::new(&value["design"], &["Instance"]).filter_map(move |member| {
+        let module_name = member["name"].as_str().unwrap();
+        if module_name.is_empty() {
+            None
+        } else {
+            Some((module_name, type_resolver.resolve_node(&member["body"])))
+        }
+    })
+}
+
+/// Finds the body of the instance at a dot-separated hierarchical `path`,
+/// starting from a top-level instance (e.g. `"top"` or `"top.u_child"`).
+///
+/// Only instances that are direct members of their parent's body are
+/// followed; instances inside generate blocks are not reachable.
+fn find_instance_body<'a>(
+    value: &'a Value,
+    type_resolver: &TypeResolver<'a>,
+    path: &str,
+) -> Option<&'a Value> {
+    let mut segments = path.split('.');
+    let first = segments.next()?;
+    let (_, mut body) = top_level_bodies(value, type_resolver).find(|(name, _)| *name == first)?;
+    for segment in segments {
+        let instance = MemberIter::new(body, &["Instance"])
+            .find(|member| member["name"].as_str() == Some(segment))?;
+        body = type_resolver.resolve_node(&instance["body"]);
+    }
+    Some(body)
+}
+
+/// Reads the `source_*` fields added by `--ast-json-source-info`.
+fn source_loc(node: &Value) -> Option<SourceLoc> {
+    Some(SourceLoc {
+        file: node.get("source_file")?.as_str()?.to_string(),
+        line: u32::try_from(node.get("source_line")?.as_u64()?).ok()?,
+        column: u32::try_from(node.get("source_column")?.as_u64()?)
+            .ok()
+            .filter(|column| *column != 0),
+    })
+}
+
+/// Extracts the ports of one instance body. Port types that refer to the
+/// body's type parameters resolve to the parameters' actual types.
+///
+/// Shared by [`extract_ports_from_value`] and
+/// [`extract_instance_ports_from_value`], which differ only in how they find
+/// the body.
+fn body_ports(type_resolver: &TypeResolver, body: &Value, skip_unsupported: bool) -> Vec<Port> {
+    let type_parameters = type_resolver.type_parameters(body);
+    let mut ports = Vec::new();
+    for instance_member in MemberIter::new(body, &["Port", "InterfacePort"]) {
+        let kind = instance_member["kind"].as_str().unwrap();
+        match kind {
+            "Port" => {
+                let port_name = instance_member["name"].as_str().unwrap();
+                let direction = instance_member["direction"].as_str().unwrap();
+                let type_str = type_resolver
+                    .resolve_with(instance_member["type"].as_str().unwrap(), &type_parameters);
+                match parse_type_definition_no_error(&type_str) {
+                    Ok(ty) => ports.push(Port {
+                        dir: PortDir::from_str(direction).unwrap(),
+                        name: port_name.to_string(),
+                        ty,
+                        loc: source_loc(instance_member),
+                    }),
+                    Err(e) => {
+                        if skip_unsupported {
+                            continue;
+                        } else {
+                            panic!("{}", e);
+                        }
+                    }
+                }
+            }
+            "InterfacePort" => {
+                if !skip_unsupported {
+                    panic!("Interface ports are not currently supported.")
+                }
+            }
+            _ => continue,
+        }
+    }
+    ports
+}
+
+fn body_interface_ports(body: &Value) -> Vec<InterfacePort> {
+    MemberIter::new(body, &["InterfacePort"])
+        .map(|member| InterfacePort {
+            name: member["name"].as_str().unwrap_or_default().to_string(),
+            interface: member["interfaceDef"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            modport: member["modport"].as_str().map(str::to_string),
+            loc: source_loc(member),
+        })
+        .collect()
+}
+
+/// Extracts the ports of every top-level module, keyed by module name.
+///
+/// Interface ports are not represented as [`Port`]s: they panic unless
+/// `skip_unsupported` is set, in which case they are skipped; use
+/// [`extract_interface_ports_from_value`] to list them.
 pub fn extract_ports_from_value(
     value: &Value,
     skip_unsupported: bool,
@@ -143,43 +284,63 @@ pub fn extract_ports_from_value(
         if module_name.is_empty() {
             continue;
         }
-        let mut ports = Vec::new();
         let body = type_resolver.resolve_node(&member["body"]);
-        for instance_member in MemberIter::new(body, &["Port", "InterfacePort"]) {
-            let kind = instance_member["kind"].as_str().unwrap();
-            match kind {
-                "Port" => {
-                    let port_name = instance_member["name"].as_str().unwrap();
-                    let direction = instance_member["direction"].as_str().unwrap();
-                    let type_str = type_resolver.resolve(instance_member["type"].as_str().unwrap());
-                    match parse_type_definition_no_error(&type_str) {
-                        Ok(ty) => ports.push(Port {
-                            dir: PortDir::from_str(direction).unwrap(),
-                            name: port_name.to_string(),
-                            ty,
-                        }),
-                        Err(e) => {
-                            if skip_unsupported {
-                                continue;
-                            } else {
-                                panic!("{}", e);
-                            }
-                        }
-                    }
-                }
-                "InterfacePort" => {
-                    if !skip_unsupported {
-                        panic!("Interface ports are not currently supported.")
-                    }
-                }
-                _ => continue,
-            }
-        }
+        let ports = body_ports(&type_resolver, body, skip_unsupported);
         insert_to_vacant(&mut ports_map, module_name.to_string(), ports)
             .unwrap_or_else(|_| panic!("Duplicate definition of module: {module_name}"));
     }
 
     ports_map
+}
+
+/// Extracts the ports of the instance at the dot-separated hierarchical
+/// `path` (e.g. `"top.u_child"`), with that instance's parameter and type
+/// parameter overrides applied. Returns `None` if no such instance exists.
+///
+/// Interface ports are handled as in [`extract_ports_from_value`].
+pub fn extract_instance_ports_from_value(
+    value: &Value,
+    path: &str,
+    skip_unsupported: bool,
+) -> Option<Vec<Port>> {
+    let type_resolver = TypeResolver::new(value);
+    let body = find_instance_body(value, &type_resolver, path)?;
+    Some(body_ports(&type_resolver, body, skip_unsupported))
+}
+
+/// Lists the interface ports of every top-level module, keyed by module name.
+pub fn extract_interface_ports_from_value(value: &Value) -> HashMap<String, Vec<InterfacePort>> {
+    let type_resolver = TypeResolver::new(value);
+    top_level_bodies(value, &type_resolver)
+        .map(|(module_name, body)| (module_name.to_string(), body_interface_ports(body)))
+        .collect()
+}
+
+/// Lists the interface ports of the instance at the dot-separated
+/// hierarchical `path`. Returns `None` if no such instance exists.
+pub fn extract_instance_interface_ports_from_value(
+    value: &Value,
+    path: &str,
+) -> Option<Vec<InterfacePort>> {
+    let type_resolver = TypeResolver::new(value);
+    let body = find_instance_body(value, &type_resolver, path)?;
+    Some(body_interface_ports(body))
+}
+
+/// Lists the overridable type parameters (`parameter type T`) of every
+/// top-level module, keyed by module name, in declaration order.
+/// `localparam type` declarations are not included.
+pub fn extract_type_parameter_names_from_value(value: &Value) -> HashMap<String, Vec<String>> {
+    let type_resolver = TypeResolver::new(value);
+    top_level_bodies(value, &type_resolver)
+        .map(|(module_name, body)| {
+            let names = MemberIter::new(body, &["TypeParameter"])
+                .filter(|member| member["isLocal"].as_bool() != Some(true))
+                .filter_map(|member| member["name"].as_str().map(str::to_string))
+                .collect();
+            (module_name.to_string(), names)
+        })
+        .collect()
 }
 
 pub fn extract_parameter_defs_from_value(
@@ -196,9 +357,13 @@ pub fn extract_parameter_defs_from_value(
         }
         let mut parameters = Vec::new();
         let body = type_resolver.resolve_node(&member["body"]);
+        // Type parameters (`TypeParameter` nodes) are not value parameters and
+        // are not listed; see `extract_type_parameter_names_from_value`.
+        let type_parameters = type_resolver.type_parameters(body);
         for instance_member in MemberIter::new(body, &["Parameter"]) {
             let parameter_name = instance_member["name"].as_str().unwrap();
-            let type_str = type_resolver.resolve(instance_member["type"].as_str().unwrap());
+            let type_str = type_resolver
+                .resolve_with(instance_member["type"].as_str().unwrap(), &type_parameters);
             match parse_type_definition_no_error(&type_str) {
                 Ok(ty) => parameters.push(ParameterDef {
                     name: parameter_name.to_string(),
@@ -336,6 +501,46 @@ impl<'a> TypeResolver<'a> {
     /// node kinds are preserved verbatim so the normal type parser can report
     /// an informative error (or the caller can skip unsupported types).
     pub(crate) fn resolve(&self, type_text: &str) -> String {
+        self.resolve_with(type_text, &HashMap::new())
+    }
+
+    /// Collects the type parameters declared directly in an instance body,
+    /// keyed by the scope-qualified name Slang uses when linking to them
+    /// (`<body name>.<parameter name>`, e.g. `child.T`), with their actual
+    /// (possibly overridden) type text as value.
+    ///
+    /// Slang links a use of a type parameter to the parameter's internal
+    /// alias type, which is not itself serialized, so such links cannot be
+    /// resolved by address. The `TypeParameter` node carries the type.
+    pub(crate) fn type_parameters(&self, body: &Value) -> HashMap<String, String> {
+        let Some(scope) = body["name"].as_str() else {
+            return HashMap::new();
+        };
+        MemberIter::new(body, &["TypeParameter"])
+            .filter_map(|member| {
+                let name = member["name"].as_str()?;
+                let ty = member["type"].as_str()?;
+                Some((format!("{scope}.{name}"), ty.to_string()))
+            })
+            .collect()
+    }
+
+    /// Like [`Self::resolve`], additionally substituting links to the given
+    /// type parameters (as collected by [`Self::type_parameters`]).
+    pub(crate) fn resolve_with(
+        &self,
+        type_text: &str,
+        type_parameters: &HashMap<String, String>,
+    ) -> String {
+        self.resolve_with_depth(type_text, type_parameters, 0)
+    }
+
+    fn resolve_with_depth(
+        &self,
+        type_text: &str,
+        type_parameters: &HashMap<String, String>,
+        depth: usize,
+    ) -> String {
         let mut result = type_text.to_string();
         // Cap expansion to guard against malformed or cyclic linked typedefs.
         for _ in 0..64 {
@@ -344,6 +549,9 @@ impl<'a> TypeResolver<'a> {
                 .replace_all(&result, |captures: &regex::Captures| {
                     let address = captures["addr"].parse::<u64>().unwrap();
                     self.render_link(address, &captures["name"])
+                        .or_else(|| {
+                            self.render_type_parameter(&captures["name"], type_parameters, depth)
+                        })
                         .unwrap_or_else(|| captures[0].to_string())
                 })
                 .into_owned();
@@ -377,6 +585,44 @@ impl<'a> TypeResolver<'a> {
         }
     }
 
+    /// Renders a link to a type parameter (`child.T[2:0]`) as the parameter's
+    /// actual type with the use-site dimensions applied. The actual type keeps
+    /// its own name (e.g. `cfg_pkg::flit_t`); the parameter name is dropped.
+    ///
+    /// Use-site dimensions are the outer ones: `T [2:0]` with `T = logic[7:0]`
+    /// is `logic[2:0][7:0]`.
+    fn render_type_parameter(
+        &self,
+        display_name: &str,
+        type_parameters: &HashMap<String, String>,
+        depth: usize,
+    ) -> Option<String> {
+        // A type parameter's type can name another type parameter of the
+        // same scope; SystemVerilog forbids cycles, but guard regardless.
+        if depth >= 16 {
+            return None;
+        }
+        let dimension_index = dimension_start(display_name);
+        let (name, use_site_dimensions) = match dimension_index {
+            Some(index) => (&display_name[..index], &display_name[index..]),
+            None => (display_name, ""),
+        };
+        let actual = type_parameters.get(name)?;
+        let actual = self.resolve_with_depth(actual, type_parameters, depth + 1);
+        // Aggregates end in their nominal name; their own dimensions follow it.
+        let base_end = if is_aggregate(&actual) {
+            let close = actual.rfind('}')?;
+            close + 1 + dimension_start(&actual[close + 1..]).unwrap_or(actual.len() - close - 1)
+        } else {
+            dimension_start(&actual).unwrap_or(actual.len())
+        };
+        let (base, actual_dimensions) = actual.split_at(base_end);
+        Some(format!(
+            "{base}{}",
+            merge_dimensions(use_site_dimensions, actual_dimensions)
+        ))
+    }
+
     /// Applies a typedef's public name and use-site dimensions to its resolved
     /// target text.
     fn render_alias_target(&self, target: &str, display_name: &str) -> Option<String> {
@@ -387,14 +633,7 @@ impl<'a> TypeResolver<'a> {
         let display_name = display_dimension_start
             .map(|index| &display_name[..index])
             .unwrap_or(display_name);
-        if matches!(
-            target.split_once('{').map(|(prefix, _)| prefix.trim()),
-            Some("struct")
-                | Some("struct packed")
-                | Some("union")
-                | Some("union packed")
-                | Some("enum")
-        ) {
+        if is_aggregate(target) {
             // Aggregate targets end in an internal nominal name. Replace it
             // with the package-qualified name from this use site. Dimensions
             // after the target's internal name belong to the typedef itself and
@@ -453,6 +692,19 @@ impl<'a> TypeResolver<'a> {
             .join(",");
         Some(format!("enum{{{variants}}}{display_name}"))
     }
+}
+
+/// Whether a textual type is a struct, union or enum declaration (which ends
+/// in a nominal name, followed by any dimensions).
+fn is_aggregate(type_text: &str) -> bool {
+    matches!(
+        type_text.split_once('{').map(|(prefix, _)| prefix.trim()),
+        Some("struct")
+            | Some("struct packed")
+            | Some("union")
+            | Some("union packed")
+            | Some("enum")
+    )
 }
 
 /// Finds the first packed (`[... ]`) or unpacked (`$[...]`) dimension.
@@ -662,6 +914,61 @@ mod resolver_tests {
         assert_eq!(ports["top"][0].name, "data");
         let parameters = extract_parameter_defs_from_value(&ast, false);
         assert_eq!(parameters["top"][0].name, "WIDTH");
+    }
+
+    #[test]
+    fn resolves_slang_v11_type_parameter_links() {
+        // Shape of Slang v11 output for
+        // `child #(.T(cfg_pkg::flit_t), .N(3)) u();` with port
+        // `input T [N-1:0] in_i`: the port links to an unserialized address.
+        let ast = json!({
+            "nodes": [{
+                "name": "flit_t",
+                "kind": "TypeAlias",
+                "addr": 100,
+                "target": "struct packed{logic[3:0] a;}cfg_pkg::s$1"
+            }],
+            "design": { "members": [{
+                "kind": "Instance",
+                "name": "child",
+                "body": {
+                    "name": "child",
+                    "kind": "InstanceBody",
+                    "members": [
+                        { "name": "T", "kind": "TypeParameter", "type": "100 cfg_pkg::flit_t" },
+                        { "name": "U", "kind": "TypeParameter", "type": "logic[7:0]" },
+                        { "name": "a", "kind": "Port", "direction": "In",
+                          "type": "999 child.T[2:0]",
+                          "source_file": "c.sv", "source_line": 3, "source_column": 5 },
+                        { "name": "b", "kind": "Port", "direction": "Out",
+                          "type": "998 child.U[2:0]$[1:0]" }
+                    ]
+                }
+            }]}
+        });
+        let resolver = TypeResolver::new(&ast);
+        let params = resolver.type_parameters(&ast["design"]["members"][0]["body"]);
+        assert_eq!(
+            resolver.resolve_with("999 child.T[2:0]", &params),
+            "struct packed{logic[3:0] a;}cfg_pkg::flit_t[2:0]"
+        );
+        assert_eq!(
+            resolver.resolve_with("998 child.U[2:0]$[1:0]", &params),
+            "logic[2:0][7:0]$[1:0]"
+        );
+        // Without the scope's parameters the link is preserved verbatim.
+        assert_eq!(resolver.resolve("999 child.T[2:0]"), "999 child.T[2:0]");
+
+        let ports = extract_ports_from_value(&ast, false);
+        assert_eq!(
+            ports["child"][0].loc,
+            Some(SourceLoc {
+                file: "c.sv".to_string(),
+                line: 3,
+                column: Some(5)
+            })
+        );
+        assert_eq!(ports["child"][1].loc, None);
     }
 
     #[test]

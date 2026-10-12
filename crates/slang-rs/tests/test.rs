@@ -4,6 +4,16 @@
 mod tests {
     use num_bigint::BigInt;
     use slang_rs::*;
+    use std::collections::HashMap;
+
+    /// Source locations are covered by dedicated tests; these tests compare
+    /// port names, directions and types only.
+    fn without_locs(mut ports: HashMap<String, Vec<Port>>) -> HashMap<String, Vec<Port>> {
+        for port in ports.values_mut().flatten() {
+            port.loc = None;
+        }
+        ports
+    }
 
     #[test]
     fn test_extract_ports() {
@@ -43,11 +53,12 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = extract_ports(&cfg, false);
+        let definitions = without_locs(extract_ports(&cfg, false));
         assert_eq!(
             definitions["foo"],
             vec![
                 Port {
+                    loc: None,
                     dir: PortDir::Input,
                     name: "a".to_string(),
                     ty: Type::Logic {
@@ -57,6 +68,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "b".to_string(),
                     ty: Type::Logic {
@@ -72,6 +84,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "c".to_string(),
                     ty: Type::Logic {
@@ -81,6 +94,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Input,
                     name: "d".to_string(),
                     ty: Type::Logic {
@@ -90,6 +104,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "e".to_string(),
                     ty: Type::Logic {
@@ -99,6 +114,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "f".to_string(),
                     ty: Type::Logic {
@@ -108,6 +124,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "g".to_string(),
                     ty: Type::Logic {
@@ -117,6 +134,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Input,
                     name: "h".to_string(),
                     ty: Type::Logic {
@@ -126,6 +144,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "i".to_string(),
                     ty: Type::Logic {
@@ -135,6 +154,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Input,
                     name: "j".to_string(),
                     ty: Type::Logic {
@@ -144,6 +164,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "k".to_string(),
                     ty: Type::Logic {
@@ -153,6 +174,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::InOut,
                     name: "l".to_string(),
                     ty: Type::Logic {
@@ -162,6 +184,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "m".to_string(),
                     ty: Type::Logic {
@@ -196,11 +219,12 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = extract_ports(&cfg, true);
+        let definitions = without_locs(extract_ports(&cfg, true));
         assert_eq!(
             definitions["foo"],
             vec![
                 Port {
+                    loc: None,
                     dir: PortDir::Input,
                     name: "clk".to_string(),
                     ty: Type::Logic {
@@ -210,6 +234,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Input,
                     name: "bus".to_string(),
                     ty: Type::Union {
@@ -264,11 +289,12 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = extract_ports(&cfg, false);
+        let definitions = without_locs(extract_ports(&cfg, false));
         assert_eq!(
             definitions["foo"],
             vec![
                 Port {
+                    loc: None,
                     dir: PortDir::Input,
                     name: "clk".to_string(),
                     ty: Type::Logic {
@@ -278,6 +304,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "bus".to_string(),
                     ty: Type::Struct {
@@ -330,11 +357,12 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = extract_ports(&cfg, false);
+        let definitions = without_locs(extract_ports(&cfg, false));
 
         assert_eq!(
             definitions["foo"],
             vec![Port {
+                loc: None,
                 dir: PortDir::Output,
                 name: "bus".to_string(),
                 ty: Type::Struct {
@@ -376,11 +404,12 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = extract_ports(&cfg, false);
+        let definitions = without_locs(extract_ports(&cfg, false));
 
         assert_eq!(
             definitions["foo"],
             vec![Port {
+                loc: None,
                 dir: PortDir::Output,
                 name: "color".to_string(),
                 ty: Type::Enum {
@@ -438,11 +467,12 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = extract_ports(&cfg, false);
+        let definitions = without_locs(extract_ports(&cfg, false));
         assert_eq!(
             definitions["foo"],
             vec![
                 Port {
+                    loc: None,
                     dir: PortDir::Input,
                     name: "clk".to_string(),
                     ty: Type::Logic {
@@ -452,6 +482,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "bus".to_string(),
                     ty: Type::Struct {
@@ -479,6 +510,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "data".to_string(),
                     ty: Type::Enum {
@@ -525,11 +557,12 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = extract_ports(&cfg, false);
+        let definitions = without_locs(extract_ports(&cfg, false));
         assert_eq!(
             definitions["foo"],
             vec![
                 Port {
+                    loc: None,
                     dir: PortDir::Input,
                     name: "clk".to_string(),
                     ty: Type::Logic {
@@ -539,6 +572,7 @@ mod tests {
                     },
                 },
                 Port {
+                    loc: None,
                     dir: PortDir::Output,
                     name: "data".to_string(),
                     ty: Type::Enum {
@@ -612,7 +646,7 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = extract_ports(&cfg, false);
+        let definitions = without_locs(extract_ports(&cfg, false));
 
         assert_eq!(definitions["foo"][0].ty.width().unwrap(), 422);
         assert_eq!(definitions["foo"][1].ty.width().unwrap(), 23632);
@@ -698,8 +732,9 @@ endmodule
         };
 
         assert_eq!(
-            extract_ports(&cfg, false)["A"],
+            without_locs(extract_ports(&cfg, false))["A"],
             vec![Port {
+                loc: None,
                 dir: PortDir::Input,
                 name: "clk".to_string(),
                 ty: Type::Logic {
@@ -730,10 +765,11 @@ endmodule
             ..Default::default()
         };
 
-        let definitions = extract_ports(&cfg, false);
+        let definitions = without_locs(extract_ports(&cfg, false));
         assert_eq!(
             definitions["foo"],
             vec![Port {
+                loc: None,
                 dir: PortDir::Input,
                 name: "a".to_string(),
                 ty: Type::Logic {
@@ -788,11 +824,12 @@ endmodule
             ..Default::default()
         };
 
-        let definitions = extract_ports(&cfg, false);
+        let definitions = without_locs(extract_ports(&cfg, false));
 
         assert_eq!(
             definitions["foo"],
             vec![Port {
+                loc: None,
                 dir: PortDir::Input,
                 name: "a".to_string(),
                 ty: Type::Logic {
