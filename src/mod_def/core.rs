@@ -29,7 +29,7 @@ pub struct ModDefCore {
     pub(crate) usage: Usage,
     pub(crate) verilog_import: Option<VerilogImport>,
     /// Parameter overrides applied to this module definition (by name)
-    pub(crate) parameters: IndexMap<String, crate::mod_def::ParameterSpec>,
+    pub(crate) parameters: IndexMap<String, crate::import::parameterize::ParameterSpec>,
     pub(crate) mod_inst_connections:
         IndexMap<String, IndexMap<String, Arc<RwLock<PortSliceConnections>>>>,
     pub(crate) mod_def_connections: IndexMap<String, Arc<RwLock<PortSliceConnections>>>,

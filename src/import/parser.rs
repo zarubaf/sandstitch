@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
-use crate::mod_def::ParameterType;
-use crate::mod_def::parser_cfg::ParserConfig;
+use crate::import::parameterize::ParameterType;
+use crate::import::parser_cfg::ParserConfig;
 use crate::physical::geometry::VerilogImport;
 use crate::{IO, ModDef, ModDefCore, Usage};
 

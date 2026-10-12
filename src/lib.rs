@@ -14,8 +14,9 @@ pub use port_slice::{ConvertibleToPortSlice, ConvertibleToPortSliceVec, PortSlic
 mod connection;
 mod mod_def;
 use mod_def::ModDefCore;
-pub use mod_def::ParameterType;
-pub use mod_def::ParameterValue;
+mod import;
+pub use import::parameterize::ParameterType;
+pub use import::parameterize::ParameterValue;
 pub use mod_def::{
     BOTTOM_EDGE_INDEX, BoundingBox, CalculatedPlacement, ConvertibleToModDef, Coordinate,
     EAST_EDGE_INDEX, EdgeOrientation, EmitOptions, LEFT_EDGE_INDEX, Mat3, ModDef, NORTH_EDGE_INDEX,
@@ -43,13 +44,13 @@ mod util;
 mod funnel;
 pub use funnel::Funnel;
 
-mod package;
-pub use package::{
+pub use import::package::{
     Package, Parameter, extract_packages_from_verilog, extract_packages_from_verilog_file,
     extract_packages_from_verilog_files, extract_packages_with_config,
 };
 
-pub use mod_def::{ParserConfig, PhysicalPin, SpreadPinsOptions};
+pub use import::parser_cfg::ParserConfig;
+pub use mod_def::{PhysicalPin, SpreadPinsOptions};
 
 mod metadata;
 pub use metadata::{Metadata, MetadataKey, MetadataValue};

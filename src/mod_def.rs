@@ -24,19 +24,12 @@ pub use emit::EmitOptions;
 mod feedthrough;
 mod instances;
 mod intf;
-mod parameterize;
 pub use crate::physical::placement::CalculatedPlacement;
-pub use parameterize::ParameterValue;
-pub use parameterize::{ParameterSpec, ParameterType};
-mod parser;
-mod parser_cfg;
-pub use parser_cfg::ParserConfig;
+pub(crate) mod hierarchy;
 mod ports;
 mod stub;
 mod validate;
 mod wrap;
-use parser::{parser_param_to_param, parser_port_to_port};
-mod hierarchy;
 pub use crate::physical::edges::{
     BOTTOM_EDGE_INDEX, EAST_EDGE_INDEX, LEFT_EDGE_INDEX, NORTH_EDGE_INDEX, RIGHT_EDGE_INDEX,
     SOUTH_EDGE_INDEX, TOP_EDGE_INDEX, WEST_EDGE_INDEX,

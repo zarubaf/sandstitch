@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
 
 use crate::{
-    IO, ModDef, ModDefCore, ParserConfig, Usage, mod_def::parser_cfg::ParserConfigOwnedKey,
-    mod_def::parser_param_to_param, mod_def::parser_port_to_port,
+    IO, ModDef, ModDefCore, ParserConfig, Usage, import::parser::parser_param_to_param,
+    import::parser::parser_port_to_port, import::parser_cfg::ParserConfigOwnedKey,
 };
 
 #[derive(Clone, Debug)]
@@ -278,8 +278,10 @@ impl ModDef {
         };
 
         // Build final parameter specs combining values and types (types must exist)
-        let mut final_parameter_specs: IndexMap<String, crate::mod_def::ParameterSpec> =
-            IndexMap::new();
+        let mut final_parameter_specs: IndexMap<
+            String,
+            crate::import::parameterize::ParameterSpec,
+        > = IndexMap::new();
         for (name, value) in merged_parameters.into_iter() {
             let spec = match value {
                 ParameterValue::Integer(value) => {
