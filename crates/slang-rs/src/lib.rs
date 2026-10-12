@@ -112,6 +112,35 @@ pub fn slang_version() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 pub fn run_slang(cfg: &SlangConfig) -> Result<Value, Box<dyn std::error::Error>> {
+    let run = run(cfg)?;
+    match run.failure {
+        Some(failure) => Err(failure.into()),
+        None => run.ast,
+    }
+}
+
+/// Like [`run_slang`], but a run that fails still returns the AST Slang
+/// dumped: `Ok((ast, succeeded))`. Slang dumps the AST of a design that
+/// parsed but did not elaborate cleanly; members it could not resolve are
+/// `Invalid` nodes, while declarations such as parameters and ports are kept.
+/// Returns the failure if Slang dumped no readable AST.
+pub fn run_slang_keep_ast(cfg: &SlangConfig) -> Result<(Value, bool), Box<dyn std::error::Error>> {
+    let run = run(cfg)?;
+    match (run.ast, run.failure) {
+        (Ok(ast), failure) => Ok((ast, failure.is_none())),
+        (Err(_), Some(failure)) => Err(failure.into()),
+        (Err(e), None) => Err(e),
+    }
+}
+
+/// A Slang run: the AST it dumped, and the failure message if it exited with
+/// an error.
+struct Run {
+    ast: Result<Value, Box<dyn std::error::Error>>,
+    failure: Option<String>,
+}
+
+fn run(cfg: &SlangConfig) -> Result<Run, Box<dyn std::error::Error>> {
     // Run the slang binary, dumping JSON to tmp_json.
 
     let slang_path = std::env::var("SLANG_PATH").unwrap_or_else(|_| {
@@ -216,21 +245,25 @@ pub fn run_slang(cfg: &SlangConfig) -> Result<Value, Box<dyn std::error::Error>>
 
     let output = cmd.output()?;
 
-    if !output.status.success() {
+    let failure = (!output.status.success()).then(|| {
         let stderr = if cfg.capture_stdio {
             String::from_utf8_lossy(&output.stderr).to_string()
         } else {
             "Not Captured".to_string()
         };
-        return Err(format!(
+        format!(
             "slang command failed with exit code: {}, stderr: {stderr}",
             output.status,
         )
-        .into());
-    }
+    });
+    let ast = read_ast(tmp_json.path(), &working_dir);
+    Ok(Run { ast, failure })
+}
 
+/// Reads the AST Slang dumped to `path`.
+fn read_ast(path: &Path, working_dir: &Path) -> Result<Value, Box<dyn std::error::Error>> {
     // Read and parse the JSON output
-    let json_data = fs::read_to_string(tmp_json)?;
+    let json_data = fs::read_to_string(path)?;
     let mut json_deserializer = serde_json::Deserializer::from_str(&json_data);
     // The recursion limit needs to be disabled since slang can produce
     // deeply nested objects.
@@ -240,7 +273,7 @@ pub fn run_slang(cfg: &SlangConfig) -> Result<Value, Box<dyn std::error::Error>>
 
     let stacked_deserializer = serde_stacker::Deserializer::new(&mut json_deserializer);
     let mut json_value = Value::deserialize(stacked_deserializer)?;
-    absolutize_source_files(&mut json_value, &working_dir);
+    absolutize_source_files(&mut json_value, working_dir);
 
     Ok(json_value)
 }

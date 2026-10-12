@@ -637,3 +637,53 @@ fn absolute_path_normalizes() {
     assert_eq!(absolute_path(dir, "../../x/./y.sv"), "/a/x/y.sv");
     assert_eq!(absolute_path(dir, "/abs/z.sv"), "/abs/z.sv");
 }
+
+#[test]
+fn failed_run_keeps_ast() {
+    // `T` defaults to `logic`, which has no member `v`: the definition does
+    // not elaborate alone, but its declarations are in the dumped AST.
+    let sv = "
+module m #(parameter type T = logic, parameter int N = 1) (input T x, output logic y);
+  assign y = x.v;
+endmodule
+";
+    let file = str2tmpfile(sv).unwrap();
+    let paths = [file.path().to_str().unwrap()];
+    let cfg = SlangConfig {
+        sources: &paths,
+        tops: &["m"],
+        capture_stdio: true,
+        ..Default::default()
+    };
+    let e = run_slang(&cfg).unwrap_err().to_string();
+    assert!(e.contains("invalid member access for type 'T'"), "{e}");
+
+    let (value, succeeded) = run_slang_keep_ast(&cfg).unwrap();
+    assert!(!succeeded);
+    assert_eq!(
+        extract_overridable_parameters_from_value(&value)["m"],
+        vec![
+            ("T".to_string(), ParameterKind::Type),
+            ("N".to_string(), ParameterKind::Value),
+        ]
+    );
+
+    // A clean run reports success.
+    let clean = str2tmpfile("module ok (input logic a);\nendmodule\n").unwrap();
+    let paths = [clean.path().to_str().unwrap()];
+    let cfg = SlangConfig {
+        sources: &paths,
+        capture_stdio: true,
+        ..Default::default()
+    };
+    assert!(run_slang_keep_ast(&cfg).unwrap().1);
+
+    // No AST at all (a missing source): the failure is returned.
+    let cfg = SlangConfig {
+        sources: &["/nonexistent/sandstitch.sv"],
+        capture_stdio: true,
+        ..Default::default()
+    };
+    let e = run_slang_keep_ast(&cfg).unwrap_err().to_string();
+    assert!(e.starts_with("slang command failed"), "{e}");
+}
