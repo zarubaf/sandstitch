@@ -79,8 +79,8 @@ Typed specialization (#4, [design](design/typed-specialization.md)):
 - Diagnostics: `src/diagnostic/` (`Diagnostic`, `Diagnostics`, `ImportError`,
   codes `S0xxx` with entries in `errors/`).
 - Fallible API: `ModDef::try_from_verilog_with_config`, `try_parameterize`,
-  `try_from_verilog_parameterized` (new: import with overrides, without
-  elaborating the defaults) and `try_manifest`. The upstream functions keep
+  `try_from_verilog_parameterized` (new: import with overrides; the defaults
+  need not elaborate) and `try_manifest`. The upstream functions keep
   their signatures and panic with the rendered diagnostic where upstream
   panicked with a plain message or unwrapped a Slang error.
 - Import keeps port types: `PortType` (`Port::port_type`,
@@ -99,9 +99,9 @@ Typed specialization (#4, [design](design/typed-specialization.md)):
   emitted as `#(...)` overrides of its instances (upstream emitted none, so
   the instances took the defaults while the ports had the `-G` widths) and
   are base overrides of its specializations.
-- Typed connections: `field`, `index` and `Select` on port slices,
-  `connect_bits`, and `ModDef::check` (S0201 for non-equivalent aggregate
-  ends). `emit` runs `check` first and panics on errors; connections with a
+- Typed connections: `field`, `index` and `Select` on port slices
+  (S0202 to S0205), `connect_bits`, and `ModDef::check` (S0201 for
+  non-equivalent aggregate ends). `emit` runs `check` first and panics on errors; connections with a
   logic vector or untyped end are width-checked only, as upstream.
 - Typed emission: nets and ports of package-named structs and unions whose
   uses are all typed are declared with that type and connected with member
@@ -159,6 +159,9 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
   - `feat(slang-rs): keep the AST of a failed run` and `fix(slang-rs): read a
     failed run's AST only on request, add check_slang`: `run_slang_keep_ast`,
     `check_slang`.
+  - `feat(slang-rs): record whether structs and unions are packed`:
+    `Type::Struct::packed`, `Type::Union::packed` (the expected values in
+    the upstream `tests/test.rs` gain the field).
 
 ### xlsynth-vast (vendored)
 
@@ -178,8 +181,9 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
     `resolver = "2"` are removed (so new test files run and the workspace
     resolver applies); `[lints.clippy] write_with_newline` and `clone_on_copy`
     are allowed for pre-existing upstream code.
-  - `LICENSE`: the Apache-2.0 text, added because the published crate
-    declares `license = "Apache-2.0"` but ships no licence file.
+  - `LICENSE`: added because the published crate declares
+    `license = "Apache-2.0"` but ships no licence file; it is the monorepo's
+    own `LICENSE` at the base commit, byte for byte.
   - Sandstitch extensions (`feat(xlsynth-vast): type expressions, package refs
     and member selects`): `make_type_expr`, `make_package_ref`,
     `make_member_select`, `make_member_select_indexable` and

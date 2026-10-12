@@ -40,7 +40,7 @@ let child = ModDef::try_from_verilog_with_config("child", &cfg)?;
 let c4 = child.try_parameterize(&[("N", 4)])?;               // Result<ModDef, ImportError>
 ```
 
-Parameterized IP often does not elaborate with its defaults: `floo_nw_router`'s type parameters default to `logic` and are used as structs, and `NumRoutes` defaults to 0. `try_from_verilog_parameterized` imports it directly with its overrides; it is never elaborated with its defaults (`designs/floonoc/src/lib.rs` passes 13 overrides):
+Parameterized IP often does not elaborate with its defaults: `floo_nw_router`'s type parameters default to `logic` and are used as structs, and `NumRoutes` defaults to 0. `try_from_verilog_parameterized` imports it directly with its overrides and does not require the defaults to elaborate: the definition alone is elaborated only to read its declarations, and a failure there is tolerated (`designs/floonoc/src/lib.rs` passes 13 overrides):
 
 ```rust
 let ty = |name: &str| ParameterValue::Type(format!("cfg_pkg::{name}"));
@@ -61,7 +61,7 @@ The result is the same as importing and then calling `try_parameterize` (ports, 
 
 - **Values**: `ParameterValue::Integer` (non-negative, must fit the parameter's type; emitted as a sized literal), `String` (printable ASCII without quotes or backslashes), `Type` (a type for a `parameter type`) and `Expr` (a named constant for a value parameter). `Type` and `Expr` accept only `ident` or `pkg::ident`; anything else is S0105, as is a value of the wrong kind for its parameter. A bare `ident` refers to the generated top's compilation unit and resolves only with `--single-unit`; prefer `pkg::ident`.
 - **Checking**: overrides are checked against the parameters the definition declares, read from the AST Slang dumps for the definition elaborated alone, even when that elaboration fails (as long as the sources parse): S0101 for an undeclared parameter or a localparam. The same pass finds interface ports (S0104), since a module with interface ports cannot be elaborated under a generated top.
-- **`-G` values** (`ParserConfig::parameters`) of parameters the module declares are kept: a plain import emits them as `#(...)` overrides of its instances (its ports were resolved with them), and every specialization applies them as base overrides that explicit overrides replace. Each must be a decimal integer, a string literal or a name and set a value parameter, and be given once (S0105). `-G` values of parameters the module does not declare are ignored, as by Slang, so one configuration can serve several modules; explicit overrides stay strict. A specialization never passes `-G` to Slang, which applies it only to tops.
+- **`-G` values** (`ParserConfig::parameters`) of parameters the module declares are kept: a plain import emits them as `#(...)` overrides of its instances, and every specialization applies them as base overrides that explicit overrides replace. The rules are stated in [S0105](../errors/S0105.md). A specialization never passes `-G` to Slang, which applies it only to tops.
 - **Elaboration**: on a cache miss, write a portless top `__sandstitch_elab_<hash>` that instantiates the original with the overrides into a temporary directory; Slang elaborates it with `--ast-json-source-info` and `--Mall` (the files it read); read the instance's ports with resolved types. Slang's JSON leaves ports typed by a type parameter unresolved (`child.T[2:0]`); the slang-rs fork substitutes the instance's `TypeParameter` type and re-applies the dimensions. Value-only overrides use the same path. `cfg.tops` and `cfg.include_hierarchy` do not apply: a specialization has no instances.
 - **Identity** (`SpecializationKey`, `ModDef::specialization_key`): original module name, overrides (independent of their order), every field of the import configuration, the Slang version, and the path and content hash of every file Slang read (sources, included headers, library files). Changing any byte of them misses the cache. The key has a stable 12-digit short hash recorded in the manifest.
 - **Result**: a specialized `ModDef` referencing the original module and its overrides; ports carry `PortType`. Specializations of one module coexist; emission uses the original name with different overrides.
@@ -69,11 +69,11 @@ The result is the same as importing and then calling `try_parameterize` (ports, 
 
 ## Typed ports
 
-`PortType` (library-owned, converted at the slang-rs boundary in `src/import/typed.rs`): `Logic { signed, packed }`, `Struct { name: Option<QualifiedName>, signed, fields, packed }`, `Union { … }`, `Enum { name, base, variants, packed }` (`packed` for arrays such as `state_t [3:0]`). Width is derived from the type. An enum's base is `logic [w-1:0]` with the width and signedness Slang reports (`typedef enum {…}` has a signed 32-bit base). A typedef'd packed array imports as its element type's name with the typedef's dimensions. Ports added with `add_port`, autoconnect or feedthroughs are untyped (`port_type() == None`).
+`PortType` (library-owned, converted at the slang-rs boundary in `src/import/typed.rs`): `Logic { signed, packed }`, `Struct { name: Option<QualifiedName>, signed, is_packed, fields, packed }`, `Union { … }`, `Enum { name, base, variants, packed }` (`packed` for arrays such as `state_t [3:0]`). Width is derived from the type. An enum's base is `logic [w-1:0]` with the width and signedness Slang reports (`typedef enum {…}` has a signed 32-bit base). A typedef'd packed array imports as its element type's name with the typedef's dimensions. Ports added with `add_port`, autoconnect or feedthroughs are untyped (`port_type() == None`).
 
-**Supported port types**: `logic`/`bit` vectors, the integral atoms (`byte`, `shortint`, `int`, `longint`, `integer`, `time`), packed structs and unions (signed or unsigned), enums, and packed arrays of these. Rejected with a diagnostic, never dropped: unpacked dimensions anywhere in the port type and non-integral types (`real`, `shortreal`, `string`, `event`) are S0103 (skipped instead with `skip_unsupported`); interface ports are S0104.
+**Supported port types**: `logic`/`bit` vectors, the integral atoms (`byte`, `shortint`, `int`, `longint`, `integer`, `time`), packed structs and unions (signed or unsigned), enums, and packed arrays of these; unpacked structs and unions without unpacked dimensions (`is_packed: false`), which connect and emit whole but have no bit layout. Rejected with a diagnostic, never dropped: unpacked dimensions anywhere in the port type and non-integral types (`real`, `shortreal`, `string`, `event`) are S0103 (skipped instead with `skip_unsupported`); interface ports are S0104.
 
-**Equivalence** is structural: same kind, signedness (of vectors, packed structs and unions, and enum bases) and packed dimensions (ranges, not just sizes); struct/union field names in order with equivalent field types; enum base and variant names/values. Names are not compared: Slang can report different names for one layout.
+**Equivalence** is structural: same kind, packedness of structs and unions, signedness (of vectors, packed structs and unions, and enum bases) and packed dimensions (ranges, not just sizes); struct/union field names in order with equivalent field types; enum base and variant names/values. Names are not compared: Slang can report different names for one layout.
 
 | Ends (at the selected level) | Rule |
 | --- | --- |
@@ -84,11 +84,11 @@ The result is the same as importing and then calling `try_parameterize` (ports, 
 
 Logic vectors nested inside aggregates are compared structurally; only a `Logic` end at the selected level makes a connection width-only. Width and direction are checked when the connection is made, as upstream.
 
-**Access**: `port.field("hdr.dst_id")` (or chained `field`) and `port.index(i)` return typed slices with bit ranges from SV packed layout (first field most significant); `index` takes the SV index of the outermost declared dimension. They stay compact references. Errors panic at the call site with the rendered diagnostic: S0202 no such field (including `field` on an array before `index`, or an untyped slice), S0203 index out of range, S0204 field through a union.
+**Access**: `port.field("hdr.dst_id")` (or chained `field`) and `port.index(i)` return typed slices with bit ranges from SV packed layout (first field most significant); `index` takes the SV index of the outermost declared dimension. They stay compact references. Errors panic at the call site with the rendered diagnostic: S0202 no such field (including `field` on an array before `index`, or an untyped slice), S0203 index out of range, S0204 field through a union, S0205 field of an unpacked struct.
 
 ## Emission
 
-- Instances: `mod #(.P(5), .T(cfg_pkg::flit_t)) inst (...)`, with type and constant overrides built through VAST's expression API, not hand-printed strings. `emit()` runs `check()` first and panics with the rendered diagnostics if it has errors.
+- Instances: `mod #(.P(32'h0000_0005), .T(cfg_pkg::flit_t)) inst (...)`, with type and constant overrides built through VAST's expression API, not hand-printed strings. `emit()` runs `check()` first and panics with the rendered diagnostics if it has errors.
 - Typing rule (`src/emit/net_types.rs`): a net, or a port of the emitted module, is declared with the type of the port it is named after when that type is a struct or union named with its package (no negative bounds in its packed dimensions) and every use is typed: whole, or an exact member or element selection, connected to a structurally equivalent end. Such uses are emitted as member selects and indices; declarations keep the declared `[msb:lsb]` ranges (`cfg_pkg::flit_t [5:4] n;`).
 - Everything else is flat, with bit slices as upstream: enums and logic vectors, `connect_bits` between different layouts, a struct connected to a vector or an untyped port, a bit range that is no member, wires, and tieoffs (a literal does not assign to every aggregate). Enum input ports keep upstream's casts.
 - The build manifest (`ModDef::try_manifest`, `manifest` panics) lists what the emitted RTL needs: `sources` (absolute, deduplicated, compile order; modules whose definition is emitted or stubbed contribute none; text passed to `from_verilog` is not listed), `incdirs`, `defines`, `libfiles`, `libdirs`, `libexts`, and `specializations` (instance path, short hash). S0301: a module emitted from the model whose defining file is also listed would be defined twice. S0302: two listed imports define one macro differently. The emitted RTL plus the manifest elaborate on their own (tested with Slang, strict width warnings).
@@ -97,7 +97,7 @@ Logic vectors nested inside aggregates are compared structurally; only a `Logic`
 
 - `Diagnostic { code: "S0xxx", severity, message, primary label, secondary labels, notes, helps }`, spans into Rust (captured with `#[track_caller]`) and SV (Slang locations).
 - Rendered with `annotate-snippets` for terminals (Rust spans via `std::panic::Location`, SV spans from `--ast-json-source-info`); serialized to JSON for the explorer, documentation and CI.
-- `check()` collects structural diagnostics; import errors report all Slang diagnostics for that specialization. Upstream `connect` keeps its immediate width/direction panics. Converting the remaining upstream panics is later work.
+- `check()` collects structural diagnostics of the module and the instantiated definitions emitted with `Usage::EmitDefinitionAndDescend` (it does not descend into others); import errors report all Slang diagnostics for that specialization. Upstream `connect` keeps its immediate width/direction panics.
 - Error index (`doc/errors/`): one entry per code with a failing example and the fix; `cargo xtask explain S0xxx`. Tests assert every code has an entry, and `tests/diagnostics/examples.rs` runs each example and checks it reports its code.
 - Diagnostic output is snapshot-tested on broken fixtures (`tests/diagnostics/snapshots/`).
 
@@ -109,9 +109,9 @@ Logic vectors nested inside aggregates are compared structurally; only a `Logic`
 
 ## Known limitations
 
-- S0301 locates a module's file by its first port with an SV span: modules without ports, without such a port, or whose first port is declared in an `include`d file are not checked.
-- When part of a flat net is exported, the net is still declared at full width, leaving declared but undriven bits (e.g. `wire [479:0]` with only `[383:0]` driven when one array element is exported).
-- A net whose elements are used in different ways (one element typed, another flat) falls back to a flat net; per-element typed nets are follow-up work.
+- S0301 locates a module's file by its first port declaration with an SV span. Not checked: modules without ports, modules none of whose ports has an SV span, and modules whose first such port is declared in an `include`d file (the included file is compared instead of the module's).
+- When part of a net is exported, the net is still declared at full width, leaving declared but undriven bits: in `typed_ports_on_the_parent` (`tests/typed/emit.rs`), `s_arr[1]` of `wire cfg_pkg::flit_t [2:0] s_arr` drives the export `arr1` directly and is never driven itself.
+- A net whose elements are used in different ways (one element typed, another flat) falls back to a flat net.
 - Only `ident`/`pkg::ident` overrides; computed types and expressions need a named type or constant in a package.
 
 ## Out of scope
