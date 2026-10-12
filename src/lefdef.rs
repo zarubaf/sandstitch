@@ -1,0 +1,442 @@
+// SPDX-License-Identifier: Apache-2.0
+
+use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
+
+use indexmap::IndexMap;
+
+use crate::{Orientation, Placement};
+
+/// How LEF/DEF import resolves multiple source shapes for one port bit.
+/// Each [`crate::ModDef`] bit can hold only one [`crate::PhysicalPin`], with
+/// one polygon on one layer. This policy applies after import filtering.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MultiplePinShapesPolicy {
+    /// Use the first eligible rectangle or polygon, in file order. Other
+    /// shapes and unsupported geometry such as named vias are ignored.
+    #[default]
+    First,
+    /// If multiple eligible shapes remain, use their combined axis-aligned
+    /// bounding rectangle after placement transforms. A single shape is kept
+    /// unchanged. The layer is inferred separately for each bit; when a bit
+    /// spans several layers, use [`LefDefOptions::pin_layer_selections`] to select
+    /// one. Unsupported geometry such as named vias is rejected because its
+    /// bounds are unknown.
+    BoundingBox,
+    /// Reject multiple eligible shapes or unsupported pin geometry.
+    Error,
+}
+
+/// Options for LEF/DEF generation and physical module import.
+///
+/// Import uses the unit scale, pin filters, layer selections, and multiple-shape
+/// policy. Placement overrides and generation checks do not affect import.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LefDefOptions {
+    /// Hierarchy separator. Default: "/".
+    pub divider_char: String,
+    /// Bus bit characters for generation and the fallback for LEF import when
+    /// the file has no BUSBITCHARS declaration. Default: "[]".
+    pub bus_bit_chars: String,
+    /// Database units per micron. Default: 1. Imports convert geometry into
+    /// this scale; LEF rounds to the nearest unit and DEF requires exact conversion.
+    pub units_microns: i64,
+    /// If true, the hierarchical path omits the top-level module name.
+    pub omit_top_module_in_hierarchy: bool,
+    /// Absolute placement overrides keyed by the hierarchical instance paths
+    /// emitted in DEF. Paths follow `divider_char` and
+    /// `omit_top_module_in_hierarchy`.
+    pub placement_overrides: IndexMap<String, Placement>,
+    /// Expected absolute placements keyed by the hierarchical instance paths
+    /// emitted in DEF. Expectations are checked after applying overrides.
+    pub expected_placements: IndexMap<String, Placement>,
+    /// If true, include pins in LEF/DEF output.
+    pub include_pins: bool,
+    /// If true, include obstructions in LEF output.
+    pub include_obstructions: bool,
+    /// If true, include labels in LEF output.
+    pub include_labels: bool,
+    /// If true, check for instance overlaps during LEF/DEF generation.
+    pub check_for_instance_overlaps: bool,
+    /// If true, check that pins are contained within the ModDef shape.
+    pub check_that_pins_are_contained: bool,
+    /// Optional set of module names that are exempt from the pin-contained check.
+    pub blocks_exempt_from_pin_contained_check: Option<HashSet<String>>,
+    /// If true, check that all port bits have physical pins when emitting LEF/DEF.
+    pub check_fully_pinned: bool,
+    /// Set of macro names that are exempt from the fully-pinned check.
+    pub blocks_that_may_be_unpinned: HashSet<String>,
+    /// Set of pin names that are exempt from the fully-pinned check.
+    pub pins_that_may_be_unplaced: HashSet<String>,
+    /// If provided, check that lower-left X and Y coordinates for module instances are multiples of the provided grid units.
+    pub check_grid_placement: Option<(i64, i64)>,
+    /// If provided, check that ModDef widths and heights are multiples of the provided grid units.
+    pub check_grid_size: Option<(i64, i64)>,
+    /// Set of macros that are exempt from grid checking.
+    pub macros_exempt_from_grid_check: HashSet<String>,
+    /// Set of instances that are exempt from grid checking.
+    pub instances_exempt_from_grid_check: HashSet<String>,
+    /// Logical port names to ignore when importing LEF or DEF. Excluding a
+    /// bus name excludes all its bits.
+    pub ignore_pin_names: HashSet<String>,
+    /// Set of pin USE values to skip when importing LEF or DEF (case-insensitive).
+    /// Pins without an explicit USE are treated as USE SIGNAL.
+    pub skip_pin_uses: HashSet<String>,
+    /// Additional LEF blocks of the form `SECTION ... END SECTION` to skip
+    /// (case-insensitive). Standard unrelated sections are skipped automatically.
+    pub skip_lef_sections: HashSet<String>,
+    /// How to resolve multiple source shapes for one port bit during LEF/DEF
+    /// import. ModDef stores at most one physical pin shape per bit.
+    pub multiple_pin_shapes_policy: MultiplePinShapesPolicy,
+    /// Optional source layer per (logical port name, bit) during LEF/DEF import.
+    /// Scalars use bit 0. Only shapes on that layer participate in resolution;
+    /// no matching geometry is an error. Also respects `valid_pin_layers`.
+    /// Selections apply to each macro when importing a multi-macro LEF.
+    pub pin_layer_selections: IndexMap<(String, usize), String>,
+    /// If provided, check that pins are only placed on these layers,
+    /// and skip pins on layers not in this set when importing.
+    pub valid_pin_layers: Option<HashSet<String>>,
+}
+
+impl Default for LefDefOptions {
+    fn default() -> Self {
+        LefDefOptions {
+            divider_char: "/".to_string(),
+            bus_bit_chars: "[]".to_string(),
+            units_microns: 1,
+            omit_top_module_in_hierarchy: true,
+            placement_overrides: IndexMap::new(),
+            expected_placements: IndexMap::new(),
+            include_pins: true,
+            include_obstructions: true,
+            include_labels: false,
+            check_for_instance_overlaps: true,
+            check_that_pins_are_contained: true,
+            blocks_exempt_from_pin_contained_check: None,
+            check_fully_pinned: true,
+            blocks_that_may_be_unpinned: HashSet::new(),
+            pins_that_may_be_unplaced: HashSet::new(),
+            check_grid_placement: None,
+            check_grid_size: None,
+            macros_exempt_from_grid_check: HashSet::new(),
+            instances_exempt_from_grid_check: HashSet::new(),
+            ignore_pin_names: HashSet::new(),
+            skip_pin_uses: HashSet::from(["POWER".to_string(), "GROUND".to_string()]),
+            skip_lef_sections: HashSet::new(),
+            multiple_pin_shapes_policy: MultiplePinShapesPolicy::First,
+            pin_layer_selections: IndexMap::new(),
+            valid_pin_layers: None,
+        }
+    }
+}
+
+impl LefDefOptions {
+    pub fn open_close_chars(&self) -> (char, char) {
+        let bus_bit_chars = self.bus_bit_chars.chars().collect::<Vec<char>>();
+        assert!(
+            bus_bit_chars.len() == 2,
+            "Bus bit characters must be exactly two characters"
+        );
+        (bus_bit_chars[0], bus_bit_chars[1])
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefOrientation {
+    N,
+    S,
+    E,
+    W,
+    FN,
+    FS,
+    FE,
+    FW,
+}
+
+impl DefOrientation {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DefOrientation::N => "N",
+            DefOrientation::S => "S",
+            DefOrientation::E => "E",
+            DefOrientation::W => "W",
+            DefOrientation::FN => "FN",
+            DefOrientation::FS => "FS",
+            DefOrientation::FE => "FE",
+            DefOrientation::FW => "FW",
+        }
+    }
+
+    pub fn from_orientation(o: Orientation) -> DefOrientation {
+        match o {
+            Orientation::R0 => DefOrientation::N,
+            Orientation::R180 => DefOrientation::S,
+            Orientation::R90 => DefOrientation::W,
+            Orientation::R270 => DefOrientation::E,
+            Orientation::MY => DefOrientation::FN,
+            Orientation::MX => DefOrientation::FS,
+            Orientation::MX90 => DefOrientation::FW,
+            Orientation::MY90 => DefOrientation::FE,
+        }
+    }
+}
+
+/// Minimal description of a LEF macro for generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LefShape {
+    pub layer: String,
+    /// Absolute points in the macro's coordinate system
+    pub polygon: Vec<(i64, i64)>,
+}
+
+impl LefShape {
+    /// Emit as a string in LEF syntax
+    pub fn to_string(&self, units_microns: i64) -> String {
+        let mut s = String::from("POLYGON ");
+        for (i, p) in self.polygon.iter().enumerate() {
+            if i > 0 {
+                s.push(' ');
+            }
+            s.push_str(&format!(
+                "{} {}",
+                (p.0 as f64) / (units_microns as f64),
+                (p.1 as f64) / (units_microns as f64)
+            ));
+        }
+        s.push_str(" ;");
+        s
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefPoint {
+    pub x: i64,
+    pub y: i64,
+}
+
+impl std::fmt::Display for DefPoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "( {} {} )", self.x, self.y)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefDieArea {
+    pub points: Vec<DefPoint>,
+}
+
+impl std::fmt::Display for DefDieArea {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "DIEAREA {} ;",
+            self.points
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LefPin {
+    pub name: String,
+    pub direction: String, // INPUT | OUTPUT | INOUT
+    pub shape: LefShape,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefPin {
+    pub name: String,
+    pub direction: String, // INPUT | OUTPUT | INOUT
+    pub pin_use: String,
+    pub layer: String,
+    // TODO(sherbst) 2025-11-17: handle polygons?
+    pub shape: (DefPoint, DefPoint),
+    pub position: DefPoint,
+    pub orientation: DefOrientation,
+}
+
+impl std::fmt::Display for DefPin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "- {} + NET {} + DIRECTION {} + USE {} + LAYER {} {} {} + FIXED {} {} ;",
+            self.name,
+            self.name,
+            self.direction,
+            self.pin_use,
+            self.layer,
+            self.shape.0,
+            self.shape.1,
+            self.position,
+            self.orientation.as_str()
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LefComponent {
+    pub name: String,
+    pub width: i64,
+    pub height: i64,
+    pub shape: LefShape,
+    pub pins: Vec<LefPin>,
+}
+
+/// Minimal description of a DEF component placement for generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefComponent {
+    pub inst_name: String,
+    pub macro_name: String,
+    pub x: i64,
+    pub y: i64,
+    pub orientation: DefOrientation,
+}
+
+impl std::fmt::Display for DefComponent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "- {} {} + PLACED ( {} {} ) {} ;",
+            self.inst_name,
+            self.macro_name,
+            self.x,
+            self.y,
+            self.orientation.as_str()
+        )
+    }
+}
+
+/// Generate a minimal LEF string from a list of macros.
+pub fn generate_lef(macros: &[LefComponent], opts: &LefDefOptions) -> String {
+    let mut s = String::new();
+    s.push_str("VERSION 5.8 ;\n");
+    s.push_str(&format!("DIVIDERCHAR \"{}\" ;\n", opts.divider_char));
+    s.push_str(&format!("BUSBITCHARS \"{}\" ;\n", opts.bus_bit_chars));
+    s.push_str(&format!(
+        "UNITS\n  DATABASE MICRONS {} ;\nEND UNITS\n\n",
+        opts.units_microns
+    ));
+    for m in macros {
+        // Basic macro with SIZE as bbox and an OBS POLYGON to capture shape
+        s.push_str(&format!("MACRO {}\n", m.name));
+        s.push_str("  CLASS BLOCK ;\n");
+        s.push_str("  ORIGIN 0 0 ;\n");
+        s.push_str(&format!(
+            "  SIZE {} BY {} ;\n",
+            (m.width as f64) / (opts.units_microns as f64),
+            (m.height as f64) / (opts.units_microns as f64)
+        ));
+        // Pins
+        if opts.include_pins {
+            for p in &m.pins {
+                s.push_str(&format!("  PIN {}\n", p.name));
+                s.push_str(&format!("    DIRECTION {} ;\n", p.direction));
+                s.push_str("    PORT\n");
+                s.push_str(&format!("      LAYER {} ;\n", p.shape.layer));
+                let poly = p.shape.to_string(opts.units_microns);
+                s.push_str(&format!("      {poly}\n"));
+                s.push_str("    END\n");
+                s.push_str(&format!("  END {}\n", p.name));
+            }
+        }
+        // Label
+        if opts.include_labels {
+            // Centered macro label using a false pin
+            s.push_str(&format!("  PIN {} ;\n", m.name));
+            s.push_str("    PORT\n");
+            s.push_str(&format!("      LAYER {} ;\n", m.shape.layer));
+            // Rectangle for label anchor; size can be tiny (center of macro)
+            let center_x = (m.width as f64) / (opts.units_microns as f64) / 2.0;
+            let center_y = (m.height as f64) / (opts.units_microns as f64) / 2.0;
+            let min_delta = 1.0 / (opts.units_microns as f64);
+            let rect_x1 = center_x - min_delta;
+            let rect_x2 = center_x + min_delta;
+            let rect_y1 = center_y - min_delta;
+            let rect_y2 = center_y + min_delta;
+            s.push_str(&format!(
+                "      RECT {rect_x1} {rect_y1} {rect_x2} {rect_y2} ;\n",
+            ));
+            s.push_str("    END\n");
+            s.push_str(&format!("  END {}\n", m.name));
+        }
+        // OBS shape from component polygon and layer
+        if opts.include_obstructions {
+            let poly = m.shape.to_string(opts.units_microns);
+            s.push_str("  OBS\n");
+            s.push_str(&format!("    LAYER {} ;\n", m.shape.layer));
+            s.push_str(&format!("    {poly}\n"));
+            s.push_str("  END\n");
+        }
+        s.push_str(&format!("END {}\n\n", m.name));
+    }
+    s.push_str("END LIBRARY\n");
+    s
+}
+
+/// Generate a minimal DEF string with placed components.
+pub fn generate_def(
+    design_name: &str,
+    die_area: Option<&DefDieArea>,
+    pins: &[DefPin],
+    components: &[DefComponent],
+    opts: &LefDefOptions,
+) -> String {
+    let mut s = String::new();
+    s.push_str("VERSION 5.8 ;\n");
+    s.push_str(&format!("DIVIDERCHAR \"{}\" ;\n", opts.divider_char));
+    s.push_str(&format!("BUSBITCHARS \"{}\" ;\n", opts.bus_bit_chars));
+    s.push_str(&format!("DESIGN {design_name} ;\n"));
+    s.push_str(&format!(
+        "UNITS DISTANCE MICRONS {} ;\n\n",
+        opts.units_microns
+    ));
+
+    if let Some(die_area) = die_area {
+        s.push_str(&format!("{}\n", die_area));
+    }
+
+    if opts.include_pins && !pins.is_empty() {
+        s.push_str(&format!("PINS {} ;\n", pins.len()));
+        for p in pins {
+            s.push_str(&format!("  {}\n", p));
+        }
+        s.push_str("END PINS\n");
+    }
+
+    if !components.is_empty() {
+        s.push_str(&format!("COMPONENTS {} ;\n", components.len()));
+        for c in components {
+            s.push_str(&format!("  {}\n", c));
+        }
+        s.push_str("END COMPONENTS\n\n");
+    }
+
+    s.push_str("END DESIGN\n");
+
+    s
+}
+
+/// Write LEF text to a file.
+pub fn write_lef_file<P: AsRef<Path>>(
+    path: P,
+    macros: &[LefComponent],
+    opts: &LefDefOptions,
+) -> std::io::Result<()> {
+    let text = generate_lef(macros, opts);
+    fs::write(path, text)
+}
+
+/// Write DEF text to a file.
+pub fn write_def_file<P: AsRef<Path>>(
+    path: P,
+    design_name: &str,
+    components: &[DefComponent],
+    opts: &LefDefOptions,
+) -> std::io::Result<()> {
+    let text = generate_def(design_name, None, &[], components, opts);
+    fs::write(path, text)
+}

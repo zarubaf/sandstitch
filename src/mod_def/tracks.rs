@@ -1,0 +1,850 @@
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::mod_def::dtypes::{EdgeOrientation, Polygon, Range};
+use indexmap::IndexMap;
+
+use fixedbitset::FixedBitSet;
+
+use crate::mod_def::{
+    BOTTOM_EDGE_INDEX, EAST_EDGE_INDEX, LEFT_EDGE_INDEX, NORTH_EDGE_INDEX, RIGHT_EDGE_INDEX,
+    SOUTH_EDGE_INDEX, TOP_EDGE_INDEX, WEST_EDGE_INDEX,
+};
+use crate::{Mat3, ModDef, ModDefCore, PhysicalPin};
+
+use std::fmt;
+
+/// Error describing why tracks cannot be reserved or a pin/keepout placed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinPlacementError {
+    /// Track blocking was requested on a module-instance port or interface.
+    RequiresModDef,
+    /// A selected port bit has no physical pin to reserve tracks for.
+    MissingPhysicalPin { port: String, bit: usize },
+    /// The module shape, track definitions, or track occupancies were not initialized.
+    NotInitialized(&'static str),
+    /// The requested edge index is out of bounds for the current shape.
+    EdgeOutOfBounds { edge_index: usize, num_edges: usize },
+    /// The requested routing layer is not configured for the module or edge.
+    LayerUnavailable { layer: String },
+    /// The requested pin span is out of bounds for the available tracks on this
+    /// edge.
+    OutOfBounds {
+        min_index: i64,
+        max_index: i64,
+        num_tracks: usize,
+    },
+    /// The requested pin overlaps an existing pin.
+    OverlapsExistingPin { min_index: i64, max_index: i64 },
+    /// The requested pin overlaps a keepout region.
+    OverlapsKeepout { min_index: i64, max_index: i64 },
+}
+
+impl fmt::Display for PinPlacementError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PinPlacementError::RequiresModDef => {
+                write!(
+                    f,
+                    "track blocking requires a module-definition port or interface"
+                )
+            }
+            PinPlacementError::MissingPhysicalPin { port, bit } => {
+                write!(f, "physical pin for port '{port}' bit {bit} is not defined")
+            }
+            PinPlacementError::NotInitialized(what) => {
+                write!(
+                    f,
+                    "{what} not initialized; call set_shape and set_track_definitions first"
+                )
+            }
+            PinPlacementError::EdgeOutOfBounds {
+                edge_index,
+                num_edges,
+            } => write!(
+                f,
+                "edge index {edge_index} is out of bounds ({num_edges} edges available)"
+            ),
+            PinPlacementError::LayerUnavailable { layer } => {
+                write!(
+                    f,
+                    "layer '{layer}' has no configured tracks for this operation"
+                )
+            }
+            PinPlacementError::OutOfBounds {
+                min_index,
+                max_index,
+                num_tracks,
+            } => write!(
+                f,
+                "requested track span [{min_index}..={max_index}] is outside available range [0..={}]",
+                num_tracks.saturating_sub(1)
+            ),
+            PinPlacementError::OverlapsExistingPin {
+                min_index,
+                max_index,
+            } => write!(
+                f,
+                "requested track span [{min_index}..={max_index}] overlaps an existing pin"
+            ),
+            PinPlacementError::OverlapsKeepout {
+                min_index,
+                max_index,
+            } => write!(
+                f,
+                "requested track span [{min_index}..={max_index}] overlaps a keepout region"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PinPlacementError {}
+
+/// Orientation of routing tracks.
+#[derive(Clone, PartialEq, Eq)]
+pub enum TrackOrientation {
+    Horizontal,
+    Vertical,
+}
+
+impl TrackOrientation {
+    /// Returns `true` when this track orientation can legally place pins on an
+    /// edge with the supplied [`EdgeOrientation`]. Horizontal tracks may only
+    /// service north/south edges, while vertical tracks may only service
+    /// east/west edges.
+    pub fn is_compatible_with_edge_orientation(&self, edge_orientation: &EdgeOrientation) -> bool {
+        matches!(
+            (self, edge_orientation),
+            (
+                TrackOrientation::Horizontal,
+                EdgeOrientation::North | EdgeOrientation::South
+            ) | (
+                TrackOrientation::Vertical,
+                EdgeOrientation::East | EdgeOrientation::West
+            )
+        )
+    }
+}
+
+/// Definition of a routing track family on a named layer.
+#[derive(Clone)]
+pub struct TrackDefinition {
+    pub(crate) name: String,
+    pub(crate) offset: i64,
+    pub(crate) period: i64,
+    pub(crate) orientation: TrackOrientation,
+    pub(crate) pin_shape: Option<Polygon>,
+    pub(crate) keepout_shape: Option<Polygon>,
+}
+
+impl TrackDefinition {
+    /// Create a new [`TrackDefinition`].
+    /// - `name`: routing layer name (e.g. "M1")
+    /// - `offset`: first track coordinate relative to the edge origin
+    /// - `period`: spacing between adjacent tracks
+    /// - `orientation`: horizontal or vertical
+    /// - `pin_shape`: optional pin polygon relative to the track origin
+    /// - `keepout_shape`: optional keepout polygon relative to the track origin
+    pub fn new(
+        name: impl AsRef<str>,
+        offset: i64,
+        period: i64,
+        orientation: TrackOrientation,
+        pin_shape: Option<Polygon>,
+        keepout_shape: Option<Polygon>,
+    ) -> Self {
+        TrackDefinition {
+            name: name.as_ref().to_string(),
+            offset,
+            period,
+            orientation,
+            pin_shape,
+            keepout_shape,
+        }
+    }
+
+    /// Returns the spacing between adjacent tracks, in module coordinates.
+    pub fn get_period(&self) -> i64 {
+        self.period
+    }
+
+    /// Returns the orientation of this routing track family.
+    pub fn get_orientation(&self) -> &TrackOrientation {
+        &self.orientation
+    }
+
+    /// Returns the pin shape polygon associated with this track definition.
+    pub fn get_pin_shape(&self) -> Option<&Polygon> {
+        self.pin_shape.as_ref()
+    }
+
+    /// Sets the pin shape polygon associated with this track definition.
+    pub fn set_pin_shape(&mut self, pin_shape: Option<Polygon>) {
+        self.pin_shape = pin_shape;
+    }
+
+    /// Returns the keepout shape polygon associated with this track definition.
+    pub fn get_keepout_shape(&self) -> Option<&Polygon> {
+        self.keepout_shape.as_ref()
+    }
+
+    /// Sets the keepout shape polygon associated with this track definition.
+    pub fn set_keepout_shape(&mut self, keepout_shape: Option<Polygon>) {
+        self.keepout_shape = keepout_shape;
+    }
+
+    /// Convert a coordinate range to track indices such that converting the
+    /// quantized range back to coordinates will not exceed the original
+    /// range.
+    pub fn convert_coord_range_to_index_range(&self, range: &Range) -> Range {
+        assert!(self.period > 0, "Track period must be positive");
+
+        let index = |coordinate: i64, round_up: bool| {
+            let relative = coordinate as i128 - self.offset as i128;
+            let period = self.period as i128;
+            let floor = relative.div_euclid(period);
+            let rounded = floor + i128::from(round_up && relative.rem_euclid(period) != 0);
+            i64::try_from(rounded).expect("Track index is outside the i64 range")
+        };
+
+        Range {
+            min: range.min.map(|min| index(min, true)),
+            max: range.max.map(|max| index(max, false)),
+        }
+    }
+
+    /// Convert a track index range to a coordinate range.
+    pub fn convert_index_range_to_coord_range(&self, range: &Range) -> Range {
+        Range {
+            min: range.min.map(|min| self.offset + (min * self.period)),
+            max: range.max.map(|max| self.offset + (max * self.period)),
+        }
+    }
+
+    /// Convert a track index to a coordinate.
+    pub fn index_to_position(&self, index: i64) -> i64 {
+        self.offset + (index * self.period)
+    }
+
+    /// Returns the nearest track index (in track coordinates, before
+    /// edge-relative normalization) to the provided coordinate.
+    pub fn nearest_track_index(&self, coordinate: i64) -> i64 {
+        assert!(self.period != 0, "Track period must be non-zero");
+        let n = coordinate - self.offset;
+        let p = self.period;
+        let mut q = n / p;
+        let r = n % p;
+
+        if 2 * r.abs() >= p.abs() {
+            q += if n >= 0 { 1 } else { -1 };
+        }
+
+        q
+    }
+}
+
+/// Collection of track definitions keyed by layer name.
+#[derive(Clone)]
+pub struct TrackDefinitions(pub(crate) IndexMap<String, TrackDefinition>);
+
+impl TrackDefinitions {
+    /// Creates an empty collection of track definitions.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert or replace a track definition.
+    pub fn add_track(&mut self, track: TrackDefinition) {
+        self.0.insert(track.name.clone(), track);
+    }
+
+    /// Get a track definition by layer name.
+    pub fn get_track(&self, name: &str) -> Option<&TrackDefinition> {
+        self.0.get(name)
+    }
+
+    /// Get a mutable track definition by layer name.
+    pub fn get_track_mut(&mut self, name: &str) -> Option<&mut TrackDefinition> {
+        self.0.get_mut(name)
+    }
+
+    /// Iterate over track definitions in insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &TrackDefinition)> {
+        self.0.iter()
+    }
+
+    /// Iterate over layer names in insertion order.
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.0.keys()
+    }
+
+    /// Iterate over track definitions in insertion order.
+    pub fn values(&self) -> impl Iterator<Item = &TrackDefinition> {
+        self.0.values()
+    }
+
+    /// Mutably iterate over track definitions in insertion order.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut TrackDefinition)> {
+        self.0.iter_mut()
+    }
+
+    /// Mutably iterate over track definitions in insertion order.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut TrackDefinition> {
+        self.0.values_mut()
+    }
+}
+
+impl Default for TrackDefinitions {
+    fn default() -> Self {
+        TrackDefinitions(IndexMap::new())
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct TrackOccupancy {
+    pub(crate) pin_occupancies: FixedBitSet,
+    pub(crate) keepout_occupancies: FixedBitSet,
+}
+
+impl TrackOccupancy {
+    /// Creates a new occupancy bitmap capable of tracking `num_tracks` track
+    /// slots for both pins and keepouts.
+    pub fn new(num_tracks: usize) -> Self {
+        TrackOccupancy {
+            pin_occupancies: FixedBitSet::with_capacity(num_tracks),
+            keepout_occupancies: FixedBitSet::with_capacity(num_tracks),
+        }
+    }
+
+    /// Validate that a pin can be placed on tracks in the half-open span
+    /// [min_index, max_index].
+    pub fn check_place_pin(&self, min_index: i64, max_index: i64) -> Result<(), PinPlacementError> {
+        if min_index < 0 || max_index < 0 || (max_index as usize) >= self.pin_occupancies.len() {
+            return Err(PinPlacementError::OutOfBounds {
+                min_index,
+                max_index,
+                num_tracks: self.pin_occupancies.len(),
+            });
+        }
+        let min_index_usize = min_index as usize;
+        let max_index_usize = max_index as usize;
+        let range = min_index_usize..(max_index_usize + 1);
+        if self.pin_occupancies.contains_any_in_range(range.clone()) {
+            return Err(PinPlacementError::OverlapsExistingPin {
+                min_index,
+                max_index,
+            });
+        }
+        if self.keepout_occupancies.contains_any_in_range(range) {
+            return Err(PinPlacementError::OverlapsKeepout {
+                min_index,
+                max_index,
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate that a keepout can be placed. Keepouts are clipped to the edge
+    /// span.
+    pub fn check_place_keepout(
+        &self,
+        min_index: i64,
+        max_index: i64,
+    ) -> Result<(), PinPlacementError> {
+        let clipped_min_index = min_index.max(0);
+        let clipped_max_index = max_index.min((self.pin_occupancies.len() as i64) - 1);
+        if clipped_max_index < clipped_min_index {
+            // Keepout clips to an empty span on this edge; trivially OK.
+            return Ok(());
+        }
+        let range = (clipped_min_index as usize)..((clipped_max_index as usize) + 1);
+        if self.pin_occupancies.contains_any_in_range(range) {
+            return Err(PinPlacementError::OverlapsExistingPin {
+                min_index,
+                max_index,
+            });
+        }
+        Ok(())
+    }
+
+    /// Marks the inclusive range `[min_index, max_index]` as occupied by a
+    /// pin, preventing future placements from overlapping.
+    pub fn mark_pin(&mut self, min_index: i64, max_index: i64) {
+        let min_index = min_index as usize;
+        let max_index = max_index as usize;
+        self.pin_occupancies
+            .set_range(min_index..(max_index + 1), true);
+    }
+
+    /// Marks the inclusive range `[min_index, max_index]` as a keepout region,
+    /// clipping indices that fall outside the known edge span.
+    pub fn mark_keepout(&mut self, min_index: i64, max_index: i64) {
+        let clipped_min_index = min_index.max(0);
+        let clipped_max_index = max_index.min((self.pin_occupancies.len() as i64) - 1);
+        if clipped_max_index < clipped_min_index {
+            // Keepout clips to an empty span on this edge; nothing to mark.
+            return;
+        }
+        self.keepout_occupancies.set_range(
+            (clipped_min_index as usize)..((clipped_max_index as usize) + 1),
+            true,
+        );
+    }
+
+    /// Convenience helper that records both the pin and keepout ranges and
+    /// ensures the pin body itself is not treated as a keepout afterwards.
+    pub fn place_pin_and_keepout(
+        &mut self,
+        pin_min_index: i64,
+        pin_max_index: i64,
+        keepout_min_index: i64,
+        keepout_max_index: i64,
+    ) {
+        self.mark_pin(pin_min_index, pin_max_index);
+        self.mark_keepout(keepout_min_index, keepout_max_index);
+
+        let pin_range = (pin_min_index as usize)..((pin_max_index as usize) + 1);
+        self.keepout_occupancies.remove_range(pin_range);
+    }
+
+    /// Returns a bitmap of tracks that are currently free between
+    /// `min_index` and `max_index`, inclusive.
+    pub fn get_available_indices_in_range(
+        &self,
+        min_index: usize,
+        max_index: usize,
+    ) -> FixedBitSet {
+        let mut retval = self.pin_occupancies.clone();
+        retval.union_with(&self.keepout_occupancies);
+        if min_index > 0 {
+            retval.insert_range(..min_index);
+        }
+        if max_index < (retval.len() - 1) {
+            retval.insert_range((max_index + 1)..);
+        }
+        retval.toggle_range(..);
+        retval
+    }
+}
+
+pub(crate) struct TrackOccupancies(pub(crate) Vec<IndexMap<String, TrackOccupancy>>);
+
+impl TrackOccupancies {
+    /// Allocates per-edge occupancy maps for the provided number of edges.
+    pub fn new(num_edges: usize) -> Self {
+        let mut occupancies = Vec::with_capacity(num_edges);
+        for _ in 0..num_edges {
+            occupancies.push(IndexMap::new());
+        }
+        TrackOccupancies(occupancies)
+    }
+
+    /// Returns the immutable occupancy record for `edge_index` and `layer`, if
+    /// one has been initialized.
+    pub fn get_occupancy(
+        &self,
+        edge_index: usize,
+        layer: impl AsRef<str>,
+    ) -> Option<&TrackOccupancy> {
+        self.0
+            .get(edge_index)
+            .and_then(|edge_map| edge_map.get(layer.as_ref()))
+    }
+
+    /// Returns the mutable occupancy record for `edge_index` and `layer`, if
+    /// one has been initialized.
+    pub fn get_occupancy_mut(
+        &mut self,
+        edge_index: usize,
+        layer: impl AsRef<str>,
+    ) -> Option<&mut TrackOccupancy> {
+        self.0
+            .get_mut(edge_index)
+            .and_then(|edge_map| edge_map.get_mut(layer.as_ref()))
+    }
+}
+
+impl ModDef {
+    /// Block tracks where the pin shares an edge segment with the module outline.
+    /// The pin must use this module's coordinates and unit scale. Only tracks on
+    /// the pin's layer are blocked; interior pins and corner-only contact block
+    /// nothing. The pin does not need to be assigned to a port.
+    ///
+    /// Set the final outline and track definitions before calling this method.
+    /// Missing setup or a missing layer returns an error without changing any
+    /// reservations. Contact between track centers is allowed and blocks nothing.
+    ///
+    /// Reservations are additive: repeated calls and overlapping pins are allowed,
+    /// and existing keepouts are preserved. Moving or replacing a stored pin does
+    /// not release reservations. After changing the outline, set track definitions
+    /// again before blocking. Repeat blocking whenever track definitions are reset.
+    /// This method does not place the pin or add keepout margins.
+    pub fn block_tracks_for_pin(&self, pin: &PhysicalPin) -> Result<(), PinPlacementError> {
+        block_tracks_for_pins(&mut self.core.write(), std::slice::from_ref(pin))
+    }
+
+    pub(crate) fn block_tracks_for_port_bits<'a>(
+        &self,
+        bits: impl IntoIterator<Item = (&'a str, usize)>,
+    ) -> Result<(), PinPlacementError> {
+        let mut core = self.core.write();
+        let pins = bits
+            .into_iter()
+            .map(|(port, bit)| {
+                core.physical_pins
+                    .get(port)
+                    .and_then(|pins| pins.get(bit))
+                    .and_then(Option::as_ref)
+                    .cloned()
+                    .ok_or_else(|| PinPlacementError::MissingPhysicalPin {
+                        port: port.to_string(),
+                        bit,
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        block_tracks_for_pins(&mut core, &pins)
+    }
+}
+
+fn block_tracks_for_pins(
+    core: &mut ModDefCore,
+    pins: &[PhysicalPin],
+) -> Result<(), PinPlacementError> {
+    if pins.is_empty() {
+        return Ok(());
+    }
+    let shape = core
+        .shape
+        .as_ref()
+        .ok_or(PinPlacementError::NotInitialized("Shape"))?;
+    let tracks = core
+        .track_definitions
+        .as_ref()
+        .ok_or(PinPlacementError::NotInitialized("Track definitions"))?;
+    let occupancies = core
+        .track_occupancies
+        .as_ref()
+        .ok_or(PinPlacementError::NotInitialized("Track occupancies"))?;
+    let mut spans = Vec::new();
+    for pin in pins {
+        let track =
+            tracks
+                .get_track(&pin.layer)
+                .ok_or_else(|| PinPlacementError::LayerUnavailable {
+                    layer: pin.layer.clone(),
+                })?;
+        let polygon = pin.transformed_polygon();
+        for edge_index in 0..shape.num_edges() {
+            let edge = shape.get_edge(edge_index);
+            let Some(edge_indices) = edge.get_index_range(track) else {
+                continue;
+            };
+            let occupancy = occupancies.get_occupancy(edge_index, &pin.layer).ok_or(
+                PinPlacementError::NotInitialized("Track occupancies for pin layer"),
+            )?;
+            for pin_edge_index in 0..polygon.num_edges() {
+                let pin_edge = polygon.get_edge(pin_edge_index);
+                let contact = match track.orientation {
+                    TrackOrientation::Horizontal
+                        if pin_edge.a.x == edge.a.x && pin_edge.b.x == edge.a.x =>
+                    {
+                        pin_edge.get_y_range().intersection(&edge.get_y_range())
+                    }
+                    TrackOrientation::Vertical
+                        if pin_edge.a.y == edge.a.y && pin_edge.b.y == edge.a.y =>
+                    {
+                        pin_edge.get_x_range().intersection(&edge.get_x_range())
+                    }
+                    _ => None,
+                };
+                let Some(contact) = contact.filter(|range| range.min < range.max) else {
+                    continue;
+                };
+                let indices = track.convert_coord_range_to_index_range(&contact);
+                let min = indices.min.unwrap() - edge_indices.min.unwrap();
+                let max = indices.max.unwrap() - edge_indices.min.unwrap();
+                if min <= max {
+                    if min < 0 || max as usize >= occupancy.pin_occupancies.len() {
+                        return Err(PinPlacementError::OutOfBounds {
+                            min_index: min,
+                            max_index: max,
+                            num_tracks: occupancy.pin_occupancies.len(),
+                        });
+                    }
+                    spans.push((&pin.layer, edge_index, min, max));
+                }
+            }
+        }
+    }
+
+    // Validate the entire selection before reserving any tracks. Repeated bits
+    // and overlapping pins are allowed; marking a track twice has no effect.
+    let occupancies = core.track_occupancies.as_mut().unwrap();
+    for (layer, edge_index, min, max) in spans {
+        occupancies
+            .get_occupancy_mut(edge_index, layer)
+            .unwrap()
+            .mark_pin(min, max);
+    }
+    Ok(())
+}
+
+macro_rules! can_place_pin_on_edge {
+    ($fn_name:ident, $const_name:ident) => {
+        #[doc = concat!(
+                                            "Returns `true` when a pin can be placed on the ",
+                                            stringify!($fn_name),
+                                            " edge for the requested layer and track index."
+                                        )]
+        pub fn $fn_name(&self, layer: impl AsRef<str>, track_index: usize) -> bool {
+            self.can_place_pin_on_edge_index($const_name, layer, track_index)
+        }
+    };
+}
+
+impl ModDef {
+    /// Returns a matrix corresponding to the necessary rotation of a pin
+    /// polygon from the "standard" orientation (llx=-w/2, lly=0, urx=+w/2,
+    /// ury=h) to be placed on the specified edge of this ModDef.
+    pub fn edge_index_to_transform(&self, edge_index: usize) -> Mat3 {
+        self.get_edge(edge_index)
+            .unwrap_or_else(|| panic!("Edge index {edge_index} is out of bounds"))
+            .to_pin_transform()
+    }
+
+    /// Convert a track index on a given edge and layer into a transform that
+    /// orients a pin polygon to the edge orientation and translates it to the
+    /// correct absolute location.
+    pub fn track_index_to_transform(
+        &self,
+        edge_index: usize,
+        layer: impl AsRef<str>,
+        track_index: usize,
+    ) -> Mat3 {
+        let layer_ref = layer.as_ref();
+        let track = self
+            .get_track(layer_ref)
+            .unwrap_or_else(|| panic!("Unknown track layer '{layer_ref}'"));
+        let edge = self
+            .get_edge(edge_index)
+            .unwrap_or_else(|| panic!("Edge index {edge_index} is out of bounds"));
+        let position = edge.get_coordinate_on_edge(&track, track_index);
+        let rotation = edge.to_pin_transform();
+        let translation = Mat3::translate(position.x, position.y);
+        &translation * &rotation
+    }
+
+    pub(crate) fn track_range_for_polygon(
+        &self,
+        edge_index: usize,
+        layer: impl AsRef<str>,
+        polygon: &Polygon,
+    ) -> (i64, i64) {
+        let layer_ref = layer.as_ref();
+        let track = self
+            .get_track(layer_ref)
+            .unwrap_or_else(|| panic!("Unknown track layer '{layer_ref}'"));
+        let edge = self
+            .get_edge(edge_index)
+            .unwrap_or_else(|| panic!("Edge index {edge_index} is out of bounds"));
+        let edge_range = edge
+            .get_index_range(&track)
+            .unwrap_or_else(|| panic!("layer '{layer_ref}' has no tracks on edge {edge_index}"));
+        let edge_min_track = edge_range.min.expect("edge track range missing min index");
+
+        let bbox = polygon.bbox();
+        let (min_coord, max_coord) = match track.orientation {
+            TrackOrientation::Horizontal => (bbox.min_y, bbox.max_y),
+            TrackOrientation::Vertical => (bbox.min_x, bbox.max_x),
+        };
+        let absolute_range =
+            track.convert_coord_range_to_index_range(&Range::new(min_coord, max_coord));
+        let absolute_min_track = absolute_range
+            .min
+            .expect("polygon track range missing min index");
+        let absolute_max_track = absolute_range
+            .max
+            .expect("polygon track range missing max index");
+
+        (
+            absolute_min_track - edge_min_track,
+            absolute_max_track - edge_min_track,
+        )
+    }
+
+    can_place_pin_on_edge!(can_place_pin_on_west_edge, WEST_EDGE_INDEX);
+    can_place_pin_on_edge!(can_place_pin_on_left_edge, LEFT_EDGE_INDEX);
+    can_place_pin_on_edge!(can_place_pin_on_north_edge, NORTH_EDGE_INDEX);
+    can_place_pin_on_edge!(can_place_pin_on_top_edge, TOP_EDGE_INDEX);
+    can_place_pin_on_edge!(can_place_pin_on_east_edge, EAST_EDGE_INDEX);
+    can_place_pin_on_edge!(can_place_pin_on_right_edge, RIGHT_EDGE_INDEX);
+    can_place_pin_on_edge!(can_place_pin_on_south_edge, SOUTH_EDGE_INDEX);
+    can_place_pin_on_edge!(can_place_pin_on_bottom_edge, BOTTOM_EDGE_INDEX);
+
+    /// Boolean convenience wrapper around
+    /// [`ModDef::check_pin_placement_on_edge_index`].
+    pub fn can_place_pin_on_edge_index(
+        &self,
+        edge_index: usize,
+        layer: impl AsRef<str>,
+        track_index: usize,
+    ) -> bool {
+        let track = self.get_track(layer.as_ref()).unwrap();
+        self.check_pin_placement_on_edge_index_with_polygon(
+            edge_index,
+            layer,
+            track_index,
+            track.pin_shape.as_ref(),
+            track.keepout_shape.as_ref(),
+        )
+        .is_ok()
+    }
+
+    /// Validate that a pin/keepout combination can be placed using the default
+    /// shapes for the layer, returning `Ok(())` on success or a detailed
+    /// `PinPlacementError` on failure.
+    pub fn check_pin_placement_on_edge_index(
+        &self,
+        edge_index: usize,
+        layer: impl AsRef<str>,
+        track_index: usize,
+    ) -> Result<(), PinPlacementError> {
+        let track = self.get_track(layer.as_ref()).unwrap();
+        self.check_pin_placement_on_edge_index_with_polygon(
+            edge_index,
+            layer,
+            track_index,
+            track.get_pin_shape(),
+            track.get_keepout_shape(),
+        )
+    }
+
+    /// Validate that a pin/keepout combination can be placed using the provided
+    /// polygons, returning `Ok(())` on success or a detailed
+    /// `PinPlacementError` on failure.
+    pub fn check_pin_placement_on_edge_index_with_polygon(
+        &self,
+        edge_index: usize,
+        layer: impl AsRef<str>,
+        track_index: usize,
+        pin_polygon: Option<&Polygon>,
+        keepout_polygon: Option<&Polygon>,
+    ) -> Result<(), PinPlacementError> {
+        let core = self.core.read();
+        let occupancies = core
+            .track_occupancies
+            .as_ref()
+            .ok_or(PinPlacementError::NotInitialized("Track occupancies"))?;
+        let num_edges = occupancies.0.len();
+        let edge_map = occupancies
+            .0
+            .get(edge_index)
+            .ok_or(PinPlacementError::EdgeOutOfBounds {
+                edge_index,
+                num_edges,
+            })?;
+        let layer_ref = layer.as_ref();
+        let occupancy =
+            edge_map
+                .get(layer_ref)
+                .ok_or_else(|| PinPlacementError::LayerUnavailable {
+                    layer: layer_ref.to_string(),
+                })?;
+
+        let transform = self.track_index_to_transform(edge_index, layer_ref, track_index);
+
+        if let Some(pin_polygon) = pin_polygon {
+            let pin_polygon = pin_polygon.apply_transform(&transform);
+            let (min_track_index, max_track_index) =
+                self.track_range_for_polygon(edge_index, layer_ref, &pin_polygon);
+            occupancy.check_place_pin(min_track_index, max_track_index)?;
+        }
+
+        if let Some(keepout_polygon) = keepout_polygon {
+            let keepout_polygon = keepout_polygon.apply_transform(&transform);
+            let (min_track_index, max_track_index) =
+                self.track_range_for_polygon(edge_index, layer_ref, &keepout_polygon);
+            occupancy.check_place_keepout(min_track_index, max_track_index)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mod_def::ModDef;
+    use std::collections::HashMap;
+
+    #[test]
+    fn failed_blocking_leaves_all_tracks_unchanged() {
+        let module = ModDef::new("Top");
+        module.set_width_height(100, 100);
+        let mut tracks = TrackDefinitions::new();
+        tracks.add_track(TrackDefinition::new(
+            "M1",
+            0,
+            10,
+            TrackOrientation::Horizontal,
+            None,
+            None,
+        ));
+        module.set_track_definitions(tracks);
+        // An error on the right edge must not reserve the earlier left edge.
+        module.core.write().track_occupancies.as_mut().unwrap().0[RIGHT_EDGE_INDEX]
+            .shift_remove("M1");
+        let pin = PhysicalPin::from_translation(
+            "M1",
+            Polygon::from_width_height(100, 100),
+            crate::Coordinate { x: 0, y: 0 },
+        );
+
+        assert!(matches!(
+            module.block_tracks_for_pin(&pin),
+            Err(PinPlacementError::NotInitialized(_))
+        ));
+        let core = module.core.read();
+        let occupancy = core
+            .track_occupancies
+            .as_ref()
+            .unwrap()
+            .get_occupancy(LEFT_EDGE_INDEX, "M1")
+            .unwrap();
+        assert!(occupancy.pin_occupancies.is_clear());
+    }
+
+    #[test]
+    fn can_change_keepout_shapes() {
+        let module = ModDef::new("Top");
+        module.set_width_height(100, 100);
+
+        let mut tracks = TrackDefinitions::new();
+        tracks.add_track(TrackDefinition::new(
+            "M1",
+            0,
+            10,
+            TrackOrientation::Horizontal,
+            None,
+            Some(Polygon::from_width_height(2, 2)),
+        ));
+        module.set_track_definitions(tracks);
+
+        let mut saved = HashMap::new();
+        for (layer, track_def) in module.get_track_definitions_mut().unwrap().iter_mut() {
+            saved.insert(layer.clone(), track_def.get_keepout_shape().cloned());
+            track_def.set_keepout_shape(None);
+        }
+
+        for track_def in module.get_track_definitions().unwrap().values() {
+            assert!(track_def.get_keepout_shape().is_none());
+        }
+
+        for (layer, track_def) in module.get_track_definitions_mut().unwrap().iter_mut() {
+            track_def.set_keepout_shape(saved.remove(layer).unwrap());
+        }
+
+        for track_def in module.get_track_definitions().unwrap().values() {
+            assert!(track_def.get_keepout_shape().is_some());
+        }
+    }
+}
