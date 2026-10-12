@@ -113,6 +113,7 @@ Logic vectors nested inside aggregates are compared structurally; only a `Logic`
 - When part of a net is exported, the net is still declared at full width, leaving declared but undriven bits: in `typed_ports_on_the_parent` (`tests/typed/emit.rs`), `s_arr[1]` of `wire cfg_pkg::flit_t [2:0] s_arr` drives the export `arr1` directly and is never driven itself.
 - A net whose elements are used in different ways (one element typed, another flat) falls back to a flat net.
 - A port typed by a typedef alias of an unpacked struct or union carries the alias's name, so connecting it to the type it names is reported as S0206 although SystemVerilog accepts it (`unpacked_alias_is_reported_although_it_connects`).
+- S0206 is over-strict for a re-emitted definition (`Usage::EmitDefinitionAndDescend`) whose unpacked port is tied off inside it: the port is reported even when the parent leaves it unconnected, where the flat declaration would be harmless.
 - Only `ident`/`pkg::ident` overrides; computed types and expressions need a named type or constant in a package.
 
 ## Out of scope

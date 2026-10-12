@@ -42,10 +42,13 @@ Items also moved between files: the physical methods of `ModDef`, `ModInst`,
 `VerilogImport` is in `src/import/parser.rs`; `populate_hierarchy` is in
 `src/import/hierarchy.rs`.
 
-`src/lib.rs`, `src/util.rs` and `src/diagnostic/` keep their paths. The public
-API (`topstitch::*`, `topstitch::lefdef`, `topstitch::diagnostic`) is
-unchanged; `src/lib.rs` re-exports it. `git log --follow` traces a file
-across the move.
+`src/lib.rs`, `src/util.rs` and `src/diagnostic/` keep their paths. The moves
+left the public API (`topstitch::*`, `topstitch::lefdef`,
+`topstitch::diagnostic`) unchanged; `src/lib.rs` re-exports it. `git log
+--follow` traces a file across the move. Typed specialization then extended
+it (see Library behavior); one extension is not source compatible:
+`ParameterValue` gained `Type` and `Expr`, so exhaustive matches on it
+outside the crate no longer compile.
 
 ## Divergences from upstream
 

@@ -25,9 +25,12 @@ type MaxDistanceMap = IndexMap<String, Vec<Option<i64>>>;
 pub struct ModDefCore {
     pub(crate) name: String,
     pub(crate) ports: IndexMap<String, IO>,
-    /// Resolved types of imported ports, keyed like `ports`. Written only by
-    /// [`ModDefCore::insert_typed_port`], which keeps the `ports` width equal
-    /// to the type's width. Ports added without a type have no entry.
+    /// Resolved types of typed ports, keyed like `ports`: ports imported
+    /// from SystemVerilog and ports created by exporting a typed port
+    /// (`export_as`, `wrap`). Added only by [`ModDefCore::insert_typed_port`],
+    /// which keeps the `ports` width equal to the type's width; copied whole
+    /// when a module definition is copied (`stub`, pin placement). Ports
+    /// added without a type have no entry.
     pub(crate) port_types: IndexMap<String, PortType>,
     /// SystemVerilog declaration spans of imported ports, keyed like `ports`.
     pub(crate) port_spans: IndexMap<String, Span>,
@@ -67,7 +70,8 @@ pub struct ModDefCore {
 impl ModDefCore {
     /// Inserts (or replaces) a typed port: `ports[name]` gets direction `io`
     /// and the type's width, `port_types[name]` the type and `port_spans[name]`
-    /// its declaration span. This is the only writer of `port_types`.
+    /// its declaration span. This is the only function that adds entries to
+    /// `port_types`; copies of a module definition clone the map.
     pub(crate) fn insert_typed_port(
         &mut self,
         name: String,
