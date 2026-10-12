@@ -57,8 +57,11 @@ impl ModDef {
     /// while the file that defines it is also a listed source: the emitted
     /// RTL and the sources would define it twice.
     ///
-    /// The defining file is found from the module's port declarations, so a
-    /// module without ports is not checked.
+    /// The defining file is taken to be the file of the module's first port
+    /// declaration that has an SV span. Not checked: modules without ports,
+    /// modules none of whose ports has an SV span, and modules whose first
+    /// such port is declared in an `include`d file (the included file is
+    /// compared instead of the module's).
     pub fn try_manifest(&self) -> Result<Manifest, Diagnostics> {
         let mut manifest = Manifest::default();
         let mut seen = HashSet::new();
@@ -88,9 +91,8 @@ impl ModDef {
                     },
                     secondary: vec![],
                     notes: vec![format!(
-                        "`{}` is emitted from the model, and `{}` is listed for other modules",
-                        module.name,
-                        file.display()
+                        "`{}` is emitted from the model, and its file is listed for other modules",
+                        module.name
                     )],
                     helps: vec![
                         "move the module into its own file, or emit nothing for it \
