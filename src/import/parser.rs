@@ -27,7 +27,7 @@ fn interface_port_error_of_definition(module: &str, cfg: &ParserConfig) -> Optio
 /// elaboration.
 #[derive(Clone)]
 pub(crate) struct VerilogImport {
-    /// Absolute source paths, in compile order.
+    /// Absolute source paths with `.` and `..` folded, in compile order.
     pub(crate) sources: Vec<String>,
     pub(crate) incdirs: Vec<String>,
     pub(crate) defines: Vec<(String, String)>,
@@ -92,7 +92,13 @@ impl VerilogImport {
     pub(crate) fn new(cfg: &ParserConfig) -> Self {
         let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect();
         VerilogImport {
-            sources: cfg.sources.iter().map(|s| absolute(s)).collect(),
+            sources: {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                cfg.sources
+                    .iter()
+                    .map(|s| slang_rs::absolute_path(&cwd, s))
+                    .collect()
+            },
             incdirs: strings(cfg.incdirs),
             defines: cfg
                 .defines
@@ -111,13 +117,6 @@ impl VerilogImport {
             inline: false,
         }
     }
-}
-
-/// `source` as an absolute path, relative to the current directory.
-fn absolute(source: &str) -> String {
-    std::path::absolute(source)
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| source.to_string())
 }
 
 pub(crate) fn parser_param_to_param(

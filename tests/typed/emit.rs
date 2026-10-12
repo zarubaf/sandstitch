@@ -675,8 +675,8 @@ fn manifest_lists_sources_and_specializations() {
         false,
         false,
     );
-    // `raw` is emitted from the model, so its sources are not listed
-    // (here they are listed anyway, for `src`).
+    // `raw` is emitted from the model (a stub), so it lists no sources; it
+    // is only instantiated below where `src`, which shares its file, is not.
     raw.set_usage(Usage::EmitStubAndStop);
 
     let mid = ModDef::new("mid");
@@ -688,7 +688,6 @@ fn manifest_lists_sources_and_specializations() {
     let s = top.instantiate(&src, Some("s"), None);
     let m0 = top.instantiate(&mid, Some("m0"), None);
     let m1 = top.instantiate(&mid, Some("m1"), None);
-    let r = top.instantiate(&raw, Some("r"), None);
     let l = top.instantiate(&rel, Some("l"), None);
     let i = top.instantiate(&inline, Some("i"), None);
     a.get_port("in_i").tieoff(0);
@@ -700,8 +699,6 @@ fn manifest_lists_sources_and_specializations() {
     m0.get_port("in_i").tieoff(0);
     m1.get_port("in_i").index(1).tieoff(0);
     m1.get_port("out_o").unused();
-    r.get_port("x").tieoff(0);
-    r.get_port("f").tieoff(0);
     l.get_port("a").tieoff(0);
     i.get_port("a").tieoff(0);
 
@@ -742,4 +739,83 @@ fn manifest_lists_sources_and_specializations() {
 
     // Untyped, unimported designs have an empty manifest.
     assert_eq!(ModDef::new("empty").manifest(), Manifest::default());
+}
+
+#[test]
+fn manifest_reports_a_module_defined_twice() {
+    // `src` and `raw` share a file; `raw` is stubbed, so the emitted RTL
+    // defines it, while the file is listed for `src`.
+    let sources = Sources::new(&[PKG, MODS]);
+    let (src, raw) = (sources.import("src"), sources.import("raw"));
+    raw.set_usage(Usage::EmitStubAndStop);
+    let top = ModDef::new("top");
+    let s = top.instantiate(&src, Some("s"), None);
+    let r = top.instantiate(&raw, Some("r"), None);
+    s.get_port("o").connect(&r.get_port("x"));
+    for port in ["arr", "off"] {
+        s.get_port(port).unused();
+    }
+    r.get_port("f").tieoff(0);
+
+    let mods = sources.files[1].path().to_str().unwrap().to_string();
+    let err = top.try_manifest().unwrap_err();
+    assert_eq!(err.0.len(), 1, "{}", err.render());
+    let d = &err.0[0];
+    assert_eq!(d.code, diagnostic::codes::S0301);
+    assert_eq!(
+        d.message,
+        format!("module `raw` would be defined twice: by the emitted RTL and by `{mods}`")
+    );
+    assert_eq!(d.primary.span, raw.get_port("x").source_span());
+    let Span::Sv { file, .. } = &d.primary.span else {
+        panic!("expected an SV span: {:?}", d.primary.span);
+    };
+    assert_eq!(file, &mods);
+    // The failure is real: the emitted RTL and the sources clash.
+    let emitted = top.emit(EmitOptions::default());
+    let err = sources.elaborate(&emitted, "top").unwrap_err();
+    assert!(err.contains("raw"), "{err}");
+    // `manifest` panics with the rendered diagnostic.
+    let rendered = top.try_manifest().unwrap_err().render();
+    let payload =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| top.manifest())).unwrap_err();
+    assert_eq!(payload.downcast_ref::<String>(), Some(&rendered));
+    assert!(
+        rendered.starts_with("error[S0301]: module `raw`"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn manifest_folds_dot_segments() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let srcs = dir.path().join("srcs");
+    std::fs::create_dir(&srcs).unwrap();
+    std::fs::write(srcs.join("pkg.sv"), PKG).unwrap();
+    std::fs::write(srcs.join("mods.sv"), MODS).unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    let rel = srcs
+        .strip_prefix(&cwd)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let a = [format!("{rel}/pkg.sv"), format!("{rel}/mods.sv")];
+    let b = [format!("{rel}/../srcs/pkg.sv"), format!("./{rel}/mods.sv")];
+    let import = |paths: &[String], name: &str| {
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let cfg = ParserConfig {
+            sources: &paths,
+            ..Default::default()
+        };
+        ModDef::from_verilog_with_config(name, &cfg)
+    };
+    let (src, raw) = (import(&a, "src"), import(&b, "raw"));
+    let top = ModDef::new("top");
+    top.instantiate(&src, Some("s"), None);
+    top.instantiate(&raw, Some("r"), None);
+    assert_eq!(
+        top.manifest().sources,
+        vec![srcs.join("pkg.sv"), srcs.join("mods.sv")]
+    );
 }

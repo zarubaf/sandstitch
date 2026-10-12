@@ -23,7 +23,10 @@ pub const S0203: Code = Code("S0203");
 /// Field access through union.
 pub const S0204: Code = Code("S0204");
 
+/// Module defined both by emitted RTL and by a manifest source.
+pub const S0301: Code = Code("S0301");
+
 /// Every defined code.
 pub const ALL: &[Code] = &[
-    S0101, S0102, S0103, S0104, S0105, S0201, S0202, S0203, S0204,
+    S0101, S0102, S0103, S0104, S0105, S0201, S0202, S0203, S0204, S0301,
 ];

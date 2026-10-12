@@ -8,16 +8,18 @@ use std::path::PathBuf;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-use crate::{ModDef, ModDefCore, Usage};
+use crate::diagnostic::codes;
+use crate::{Diagnostic, Diagnostics, Label, ModDef, ModDefCore, Severity, Span, Usage};
 
 /// What the RTL emitted by [`ModDef::emit`] needs besides itself: the
 /// sources of the imported modules it instantiates without emitting them,
 /// and the specialization of each specialized instance.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Manifest {
-    /// Absolute paths (made absolute at import), deduplicated, in first-seen
-    /// order: a depth-first walk of the hierarchy in instance order, each
-    /// import's sources in its compile order.
+    /// Absolute paths (made absolute, with `.` and `..` folded, at import),
+    /// deduplicated, in first-seen order: a depth-first walk of the
+    /// hierarchy in instance order, each import's sources in its compile
+    /// order.
     ///
     /// The walk follows emission: a module whose definition is emitted
     /// ([`Usage::EmitDefinitionAndDescend`], [`Usage::EmitStubAndStop`])
@@ -34,15 +36,75 @@ pub struct Manifest {
     pub specializations: Vec<(String, String)>,
 }
 
+/// An imported module whose definition is emitted, with the span of its
+/// first port declaration (which locates the file that defines it).
+struct EmittedImport {
+    name: String,
+    span: Span,
+}
+
 impl ModDef {
     /// The manifest of the RTL that [`ModDef::emit`] produces for this
-    /// module.
+    /// module. Panics with the rendered diagnostics if
+    /// [`ModDef::try_manifest`] fails.
     pub fn manifest(&self) -> Manifest {
+        self.try_manifest()
+            .unwrap_or_else(|diagnostics| panic!("{}", diagnostics.render()))
+    }
+
+    /// Fallible form of [`ModDef::manifest`]. Reports S0301 for each
+    /// imported module whose definition is emitted (re-emitted or stubbed)
+    /// while the file that defines it is also a listed source: the emitted
+    /// RTL and the sources would define it twice.
+    ///
+    /// The defining file is found from the module's port declarations, so a
+    /// module without ports is not checked.
+    pub fn try_manifest(&self) -> Result<Manifest, Diagnostics> {
         let mut manifest = Manifest::default();
         let mut seen = HashSet::new();
+        let mut emitted = Vec::new();
         let name = self.core.read().name.clone();
-        visit(&self.core, &name, &mut manifest, &mut seen);
-        manifest
+        visit(&self.core, &name, &mut manifest, &mut seen, &mut emitted);
+
+        let diagnostics: Vec<Diagnostic> = emitted
+            .into_iter()
+            .filter_map(|module| {
+                let Span::Sv { file, .. } = &module.span else {
+                    return None;
+                };
+                // Slang reports absolute paths, folded like the sources.
+                let file = PathBuf::from(file);
+                seen.contains(&file).then(|| Diagnostic {
+                    code: codes::S0301,
+                    severity: Severity::Error,
+                    message: format!(
+                        "module `{}` would be defined twice: by the emitted RTL and by `{}`",
+                        module.name,
+                        file.display()
+                    ),
+                    primary: Label {
+                        span: module.span.clone(),
+                        text: format!("`{}` is defined in this listed source", module.name),
+                    },
+                    secondary: vec![],
+                    notes: vec![format!(
+                        "`{}` is emitted from the model, and `{}` is listed for other modules",
+                        module.name,
+                        file.display()
+                    )],
+                    helps: vec![
+                        "move the module into its own file, or emit nothing for it \
+                         (`Usage::EmitNothingAndStop`) and build with its source"
+                            .into(),
+                    ],
+                })
+            })
+            .collect();
+        if diagnostics.is_empty() {
+            Ok(manifest)
+        } else {
+            Err(Diagnostics(diagnostics))
+        }
     }
 }
 
@@ -51,6 +113,7 @@ fn visit(
     path: &str,
     manifest: &mut Manifest,
     seen: &mut HashSet<PathBuf>,
+    emitted: &mut Vec<EmittedImport>,
 ) {
     let core = core.read();
     if let Some(import) = &core.verilog_import {
@@ -59,11 +122,24 @@ fn visit(
                 .specializations
                 .push((path.to_string(), key.short_hash()));
         }
-        let emitted = matches!(
+        let is_emitted = matches!(
             core.usage,
             Usage::EmitDefinitionAndDescend | Usage::EmitStubAndStop
         );
-        if !emitted && !import.inline {
+        if is_emitted {
+            let span = core
+                .port_spans
+                .values()
+                .find(|span| matches!(span, Span::Sv { .. }));
+            if let Some(span) = span
+                && !emitted.iter().any(|m| m.name == core.name)
+            {
+                emitted.push(EmittedImport {
+                    name: core.name.clone(),
+                    span: span.clone(),
+                });
+            }
+        } else if !import.inline {
             for source in &import.sources {
                 let source = PathBuf::from(source);
                 if seen.insert(source.clone()) {
@@ -74,7 +150,13 @@ fn visit(
     }
     if core.usage == Usage::EmitDefinitionAndDescend {
         for (inst_name, inst) in &core.instances {
-            visit(inst, &format!("{path}.{inst_name}"), manifest, seen);
+            visit(
+                inst,
+                &format!("{path}.{inst_name}"),
+                manifest,
+                seen,
+                emitted,
+            );
         }
     }
 }
