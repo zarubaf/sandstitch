@@ -6,7 +6,7 @@ use std::path::Path;
 
 use topstitch::{IO, ModDef, ModInst};
 
-use crate::{FlooConfig, router};
+use crate::{FlooConfig, link, router};
 
 /// The router port directions, `floo_pkg::route_direction_e`. Ports from
 /// [`Direction::Eject`] on are local ports.
@@ -24,22 +24,12 @@ pub enum Direction {
     Eject = 4,
 }
 
-const CHANNELS: [&str; 3] = ["req", "rsp", "wide"];
-
-/// Connects the `dir` link of `a` to the `opposite` link of `b`, in both
-/// directions: `a.floo_<ch>_o[dir]` drives `b.floo_<ch>_i[opposite]` and
-/// `b.floo_<ch>_o[opposite]` drives `a.floo_<ch>_i[dir]`, for the request,
-/// response and wide channels. Each link struct carries its own ready.
-fn link(a: &ModInst, dir: Direction, b: &ModInst, opposite: Direction) {
-    for ch in CHANNELS {
-        let (o, i) = (format!("floo_{ch}_o"), format!("floo_{ch}_i"));
-        a.get_port(&o)
-            .index(dir as usize)
-            .connect(&b.get_port(&i).index(opposite as usize));
-        b.get_port(&o)
-            .index(opposite as usize)
-            .connect(&a.get_port(&i).index(dir as usize));
-    }
+/// Connects the `dir` link of `a` to the `opposite` link of `b`: each
+/// channel's output drives the other router's input, in both directions.
+/// Each link struct carries its own ready.
+fn connect(a: &ModInst, dir: Direction, b: &ModInst, opposite: Direction) {
+    a.get_intf(link(dir as usize))
+        .connect(&b.get_intf(link(opposite as usize)), false);
 }
 
 /// A mesh of four routers `i_router_x<X>_y<Y>` at coordinates (0..2, 0..2),
@@ -82,38 +72,34 @@ pub fn mesh_2x2(cfg: &FlooConfig, out_dir: &Path) -> ModDef {
                 r.get_port(format!("offload_{side}_req_o")).unused();
             }
             for p in Direction::Eject as usize..cfg.num_routes as usize {
-                for ch in CHANNELS {
-                    for dir in ["i", "o"] {
-                        r.get_port(format!("floo_{ch}_{dir}"))
-                            .index(p)
-                            .export_as(format!("x{x}_y{y}_p{p}_floo_{ch}_{dir}"));
-                    }
-                }
+                let name = format!("x{x}_y{y}_p{p}");
+                r.get_intf(link(p))
+                    .export_with_prefix(&name, format!("{name}_floo_"));
             }
             column.push(r);
         }
         routers.push(column);
     }
 
-    link(
+    connect(
         &routers[0][0],
         Direction::East,
         &routers[1][0],
         Direction::West,
     );
-    link(
+    connect(
         &routers[0][1],
         Direction::East,
         &routers[1][1],
         Direction::West,
     );
-    link(
+    connect(
         &routers[0][0],
         Direction::North,
         &routers[0][1],
         Direction::South,
     );
-    link(
+    connect(
         &routers[1][0],
         Direction::North,
         &routers[1][1],
@@ -132,16 +118,8 @@ pub fn mesh_2x2(cfg: &FlooConfig, out_dir: &Path) -> ModDef {
         } else {
             Direction::North
         };
-        for (dir, ch) in [x_edge, y_edge]
-            .into_iter()
-            .flat_map(|dir| CHANNELS.map(|ch| (dir, ch)))
-        {
-            r.get_port(format!("floo_{ch}_i"))
-                .index(dir as usize)
-                .tieoff(0);
-            r.get_port(format!("floo_{ch}_o"))
-                .index(dir as usize)
-                .unused();
+        for dir in [x_edge, y_edge] {
+            r.get_intf(link(dir as usize)).unused_and_tieoff(0);
         }
     }
     top

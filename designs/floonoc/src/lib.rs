@@ -121,6 +121,10 @@ fn overrides(cfg: &FlooConfig) -> Vec<(&'static str, ParameterValue)> {
 /// is written to `out_dir` ([`cfg_pkg_file`]) and is one of its sources, so
 /// it is in the build manifest of any design that instantiates the router.
 ///
+/// Each route `d` is the interface `link<d>` ([`link`]): the `req`, `rsp`
+/// and `wide` channels, each in both directions (`floo_<ch>_i[d]` and
+/// `floo_<ch>_o[d]`).
+///
 /// Panics if `cfg` is invalid ([`FlooConfig::validate`]) or the package
 /// cannot be written.
 #[track_caller]
@@ -143,5 +147,22 @@ pub fn router(cfg: &FlooConfig, out_dir: &Path) -> Result<ModDef, ImportError> {
         ..Default::default()
     };
     let overrides = overrides(cfg);
-    ModDef::try_from_verilog_parameterized("floo_nw_router", &parser_cfg, &overrides)
+    let router = ModDef::try_from_verilog_parameterized("floo_nw_router", &parser_cfg, &overrides)?;
+    for d in 0..cfg.num_routes as usize {
+        router.def_intf_members(
+            link(d),
+            CHANNELS.into_iter().flat_map(|ch| {
+                ["i", "o"].map(|dir| (ch, router.get_port(format!("floo_{ch}_{dir}")).index(d)))
+            }),
+        );
+    }
+    Ok(router)
+}
+
+/// The router channels; each link carries each of them in both directions.
+const CHANNELS: [&str; 3] = ["req", "rsp", "wide"];
+
+/// The name of the router interface of route `d`.
+pub fn link(d: usize) -> String {
+    format!("link{d}")
 }

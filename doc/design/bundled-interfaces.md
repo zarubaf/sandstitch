@@ -1,6 +1,6 @@
 # Bundled interfaces
 
-Status: proposed, 2026-10-13. Tracks #4 (sub-project 3 of 3). Builds on [typed specialization](typed-specialization.md); sub-project 2 (SystemVerilog interface ports) is declined.
+Status: accepted and implemented, 2026-10-13. Tracks #4 (sub-project 3 of 3). Builds on [typed specialization](typed-specialization.md); sub-project 2 (SystemVerilog interface ports) is declined.
 
 ## Goal
 
