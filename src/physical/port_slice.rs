@@ -226,6 +226,7 @@ impl PortSlice {
                 },
                 msb: self.msb,
                 lsb: self.lsb,
+                select: None,
             }
             .place_from_physical_pin(&across_pin);
         } else {

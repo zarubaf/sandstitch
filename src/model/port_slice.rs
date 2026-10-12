@@ -2,6 +2,7 @@
 
 use parking_lot::RwLock;
 use std::fmt::{self, Debug};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::model::connection::port_slice::PortSliceConnections;
@@ -12,8 +13,12 @@ use crate::{ModDef, ModDefCore, Port};
 mod connect;
 mod export;
 mod feedthrough;
+mod select;
 mod tieoff;
 mod trace;
+
+pub use select::Select;
+pub(crate) use select::path_string;
 
 /// Represents a slice of a port, which may be on a module definition or on a
 /// module instance.
@@ -21,11 +26,35 @@ mod trace;
 /// A slice is a defined as a contiguous range of bits from `msb` down to `lsb`,
 /// inclusive. A slice can be a single bit on the port (`msb` equal to `lsb`),
 /// the entire port, or any range in between.
-#[derive(Clone, PartialEq, Eq, Hash)]
+///
+/// A slice obtained from a whole port, [`PortSlice::field`] or
+/// [`PortSlice::index`] also remembers its typed selection, from which
+/// [`PortSlice::port_type`] is derived. Equality and hashing compare the
+/// covered bits only, not the selection.
+#[derive(Clone)]
 pub struct PortSlice {
     pub(crate) port: Port,
     pub(crate) msb: usize,
     pub(crate) lsb: usize,
+    /// Typed selection path from the root of the port's type (empty for the
+    /// whole port); `None` for a plain bit slice.
+    pub(crate) select: Option<Arc<[Select]>>,
+}
+
+impl PartialEq for PortSlice {
+    fn eq(&self, other: &Self) -> bool {
+        self.port == other.port && self.msb == other.msb && self.lsb == other.lsb
+    }
+}
+
+impl Eq for PortSlice {}
+
+impl Hash for PortSlice {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.port.hash(state);
+        self.msb.hash(state);
+        self.lsb.hash(state);
+    }
 }
 
 impl Debug for PortSlice {
@@ -56,11 +85,14 @@ impl PortSlice {
                     port: self.port.clone(),
                     msb: ((i + 1) * sub_width) - 1 + self.lsb,
                     lsb: (i * sub_width) + self.lsb,
+                    select: None,
                 }
             })
             .collect()
     }
 
+    /// A sub-range of this slice. The typed selection is kept only when the
+    /// whole slice is taken.
     pub(crate) fn slice_with_offset_and_width(&self, offset: usize, width: usize) -> Self {
         assert!(offset + width <= self.width());
 
@@ -68,6 +100,11 @@ impl PortSlice {
             port: self.port.clone(),
             msb: self.lsb + offset + width - 1,
             lsb: self.lsb + offset,
+            select: if offset == 0 && width == self.width() {
+                self.select.clone()
+            } else {
+                None
+            },
         }
     }
 
@@ -124,6 +161,7 @@ impl PortSlice {
             port: self.port.as_mod_inst_port(hierarchy),
             msb: self.msb,
             lsb: self.lsb,
+            select: self.select.clone(),
         }
     }
 
@@ -138,6 +176,7 @@ impl PortSlice {
             port: self.port.as_mod_def_port(),
             msb: self.msb,
             lsb: self.lsb,
+            select: self.select.clone(),
         }
     }
 
@@ -175,6 +214,7 @@ impl PortSlice {
                 port: self.port.clone(),
                 msb: self.msb,
                 lsb: other.lsb,
+                select: None,
             })
         } else {
             None

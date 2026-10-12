@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::model::connection::port_slice::ConnectionRecord;
 use crate::model::port::PortDirectionality;
 use crate::{
-    ConvertibleToPortSlice, ConvertibleToPortSliceVec, IO, ModInst, PipelineConfig, Port, PortSlice,
+    ConvertibleToPortSlice, ConvertibleToPortSliceVec, IO, ModInst, PipelineConfig, Port,
+    PortSlice, Span,
 };
+use std::panic::Location;
 use std::sync::Arc;
 
 impl PortSlice {
@@ -46,10 +49,24 @@ impl PortSlice {
     /// Connects this port slice to another port or port slice. Performs some
     /// upfront checks to make sure that the connection is valid in terms of
     /// width and directionality. Panics if any of these checks fail.
+    ///
+    /// If both ends are typed (whole typed ports, fields or elements), their
+    /// types must be equivalent; [`ModDef::check`](crate::ModDef::check)
+    /// reports a violation (S0201) at this call site.
+    #[track_caller]
     pub fn connect<T: ConvertibleToPortSlice>(&self, other: &T) {
         self.connect_generic(other, None);
     }
 
+    /// Connects this port slice to `other` as raw bits: only widths must
+    /// match, whatever the types of the ends. Use it to reinterpret bits
+    /// deliberately; the connection is recorded as such.
+    #[track_caller]
+    pub fn connect_bits(&self, other: &impl ConvertibleToPortSlice) {
+        self.connect_with(other, None, true, Location::caller());
+    }
+
+    #[track_caller]
     pub fn connect_pipeline<T: ConvertibleToPortSlice>(&self, other: &T, pipeline: PipelineConfig) {
         self.connect_generic(other, Some(pipeline));
     }
@@ -89,7 +106,10 @@ impl PortSlice {
 
             left[left_idx]
                 .slice_with_offset_and_width(left_lsb, chunk_width)
-                .connect(&right[right_idx].slice_with_offset_and_width(right_lsb, chunk_width));
+                // A jam connection streams bits, whatever the types.
+                .connect_bits(
+                    &right[right_idx].slice_with_offset_and_width(right_lsb, chunk_width),
+                );
 
             left_lsb += chunk_width;
             right_lsb += chunk_width;
@@ -109,10 +129,21 @@ impl PortSlice {
         mark_jam_remainder(right, right_idx, right_lsb);
     }
 
+    #[track_caller]
     pub(crate) fn connect_generic<T: ConvertibleToPortSlice>(
         &self,
         other: &T,
         pipeline: Option<PipelineConfig>,
+    ) {
+        self.connect_with(other, pipeline, false, Location::caller());
+    }
+
+    fn connect_with<T: ConvertibleToPortSlice + ?Sized>(
+        &self,
+        other: &T,
+        pipeline: Option<PipelineConfig>,
+        bits: bool,
+        location: &'static Location<'static>,
     ) {
         let other_as_slice = other.to_port_slice();
 
@@ -188,10 +219,29 @@ impl PortSlice {
             repeater_instance.get_port("out").connect(receiver);
             repeater_instance.get_port("out_stages").unused();
         } else {
-            self.port
-                .get_port_connections_define_if_missing()
-                .write()
-                .add(self.clone(), other_as_slice.clone());
+            // Only connections between typed ends are recorded: those are the
+            // ones `check` compares and that emission can name by type.
+            let record =
+                (self.port_type().is_some() && other_as_slice.port_type().is_some()).then(|| {
+                    ConnectionRecord {
+                        this: self.clone(),
+                        other: other_as_slice.clone(),
+                        span: Span::Rust {
+                            file: location.file().to_string(),
+                            line: location.line(),
+                            column: location.column(),
+                        },
+                        bits,
+                    }
+                });
+            {
+                let connections = self.port.get_port_connections_define_if_missing();
+                let mut connections = connections.write();
+                connections.add(self.clone(), other_as_slice.clone());
+                if let Some(record) = record {
+                    connections.add_record(record);
+                }
+            }
             other_as_slice
                 .port
                 .get_port_connections_define_if_missing()

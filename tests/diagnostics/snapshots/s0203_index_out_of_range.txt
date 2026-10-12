@@ -1,0 +1,13 @@
+error[S0203]: index 8 is out of range for `sel_pkg::hdr_t [7:0]`
+  --> tests/diagnostics/typed.rs:80:32
+   |
+80 |         sel.get_port("hdrs_i").index(8);
+   |                                ^^^^^ index selected here
+   |
+  ::: tests/diagnostics/fixtures/typed.sv:23:21
+   |
+23 |   input hdr_t [7:0] hdrs_i,
+   |                     ------ `hdrs_i` declared here as `sel_pkg::hdr_t [7:0]`
+   |
+   = note: selecting from `sel.hdrs_i`
+   = note: the outermost dimension is `[7:0]`

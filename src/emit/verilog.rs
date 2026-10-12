@@ -167,7 +167,14 @@ impl ModDef {
     }
 
     /// Returns Verilog code for this module definition as a string.
+    ///
+    /// Panics with the rendered diagnostics if [`ModDef::check`] reports
+    /// errors.
     pub fn emit(&self, options: EmitOptions) -> String {
+        let diagnostics = self.check();
+        if diagnostics.has_errors() {
+            panic!("{}", diagnostics.render());
+        }
         if options.validate {
             self.validate();
         }

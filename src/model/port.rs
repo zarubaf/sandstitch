@@ -427,6 +427,7 @@ impl Port {
             port: self.clone(),
             msb,
             lsb,
+            select: None,
         }
     }
 
@@ -475,6 +476,7 @@ impl ConvertibleToPortSlice for Port {
             port: self.clone(),
             msb: self.io().width() - 1,
             lsb: 0,
+            select: Some(Arc::from([])),
         }
     }
 }

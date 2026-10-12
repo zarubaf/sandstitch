@@ -1,0 +1,17 @@
+error[S0201]: incompatible types `bus_pkg::req_t` and `bus_pkg::req2_t` in connection
+  --> tests/diagnostics/typed.rs:42:25
+   |
+42 |     p.get_port("req_o").connect(&c.get_port("req_i"));
+   |                         ^^^^^^^ connected here
+   |
+  ::: tests/diagnostics/fixtures/typed.sv:8:16
+   |
+ 8 |   output req_t req_o
+   |                ----- `top.p.req_o` is `bus_pkg::req_t`
+...
+13 |   input req2_t req_i
+   |                ----- `top.c.req_i` is `bus_pkg::req2_t`
+   |
+   = note: field `addr`: `logic [31:0] addr` vs `logic [7:0] id`
+   = help: both ends must use equivalent types
+   = help: to reinterpret bits deliberately, use `connect_bits`

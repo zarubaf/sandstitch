@@ -5,3 +5,4 @@
 
 pub(crate) mod connection;
 pub(crate) mod mod_def;
+pub(crate) mod types;

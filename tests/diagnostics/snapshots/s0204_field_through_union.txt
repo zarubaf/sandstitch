@@ -1,0 +1,14 @@
+error[S0204]: cannot select field `hdr` through union `sel_pkg::hdr_u`
+  --> tests/diagnostics/typed.rs:88:29
+   |
+88 |         sel.get_port("u_i").field("hdr.dst_id");
+   |                             ^^^^^ field selected here
+   |
+  ::: tests/diagnostics/fixtures/typed.sv:24:15
+   |
+24 |   input hdr_u u_i
+   |               --- `u_i` declared here as `sel_pkg::hdr_u`
+   |
+   = note: selecting from `sel.u_i`
+   = note: union members overlap, so a field has no bit range of its own
+   = help: connect the whole union, or use `connect_bits` to reinterpret bits

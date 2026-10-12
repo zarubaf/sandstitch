@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::PortSlice;
+use crate::{PortSlice, Span};
 use std::collections::HashSet;
 use std::ops::Index;
 
@@ -16,11 +16,28 @@ pub struct PortSliceConnection {
     pub(crate) other: ConnectedItem,
 }
 
+/// A connection as the user made it: both ends with their typed selections,
+/// where it was made, and whether it was made with `connect_bits`. Recorded
+/// on the port of `this` (the end `connect` was called on) for connections
+/// whose ends are both typed; `ModDef::check` compares the types of those
+/// not made with `connect_bits`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ConnectionRecord {
+    pub(crate) this: PortSlice,
+    pub(crate) other: PortSlice,
+    pub(crate) span: Span,
+    /// Made with `connect_bits`: an intentional width-only reinterpretation.
+    pub(crate) bits: bool,
+}
+
 /// PortSliceConnection collection. This is used within ModDefCore to track
 /// connections at the Port level.
 #[derive(Clone, Debug, Default)]
 pub struct PortSliceConnections {
     connections: Vec<PortSliceConnection>,
+    /// Connection records made on this port. Not part of the bit-level
+    /// connection graph: slicing and tracing do not carry them over.
+    records: Vec<ConnectionRecord>,
 }
 
 impl Index<usize> for PortSliceConnections {
@@ -44,7 +61,16 @@ impl PortSliceConnections {
     pub fn new() -> Self {
         Self {
             connections: Vec::new(),
+            records: Vec::new(),
         }
+    }
+
+    pub(crate) fn add_record(&mut self, record: ConnectionRecord) {
+        self.records.push(record);
+    }
+
+    pub(crate) fn records(&self) -> &[ConnectionRecord] {
+        &self.records
     }
 
     /// Adds a new connection between `this` and `other`
@@ -75,10 +101,10 @@ impl PortSliceConnections {
             let this_lsb_clipped = lsb.max(connection.this.lsb);
             let this_msb_clipped = msb.min(connection.this.msb);
 
-            let this_slice = connection
-                .this
-                .port
-                .slice(this_msb_clipped, this_lsb_clipped);
+            let this_slice = connection.this.slice_with_offset_and_width(
+                this_lsb_clipped - connection.this.lsb,
+                this_msb_clipped - this_lsb_clipped + 1,
+            );
             let other_sliced = connection.other.slice_with_offset_and_width(
                 this_lsb_clipped - connection.this.lsb,
                 this_msb_clipped - this_lsb_clipped + 1,

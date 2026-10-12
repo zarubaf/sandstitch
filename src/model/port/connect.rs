@@ -8,11 +8,21 @@ impl Port {
         self.to_port_slice().specify_net_name(net);
     }
 
-    /// Connects this port to another port or port slice.
+    /// Connects this port to another port or port slice. See
+    /// [`PortSlice::connect`] for the checks performed.
+    #[track_caller]
     pub fn connect<T: ConvertibleToPortSlice>(&self, other: &T) {
         self.to_port_slice().connect(other);
     }
 
+    /// Connects this port to `other` as raw bits; only widths must match.
+    /// See [`PortSlice::connect_bits`].
+    #[track_caller]
+    pub fn connect_bits(&self, other: &impl ConvertibleToPortSlice) {
+        self.to_port_slice().connect_bits(other);
+    }
+
+    #[track_caller]
     pub fn connect_pipeline<T: ConvertibleToPortSlice>(&self, other: &T, pipeline: PipelineConfig) {
         self.connect_generic(other, Some(pipeline));
     }
@@ -23,6 +33,7 @@ impl Port {
         self.to_port_slice().todo_jam_connect(other);
     }
 
+    #[track_caller]
     pub(crate) fn connect_generic<T: ConvertibleToPortSlice>(
         &self,
         other: &T,
