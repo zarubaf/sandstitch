@@ -167,7 +167,14 @@ fn type_and_expr_overrides_emit() {
         ),
         "{emitted}"
     );
-    assert!(emitted.contains("input wire [219:0] in_i"), "{emitted}");
+    // The wrapper's ports keep the specialization's types.
+    assert!(
+        emitted.contains("  input cfg_pkg::flit_t [4:0] in_i,\n  output cfg_pkg::flit_t out_o\n"),
+        "{emitted}"
+    );
+    let files: Vec<&std::path::Path> = sources.files.iter().map(|f| f.path()).collect();
+    crate::common::slang::elaborate(&files, &emitted, "child_wrapper")
+        .unwrap_or_else(|e| panic!("{emitted}\n{e}"));
 }
 
 #[test]
@@ -521,4 +528,36 @@ endmodule
                 .to_string()
         ]
     );
+}
+
+#[test]
+fn wrapped_specialization_keeps_types_and_checks() {
+    let swapped = "
+package w_pkg;
+  typedef struct packed { logic [7:0] len; logic [3:0] dst_id; } swapped_t;
+endpackage
+";
+    let sources = Sources::new(&[PKG, swapped, CHILD]);
+    let child = sources.import("child");
+    let hdr = child
+        .try_parameterize::<ParameterValue>(&[("T", ty("cfg_pkg::hdr_t")), ("N", 1.into())])
+        .unwrap();
+    let wrapper = hdr.wrap(None, None);
+    assert!(wrapper.get_port("out_o").port_type().is_some());
+    assert_eq!(
+        wrapper.get_port("out_o").port_type(),
+        hdr.get_port("out_o").port_type()
+    );
+
+    // A connection of the wrapper's typed port is still type-checked.
+    let other = child
+        .try_parameterize::<ParameterValue>(&[("T", ty("w_pkg::swapped_t")), ("N", 1.into())])
+        .unwrap();
+    let top = ModDef::new("top");
+    let w = top.instantiate(&wrapper, Some("w"), None);
+    let o = top.instantiate(&other, Some("o"), None);
+    w.get_port("out_o").connect(&o.get_port("in_i"));
+    let diagnostics = top.check();
+    assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
+    assert_eq!(diagnostics.0[0].code, codes::S0201);
 }

@@ -7,6 +7,8 @@ impl ModDef {
     /// returns the new module definition. The new module definition has all of
     /// the same ports as the original module, which are connected directly to
     /// ports with the same names on the instance of the original module.
+    /// The wrapper's ports keep the types of the original's.
+    #[track_caller]
     pub fn wrap(&self, def_name: Option<&str>, inst_name: Option<&str>) -> ModDef {
         let original_name = &self.core.read().name;
 
@@ -35,12 +37,11 @@ impl ModDef {
             }
         }
 
-        // For each port in the original module, add a corresponding port to the wrapper
-        // and connect them.
-        for (port_name, io) in self.core.read().ports.iter() {
-            let wrapper_port = wrapper.add_port(port_name, io.clone());
-            let inst_port = inst.get_port(port_name);
-            wrapper_port.connect(&inst_port);
+        // Export each port of the instance under its own name; exporting keeps
+        // the port's type.
+        let port_names: Vec<String> = self.core.read().ports.keys().cloned().collect();
+        for port_name in port_names {
+            inst.get_port(&port_name).export_as(&port_name);
         }
 
         wrapper

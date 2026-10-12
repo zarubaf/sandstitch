@@ -1116,3 +1116,19 @@ fn unpacked_alias_is_reported_although_it_connects() {
         )
         .unwrap_or_else(|e| panic!("{e}"));
 }
+
+#[test]
+fn wrapping_unpacked_ports_keeps_them_typed() {
+    let sources = crate::common::slang::Sources::new(&[UNPACKED]);
+    let wrapper = sources.import("up_src").wrap(None, None);
+    assert!(
+        !wrapper.check().has_errors(),
+        "{}",
+        wrapper.check().render()
+    );
+    let emitted = sources.emit_checked(&wrapper);
+    assert!(
+        emitted.contains("  output up_pkg::hdr_t o,\n  output up_pkg::hdr_p_t p\n"),
+        "{emitted}"
+    );
+}
