@@ -1,0 +1,141 @@
+## Copyright 2023 ETH Zurich and University of Bologna.
+## Licensed under the Apache License, Version 2.0, see LICENSE for details.
+## SPDX-License-Identifier: Apache-2.0
+<%!
+    from floogen.model.routing import XYDirections, RouteAlgo
+%>\
+<% def camelcase(s):
+  return ''.join(x.capitalize() or '_' for x in s.split('_'))
+%>\
+<% offset_xy_id = router.id - network.routing.xy_id_offset if network.routing.xy_id_offset is not None else router.id %>\
+<% req_type = next(d for d in router.incoming if d is not None).req_type %>\
+<% rsp_type = next(d for d in router.incoming if d is not None).rsp_type %>\
+<% wide_type = next(d for d in router.incoming if d is not None).wide_type %>\
+% if router.route_algo == RouteAlgo.ID:
+${router.table.render()}
+% endif
+
+${req_type} [${len(router.incoming)-1}:0] ${router.name}_req_in;
+${rsp_type} [${len(router.incoming)-1}:0] ${router.name}_rsp_out;
+${req_type} [${len(router.outgoing)-1}:0] ${router.name}_req_out;
+${rsp_type} [${len(router.outgoing)-1}:0] ${router.name}_rsp_in;
+${wide_type} [${len(router.incoming)-1}:0] ${router.name}_wide_in;
+${wide_type} [${len(router.outgoing)-1}:0] ${router.name}_wide_out;
+
+% for i, link in enumerate(router.incoming):
+  % if link is not None:
+    assign ${router.name}_req_in[${i}] = ${link.req_name()};
+  % else:
+    assign ${router.name}_req_in[${i}] = '0;
+  % endif
+% endfor
+
+% for i, link in enumerate(router.incoming):
+  % if link is not None:
+    assign ${link.rsp_name()} = ${router.name}_rsp_out[${i}];
+  % endif
+% endfor
+
+% for i, link in enumerate(router.outgoing):
+  % if link is not None:
+    assign ${link.req_name()} = ${router.name}_req_out[${i}];
+  % endif
+% endfor
+
+% for i, link in enumerate(router.outgoing):
+  % if link is not None:
+    assign ${router.name}_rsp_in[${i}] = ${link.rsp_name()};
+  % else:
+    assign ${router.name}_rsp_in[${i}] = '0;
+  % endif
+% endfor
+
+% for i, link in enumerate(router.incoming):
+  % if link is not None:
+    assign ${router.name}_wide_in[${i}] = ${link.wide_name()};
+  % else:
+    assign ${router.name}_wide_in[${i}] = '0;
+  % endif
+% endfor
+
+% for i, link in enumerate(router.outgoing):
+  % if link is not None:
+    assign ${link.wide_name()} = ${router.name}_wide_out[${i}];
+  % endif
+% endfor
+
+% if router.route_algo.is_dor_algo:
+  localparam id_t ${router.name.upper()}_ID = ${offset_xy_id.render()};
+% endif
+
+floo_nw_router #(
+  .AxiCfgN(AxiCfgN),
+  .AxiCfgW(AxiCfgW),
+  .RouteAlgo (${router.route_algo.value}),
+  .NumRoutes (${router.degree}),
+  .NumInputs (${len(router.incoming)}),
+  .NumOutputs (${len(router.outgoing)}),
+  .InFifoDepth (2),
+  .OutFifoDepth (2),
+  .id_t(id_t),
+  .hdr_t(hdr_t),
+% if router.route_algo == RouteAlgo.ID:
+  .NumAddrRules (${len(router.table.rules)}),
+  .addr_rule_t (route_map_rule_t),
+% endif
+% if network.routing.decouple_rw is not None:
+  .WideRwDecouple(WideRwDecouple),
+% endif
+% if network.routing.vc_impl is not None:
+  .VcImpl(VcImpl),
+% endif
+  .CollectiveCfg(RouteCfg.CollectiveCfg),
+% if network.routing.collective.en_collective:
+  .collect_op_t(collect_op_t),
+% endif
+% if network.routing.collective.en_narrow_reduction is not None:
+  .red_narrow_req_t(red_narrow_req_t),
+  .red_narrow_rsp_t(red_narrow_rsp_t),
+% endif
+% if network.routing.collective.en_wide_reduction is not None:
+  .red_wide_req_t(red_wide_req_t),
+  .red_wide_rsp_t(red_wide_rsp_t),
+% endif
+  .floo_req_t(floo_req_t),
+  .floo_rsp_t(floo_rsp_t),
+  .floo_wide_t(floo_wide_t)
+) ${router.name} (
+  .clk_i,
+  .rst_ni,
+  .test_enable_i,
+% if router.route_algo.is_dor_algo:
+  .id_i (${router.name.upper()}_ID),
+% else:
+  .id_i ('0),
+% endif
+% if router.route_algo == RouteAlgo.ID:
+  .id_route_map_i (${camelcase(router.name + "_map")}),
+% else:
+  .id_route_map_i ('0),
+% endif
+  .floo_req_i (${router.name}_req_in),
+  .floo_rsp_o (${router.name}_rsp_out),
+  .floo_req_o (${router.name}_req_out),
+  .floo_rsp_i (${router.name}_rsp_in),
+  .floo_wide_i (${router.name}_wide_in),
+  .floo_wide_o (${router.name}_wide_out),
+% if network.routing.collective.en_narrow_reduction is not None:
+  .offload_narrow_req_o (offload_narrow_req_o[${offload_idx}]),
+  .offload_narrow_rsp_i (offload_narrow_rsp_i[${offload_idx}]),
+% else:
+  .offload_narrow_req_o (),
+  .offload_narrow_rsp_i ('0),
+% endif
+% if network.routing.collective.en_wide_reduction is not None:
+  .offload_wide_req_o (offload_wide_req_o[${offload_idx}]),
+  .offload_wide_rsp_i (offload_wide_rsp_i[${offload_idx}])
+% else:
+  .offload_wide_req_o (),
+  .offload_wide_rsp_i ('0)
+% endif
+);

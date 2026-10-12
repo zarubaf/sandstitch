@@ -1,0 +1,89 @@
+## Copyright 2023 ETH Zurich and University of Bologna.
+## Licensed under the Apache License, Version 2.0, see LICENSE for details.
+## SPDX-License-Identifier: Apache-2.0
+<%!
+    import datetime
+%>\
+// Copyright ${datetime.datetime.now().year} ETH Zurich and University of Bologna.
+// Solderpad Hardware License, Version 0.51, see LICENSE for details.
+// SPDX-License-Identifier: SHL-0.51
+
+// AUTOMATICALLY GENERATED! DO NOT EDIT!
+
+`include "axi/typedef.svh"
+`include "floo_noc/typedef.svh"
+
+package floo_${name}_noc_pkg;
+
+  import floo_pkg::*;
+
+% if noc.params:
+  ////////////////////
+  //   Parameters   //
+  ////////////////////
+
+  ${noc.render_params()}
+
+% endif
+% if noc.routing.collective.en_collective:
+  ${noc.routing.render_collect_op_params()}
+
+% endif
+% if any(ep.array is not None for ep in noc.endpoints):
+  /////////////////////////////
+  //   Endpoint Dimensions   //
+  /////////////////////////////
+
+  ${noc.render_ep_arr_dims()}
+% endif
+
+  /////////////////////
+  //   Address Map   //
+  /////////////////////
+
+  ${noc.render_ep_enum()}
+
+  ${noc.render_sam_idx_enum()}
+
+  ${noc.routing.render_typedefs()}
+
+% if noc.routing.use_id_table:
+  typedef struct packed {
+    id_t idx;
+    id_t start_addr;
+    id_t end_addr;
+  } route_map_rule_t;
+
+  ${noc.routing.sam.render(aw=noc.routing.addr_width)}
+  % if noc.routing.en_collective:
+    ${noc.routing.collective_sam.render(aw=noc.routing.addr_width)}
+  %endif
+% else:
+  localparam int unsigned NumSamRules = 1;
+  typedef logic sam_rule_t;
+  localparam sam_rule_t Sam = '0;
+% endif
+
+% if noc.routing.route_algo.value == "SourceRouting":
+  ${noc.render_ni_tables()}
+% endif
+
+  ${noc.routing.render_route_cfg(name="RouteCfg")}
+  ${noc.routing.render_vc_impl()}
+
+% for prot in noc.protocols:
+  % if not noc.routing.en_collective:
+    ${prot.render_typedefs()}
+  % else:
+    ${prot.render_typedefs(prefix="collective")}
+    ${prot.render_typedefs(ignored_user_fields=["collective_mask", "collective_op"])}
+  % endif
+% endfor
+
+  ${noc.routing.render_hdr_typedef(network_type=noc.network_type)}
+  ${noc.render_link_typedefs()}
+% if noc.routing.collective.en_reduction:
+  ${noc.routing.collective.render_reduction_typedefs("AxiCfgN", "AxiCfgW")}
+% endif
+
+endpackage

@@ -1,0 +1,104 @@
+# Temporary and binary files
+*~
+*.py[cod]
+*.so
+*.cfg
+!.isort.cfg
+!setup.cfg
+*.orig
+*.log
+*.pot
+__pycache__/*
+.cache/*
+.*.swp
+*/.ipynb_checkpoints/*
+.DS_Store
+
+# Project files
+.ropeproject
+.project
+.pydevproject
+.settings
+.idea
+.vscode
+.dvt
+tags
+
+# Package files
+*.egg
+*.eggs/
+.installed.cfg
+*.egg-info
+
+# Unittest and coverage
+htmlcov/*
+.coverage
+.coverage.*
+.tox
+junit*.xml
+coverage.xml
+.pytest_cache/
+
+# Build and docs folder/files
+build/*
+dist/*
+sdist/*
+docs/api/*
+docs/_rst/*
+docs/_build/*
+docs/CHANGELOG.md
+docs/CONTRIBUTING.md
+cover/*
+MANIFEST
+site
+
+# Per-project virtualenvs
+.venv*/
+.conda*/
+
+# bender
+.bender
+Bender.lock
+Bender.local
+deps
+working_dir
+
+# Auto generated sources
+generated
+*.png
+!util/traffic_visualizations/*.png
+hw/test/jobs
+
+# QuestaSim
+work
+work_*
+work-vsim
+modelsim.ini
+transcript
+vsim.wlf
+scripts/compile_vsim.tcl
+
+# VCS
+AN.DB
+bin
+ucli.key
+vc_hdrs.h
+scripts/compile_vcs.sh
+
+# Verible
+verible*
+
+# spyglass
+scripts/spyglass/*
+
+# experiment outputs
+util/output/*
+measurements
+
+# Misc
+*.csv
+**/*.log
+reviewdog
+
+# Physical design repository
+pd
