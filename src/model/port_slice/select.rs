@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::diagnostic::codes;
-use crate::{Code, Diagnostic, Diagnostics, Dim, Label, Port, PortSlice, PortType, Severity, Span};
+use crate::{Code, Diagnostic, Dim, Label, Port, PortSlice, PortType, Severity, Span};
 
 /// One step of a typed selection.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -281,7 +281,7 @@ impl PortSlice {
             } else {
                 format!("`{}` has no type", self.port.debug_string())
             };
-            panic_with(Diagnostic {
+            Diagnostic {
                 code,
                 severity: Severity::Error,
                 message: format!("cannot select {kind}: {what}"),
@@ -294,7 +294,8 @@ impl PortSlice {
                 helps: vec![
                     "only whole typed ports and their fields and elements have types".into(),
                 ],
-            });
+            }
+            .panic();
         };
         let path: Arc<[Select]> = base.iter().cloned().chain(steps.iter().cloned()).collect();
         match walk(&root, &path) {
@@ -312,7 +313,7 @@ impl PortSlice {
                 );
                 let mut notes = vec![format!("selecting from `{at}`")];
                 notes.extend(error.notes);
-                panic_with(Diagnostic {
+                Diagnostic {
                     code: error.code,
                     severity: Severity::Error,
                     message: error.message,
@@ -326,14 +327,11 @@ impl PortSlice {
                     }],
                     notes,
                     helps: error.helps,
-                })
+                }
+                .panic()
             }
         }
     }
-}
-
-fn panic_with(diagnostic: Diagnostic) -> ! {
-    panic!("{}", Diagnostics(vec![diagnostic]).render())
 }
 
 impl Port {

@@ -2,10 +2,12 @@
 
 use indexmap::IndexMap;
 use regex::Regex;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
+use crate::diagnostic::codes;
 use crate::model::intf::IntfMember;
-use crate::{Intf, ModDef};
+use crate::model::intf::members::{describe, direction};
+use crate::{Diagnostic, Intf, Label, ModDef, Port, PortSlice, Severity, Span};
 
 impl ModDef {
     /// Defines an interface with the given name. `mapping` is a map from
@@ -29,6 +31,87 @@ impl ModDef {
             })
             .collect();
         self.define_intf(name.as_ref(), members)
+    }
+
+    /// Defines an interface from `(member, slice)` pairs, in order. Slices
+    /// keep their typed selection, so members built with
+    /// [`PortSlice::index`] or [`PortSlice::field`] stay typed. A member name
+    /// may appear twice, once per port direction: `connect` pairs each
+    /// member with the same-named member of the other interface driven the
+    /// other way, so that a link `{req: req_o[d], req: req_i[d]}` connects
+    /// to a neighbour's link output to input in both directions.
+    ///
+    /// Panics if a slice is not on a port of this module definition or no
+    /// member is given, and with S0208 if a name repeats in one direction.
+    #[track_caller]
+    pub fn def_intf_members<S: Into<String>>(
+        &self,
+        name: impl AsRef<str>,
+        members: impl IntoIterator<Item = (S, PortSlice)>,
+    ) -> Intf {
+        let name = name.as_ref();
+        let members: Vec<(String, PortSlice)> =
+            members.into_iter().map(|(n, s)| (n.into(), s)).collect();
+        assert!(
+            !members.is_empty(),
+            "Empty interface definition for {}.{}",
+            self.get_name(),
+            name
+        );
+        let this = Arc::downgrade(&self.core);
+        for (member, slice) in &members {
+            let on_this = matches!(
+                &slice.port,
+                Port::ModDef { mod_def_core, .. } if Weak::ptr_eq(mod_def_core, &this)
+            );
+            assert!(
+                on_this,
+                "Member {member} of interface {}.{name} is {}, not a port of {}",
+                self.get_name(),
+                slice.debug_string(),
+                self.get_name()
+            );
+        }
+        for (i, (member, slice)) in members.iter().enumerate() {
+            let same_direction = |other: &PortSlice| {
+                std::mem::discriminant(&other.port.io()) == std::mem::discriminant(&slice.port.io())
+            };
+            if let Some((_, first)) = members[..i]
+                .iter()
+                .find(|(m, s)| m == member && same_direction(s))
+            {
+                Diagnostic {
+                    code: codes::S0208,
+                    severity: Severity::Error,
+                    message: format!(
+                        "member `{member}` is an {} twice in interface `{}.{name}`",
+                        direction(slice),
+                        self.get_name()
+                    ),
+                    primary: Label {
+                        span: Span::caller(),
+                        text: "interface defined here".into(),
+                    },
+                    secondary: vec![],
+                    notes: vec![format!(
+                        "`{}` and `{}` are both {}s",
+                        describe(first),
+                        describe(slice),
+                        direction(slice)
+                    )],
+                    helps: vec![
+                        "a name may appear once per direction; give one of them another name"
+                            .into(),
+                    ],
+                }
+                .panic();
+            }
+        }
+        let members = members
+            .iter()
+            .map(|(member, slice)| IntfMember::new(member, slice))
+            .collect();
+        self.define_intf(name, members)
     }
 
     pub(crate) fn define_intf(&self, name: &str, members: Vec<IntfMember>) -> Intf {

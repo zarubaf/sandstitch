@@ -1,7 +1,7 @@
 error[S0202]: no field `dst_idd` in `sel_pkg::hdr_t`
-  --> tests/diagnostics/typed.rs:72:41
+  --> tests/diagnostics/typed.rs:54:41
    |
-72 |         sel.get_port("hdrs_i").index(3).field("dst_idd");
+54 |         sel.get_port("hdrs_i").index(3).field("dst_idd");
    |                                         ^^^^^ field selected here
    |
   ::: tests/diagnostics/fixtures/typed.sv:23:21

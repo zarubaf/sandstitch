@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 use crate::{ConvertibleToModDef, Intf, PipelineConfig};
 
 impl Intf {
+    #[track_caller]
     pub fn feedthrough(
         &self,
         mod_def_or_mod_inst: &impl ConvertibleToModDef,
@@ -14,6 +15,7 @@ impl Intf {
         self.feedthrough_generic(mod_def_or_mod_inst, flipped, original, None)
     }
 
+    #[track_caller]
     pub fn feedthrough_pipeline(
         &self,
         mod_def_or_mod_inst: &impl ConvertibleToModDef,
@@ -24,6 +26,7 @@ impl Intf {
         self.feedthrough_generic(mod_def_or_mod_inst, flipped, original, Some(pipeline))
     }
 
+    #[track_caller]
     pub(crate) fn feedthrough_generic(
         &self,
         mod_def_or_mod_inst: &impl ConvertibleToModDef,

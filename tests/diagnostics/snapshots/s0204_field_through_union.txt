@@ -1,7 +1,7 @@
 error[S0204]: cannot select field `hdr` through union `sel_pkg::hdr_u`
-  --> tests/diagnostics/typed.rs:88:29
+  --> tests/diagnostics/typed.rs:70:29
    |
-88 |         sel.get_port("u_i").field("hdr.dst_id");
+70 |         sel.get_port("u_i").field("hdr.dst_id");
    |                             ^^^^^ field selected here
    |
   ::: tests/diagnostics/fixtures/typed.sv:24:15

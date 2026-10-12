@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use indexmap::IndexMap;
-
-use crate::{Intf, ModDef};
+use crate::model::intf::IntfMember;
+use crate::{ConvertibleToPortSlice, IO, Intf, ModDef};
 
 impl Intf {
     /// Creates a new interface on the parent module and connects it to this
@@ -13,17 +12,35 @@ impl Intf {
     /// `{"data": "b_data", "valid": "b_valid"}`. The `name` argument specifies
     /// the name of the new interface, which is used to retrieve the interface
     /// with `get_intf`.
+    ///
+    /// Exported ports keep the member's type. When the interface has a name
+    /// in both directions, the ports are named `<prefix><name>_i` and
+    /// `<prefix><name>_o` (`_io` for an inout), and the new interface has
+    /// the name in both directions too.
+    #[track_caller]
     pub fn export_with_prefix(&self, name: impl AsRef<str>, prefix: impl AsRef<str>) -> Intf {
-        let mut mapping = IndexMap::new();
-        for (func_name, port_slice) in self.get_port_slices() {
-            let mod_def_port_name = format!("{}{}", prefix.as_ref(), func_name);
-            port_slice.export_as(&mod_def_port_name);
-            mapping.insert(func_name, (mod_def_port_name, port_slice.width() - 1, 0));
-        }
+        let members = self.members();
+        let repeated = |member: &str| members.iter().filter(|(m, _)| m == member).count() > 1;
+        let exported = members
+            .iter()
+            .map(|(member, slice)| {
+                let port_name = if repeated(member) {
+                    let suffix = match slice.port.io() {
+                        IO::Input(_) => "i",
+                        IO::Output(_) => "o",
+                        IO::InOut(_) => "io",
+                    };
+                    format!("{}{member}_{suffix}", prefix.as_ref())
+                } else {
+                    format!("{}{member}", prefix.as_ref())
+                };
+                IntfMember::new(member, &slice.export_as(&port_name).to_port_slice())
+            })
+            .collect();
         ModDef {
             core: self.get_mod_def_core(),
         }
-        .def_intf(name, mapping)
+        .define_intf(name.as_ref(), exported)
     }
 
     /// Export an interface using the given name, with a signal prefix of the
@@ -31,6 +48,7 @@ impl Intf {
     /// called "a" with signals "a_data" and "a_valid", calling
     /// export_with_name_underscore("b") will create a new interface called "b"
     /// with signals "b_data" and "b_valid".
+    #[track_caller]
     pub fn export_with_name_underscore(&self, name: impl AsRef<str>) -> Intf {
         let prefix = format!("{}_", name.as_ref());
         self.export_with_prefix(name, prefix)
@@ -43,6 +61,7 @@ impl Intf {
     /// intance called "a" with signals "a_data" and "a_valid" will create a new
     /// interface called "a" on the parent module definition with signals
     /// "a_data" and "a_valid".
+    #[track_caller]
     pub fn export(&self) -> Intf {
         if matches!(self, Intf::ModDef { .. }) {
             panic!(
@@ -51,17 +70,14 @@ impl Intf {
             );
         }
 
-        let mut mapping = IndexMap::new();
-        for (func_name, port_slice) in self.get_port_slices() {
-            let exported_port = port_slice.export();
-            mapping.insert(
-                func_name,
-                (exported_port.get_port_name(), port_slice.width() - 1, 0),
-            );
-        }
+        let exported = self
+            .members()
+            .iter()
+            .map(|(member, slice)| IntfMember::new(member, &slice.export().to_port_slice()))
+            .collect();
         ModDef {
             core: self.get_mod_def_core(),
         }
-        .def_intf(self.get_intf_name(), mapping)
+        .define_intf(&self.get_intf_name(), exported)
     }
 }

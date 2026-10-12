@@ -78,6 +78,14 @@ pub struct Diagnostic {
 #[serde(transparent)]
 pub struct Diagnostics(pub Vec<Diagnostic>);
 
+impl Diagnostic {
+    /// Panics with this diagnostic rendered; for errors reported at a Rust
+    /// call site.
+    pub(crate) fn panic(self) -> ! {
+        panic!("{}", Diagnostics(vec![self]).render())
+    }
+}
+
 impl Diagnostics {
     pub fn has_errors(&self) -> bool {
         self.0.iter().any(|d| d.severity == Severity::Error)

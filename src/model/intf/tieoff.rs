@@ -10,7 +10,7 @@ impl Intf {
     /// module definition; it's a signal that would appear on the left hand side
     /// of a Verilog `assign` statement.
     pub fn tieoff<T: Into<BigInt> + Clone>(&self, value: T) {
-        for (_, port_slice) in self.get_port_slices() {
+        for (_, port_slice) in self.members() {
             match port_slice {
                 PortSlice {
                     port: Port::ModDef { .. },
@@ -37,7 +37,7 @@ impl Intf {
     /// signal that would appear on the right hand side of a Verilog `assign`
     /// statement.
     pub fn unused(&self) {
-        for (_, port_slice) in self.get_port_slices() {
+        for (_, port_slice) in self.members() {
             match port_slice {
                 PortSlice {
                     port: Port::ModDef { .. },

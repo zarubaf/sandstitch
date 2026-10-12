@@ -1,0 +1,8 @@
+error[S0209]: interface `top.a.link` has member `req` in both directions
+  --> tests/diagnostics/intf.rs:83:14
+   |
+83 |             .crossover(&b.get_intf("link"), "(.*)", "(.*)");
+   |              ^^^^^^^^^ used here
+   |
+   = note: this operation pairs members by name only
+   = help: use `connect`, `export_with_prefix`, `tieoff`, `unused` or `members`, which tell the directions apart

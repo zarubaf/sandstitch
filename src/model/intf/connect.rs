@@ -2,7 +2,12 @@
 
 use std::collections::HashSet;
 
-use crate::{ConvertibleToPortSliceVec, Intf, ModInst, PipelineConfig, PortSlice};
+use crate::diagnostic::codes;
+use crate::model::intf::members::{describe, direction, pairs_with};
+use crate::{
+    ConvertibleToPortSliceVec, Diagnostic, Intf, Label, ModInst, PipelineConfig, PortSlice,
+    Severity, Span,
+};
 
 impl Intf {
     /// Connects this interface to another interface. Interfaces are connected
@@ -12,11 +17,18 @@ impl Intf {
     /// "a_data" will be connected to "b_data" and "a_valid" will be connected
     /// to "b_valid".
     ///
-    /// Unless `allow_mismatch` is `true`, this method will panic if a function
-    /// in this interface is not in the other interface. Continuing the previous
-    /// example, if this interface also contained function "ready", but the
-    /// other interface did not, this method would panic unless `allow_mismatch`
-    /// was `true`.
+    /// A name present in both directions (see [`ModDef::def_intf_members`])
+    /// pairs each member with the same-named member driven the other way:
+    /// an output with an input between instances, ports of the same
+    /// direction between a module and its instance.
+    ///
+    /// Unless `allow_mismatch` is `true`, a member without a partner on the
+    /// other side is reported (S0207). Continuing the previous example, if
+    /// this interface also contained function "ready", but the other
+    /// interface did not, this method would panic unless `allow_mismatch` was
+    /// `true`.
+    ///
+    /// [`ModDef::def_intf_members`]: crate::ModDef::def_intf_members
     #[track_caller]
     pub fn connect(&self, other: &Intf, allow_mismatch: bool) {
         self.connect_generic(other, None, allow_mismatch, None::<&[&str]>);
@@ -41,6 +53,7 @@ impl Intf {
         self.connect_generic(other, None, false, skip);
     }
 
+    /// Panics with S0209 if either interface has a name in both directions.
     #[track_caller]
     pub fn connect_pipeline(&self, other: &Intf, pipeline: PipelineConfig, allow_mismatch: bool) {
         self.connect_generic(other, Some(pipeline), allow_mismatch, None::<&[&str]>);
@@ -80,43 +93,35 @@ impl Intf {
             }
         };
 
-        let self_ports = self.get_port_slices();
-        let other_ports = other.get_port_slices();
+        if pipeline.is_some() {
+            // Pipelines pair members by name only.
+            self.get_port_slices();
+            other.get_port_slices();
+        }
 
-        for (func_name, self_port) in &self_ports {
-            if is_skipped(func_name) {
+        let ours = self.members();
+        let theirs = other.members();
+        let mut paired = vec![false; theirs.len()];
+        let by_name = unique_names(&ours) && unique_names(&theirs);
+
+        for (name, slice) in &ours {
+            if is_skipped(name) {
                 continue;
             }
-
-            if let Some(other_port) = other_ports.get(func_name) {
-                self_port.connect_generic(other_port, pipeline.clone());
-            } else if !allow_mismatch {
-                panic!(
-                    "Interfaces {} and {} have mismatched functions and allow_mismatch is false. Example: function '{}' is present in {} but not in {}.",
-                    self.debug_string(),
-                    other.debug_string(),
-                    func_name,
-                    self.debug_string(),
-                    other.debug_string()
-                );
+            match partner(slice, name, &theirs, by_name) {
+                Some(j) => {
+                    paired[j] = true;
+                    slice.connect_generic(&theirs[j].1, pipeline.clone());
+                }
+                None if allow_mismatch => {}
+                None => panic_s0207(self, name, slice, other),
             }
         }
 
         if !allow_mismatch {
-            for (func_name, _) in &other_ports {
-                if is_skipped(func_name) {
-                    continue;
-                }
-
-                if !self_ports.contains_key(func_name) {
-                    panic!(
-                        "Interfaces {} and {} have mismatched functions and allow_mismatch is false. Example: function '{}' is present in {} but not in {}",
-                        self.debug_string(),
-                        other.debug_string(),
-                        func_name,
-                        other.debug_string(),
-                        self.debug_string()
-                    );
+            for (j, (name, slice)) in theirs.iter().enumerate() {
+                if !paired[j] && !is_skipped(name) {
+                    panic_s0207(other, name, slice, self);
                 }
             }
         }
@@ -189,4 +194,53 @@ impl Intf {
             }
         }
     }
+}
+
+/// The index in `theirs` of the partner of member `name` (`slice`): the
+/// same-named member driven the other way. Between interfaces whose names
+/// are all unique (`by_name`), the same-named member is the partner
+/// whatever its direction, as upstream, so that connecting it reports a
+/// direction error.
+fn partner(
+    slice: &PortSlice,
+    name: &str,
+    theirs: &[(String, PortSlice)],
+    by_name: bool,
+) -> Option<usize> {
+    theirs
+        .iter()
+        .position(|(n, s)| n == name && (by_name || pairs_with(slice, s)))
+}
+
+/// Whether every member name of `members` is unique.
+fn unique_names(members: &[(String, PortSlice)]) -> bool {
+    members
+        .iter()
+        .enumerate()
+        .all(|(i, (name, _))| members[..i].iter().all(|(n, _)| n != name))
+}
+
+#[track_caller]
+fn panic_s0207(intf: &Intf, name: &str, slice: &PortSlice, other: &Intf) -> ! {
+    Diagnostic {
+        code: codes::S0207,
+        severity: Severity::Error,
+        message: format!(
+            "member `{name}` of `{}` has no partner in `{}`",
+            intf.debug_string(),
+            other.debug_string()
+        ),
+        primary: Label {
+            span: Span::caller(),
+            text: "interfaces connected here".into(),
+        },
+        secondary: vec![],
+        notes: vec![format!(
+            "`{}` ({}) needs a member `{name}` driven the other way",
+            describe(slice),
+            direction(slice)
+        )],
+        helps: vec!["pass `allow_mismatch = true` to leave unpaired members unconnected".into()],
+    }
+    .panic()
 }

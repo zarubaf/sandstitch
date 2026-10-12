@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod examples;
+mod intf;
 mod typed;
 
 use std::path::PathBuf;
@@ -300,4 +301,22 @@ fn has_errors_and_import_error_display() {
     };
     assert_eq!(err.to_string(), ds.render());
     let _: &dyn std::error::Error = &err;
+}
+
+/// Checks the panic message of `f` against a snapshot, with absolute fixture
+/// paths made relative.
+pub(crate) fn panic_snapshot(name: &str, f: impl FnOnce()) {
+    let payload =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).expect_err("expected a panic");
+    let message = payload.downcast::<String>().expect("a String panic");
+    let root = format!("{}/", env!("CARGO_MANIFEST_DIR"));
+    let actual = format!("{}\n", message.replace(&root, ""));
+    let path = format!("tests/diagnostics/snapshots/{name}.txt");
+    if std::env::var("UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
+        std::fs::write(&path, &actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(&path)
+        .unwrap_or_else(|_| panic!("missing snapshot {path}; run with UPDATE_SNAPSHOTS=1"));
+    assert_eq!(actual, expected, "snapshot {name} differs");
 }

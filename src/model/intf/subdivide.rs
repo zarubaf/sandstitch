@@ -14,6 +14,7 @@ impl Intf {
     /// by appending "_0", "_1", "_2", and so on to the name of this interface;
     /// these names can be used to retrieve specific slices of the interface
     /// with `get_intf`.
+    #[track_caller]
     pub fn subdivide(&self, n: usize) -> Vec<Intf> {
         let mut result = Vec::new();
 
