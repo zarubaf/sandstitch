@@ -20,17 +20,17 @@ A component can be an opaque RTL leaf or a generated composition. Small hardware
 
 1. Import the known router, core, cache, and memory endpoint definitions using their existing RTL source configuration.
 
-2. Describe interface groupings once where the RTL exposes separate signals. Reference imported ports rather than copying port declarations.
+1. Describe interface groupings once where the RTL exposes separate signals. Reference imported ports rather than copying port declarations.
 
-3. Write or reuse generators for a compute tile and a mesh. Select dimensions, component parameters, and endpoint assignments.
+1. Write or reuse generators for a compute tile and a mesh. Select dimensions, component parameters, and endpoint assignments.
 
-4. Build a configuration. Resolve port widths, expand generated instances, and check connections.
+1. Build a configuration. Resolve port widths, expand generated instances, and check connections.
 
-5. Emit integration RTL and a build manifest referencing the original leaf RTL.
+1. Emit integration RTL and a build manifest referencing the original leaf RTL.
 
-6. Open the explorer, expand a tile, select an interface, and inspect its endpoints, widths, parameters, and source references.
+1. Open the explorer, expand a tile, select an interface, and inspect its endpoints, widths, parameters, and source references.
 
-7. Export the same information as browsable module documentation and use the generated RTL in the existing ASIC flow.
+1. Export the same information as browsable module documentation and use the generated RTL in the existing ASIC flow.
 
 The first example is a small mesh connecting repeated compute tiles and memory endpoints. A second configuration changes mesh dimensions and core count without editing emitted RTL or diagrams. Before implementation begins, select a redistributable representative router and its source configuration, then record the SystemVerilog constructs its real interface requires. Simplified core fixtures are acceptable; a fake scalar-only router interface cannot establish compatibility with the intended family.
 
