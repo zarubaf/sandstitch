@@ -10,8 +10,8 @@ const SV_FILE: &str = "tests/diagnostics/fixtures/child.sv";
 fn rust_span() -> Span {
     Span::Rust {
         file: RUST_FILE.into(),
-        line: 3,
-        column: 5,
+        line: 4,
+        column: 7,
     }
 }
 
@@ -46,7 +46,7 @@ fn diag(primary: Label, secondary: Vec<Label>) -> Diagnostic {
 fn check_snapshot(name: &str, ds: &Diagnostics) {
     let path = PathBuf::from(format!("tests/diagnostics/snapshots/{name}.txt"));
     let actual = ds.render();
-    if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
+    if std::env::var("UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
         std::fs::write(&path, &actual).unwrap();
         return;
     }
@@ -88,28 +88,113 @@ fn missing_file_snapshot() {
     check_snapshot("missing_file", &Diagnostics(vec![d]));
 }
 
+fn missing_sv(line: u32) -> Span {
+    Span::Sv {
+        file: format!("tests/diagnostics/fixtures/missing{line}.sv"),
+        line,
+        column: 2,
+        len: 3,
+    }
+}
+
 #[test]
-fn span_none_and_out_of_range_do_not_panic() {
-    let mut d = diag(label(Span::None, ""), vec![]);
-    d.secondary.push(label(
-        Span::Sv {
-            file: SV_FILE.into(),
-            line: 999,
-            column: 1,
-            len: 1,
-        },
-        "far away",
-    ));
-    let out = Diagnostics(vec![d]).render();
-    assert!(out.starts_with("error[S0201]: incompatible types in connection"));
+fn unresolved_secondary_does_not_become_origin() {
+    let d = diag(
+        label(rust_span(), "connected here"),
+        vec![label(missing_sv(7), "declared here")],
+    );
+    check_snapshot("unresolved_secondary", &Diagnostics(vec![d]));
+}
+
+#[test]
+fn primary_none_does_not_use_secondary_location() {
+    let d = diag(
+        label(Span::None, "no location"),
+        vec![label(missing_sv(7), "declared here")],
+    );
+    check_snapshot("primary_none", &Diagnostics(vec![d]));
+}
+
+#[test]
+fn two_unresolved_labels_keep_locations_and_texts() {
+    let d = diag(
+        label(missing_sv(3), "first"),
+        vec![label(missing_sv(4), "second"), label(Span::None, "third")],
+    );
+    check_snapshot("two_missing", &Diagnostics(vec![d]));
+}
+
+#[test]
+fn out_of_range_line_is_listed() {
+    let span = Span::Sv {
+        file: SV_FILE.into(),
+        line: 999,
+        column: 1,
+        len: 1,
+    };
+    let d = diag(label(rust_span(), "here"), vec![label(span, "far away")]);
+    check_snapshot("out_of_range", &Diagnostics(vec![d]));
+}
+
+#[test]
+fn end_of_line_column_renders_snippet() {
+    // `    a.connect(&b);` is 17 chars; column 18 is just past the end.
+    let span = Span::Rust {
+        file: RUST_FILE.into(),
+        line: 4,
+        column: 18,
+    };
+    check_snapshot(
+        "end_of_line",
+        &Diagnostics(vec![diag(label(span, "expected `;`"), vec![])]),
+    );
+}
+
+#[test]
+fn column_zero_is_printed_as_given_and_points_at_line_start() {
+    let span = Span::Rust {
+        file: RUST_FILE.into(),
+        line: 4,
+        column: 0,
+    };
+    check_snapshot(
+        "column_zero",
+        &Diagnostics(vec![diag(label(span, "bad column"), vec![])]),
+    );
+}
+
+#[test]
+fn relative_path_resolves_against_ancestor_of_cwd() {
+    let pkg = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    // Relative to the parent of the current directory, like a workspace-root-relative path.
+    let span = Span::Rust {
+        file: format!("{pkg}/{RUST_FILE}"),
+        line: 4,
+        column: 7,
+    };
+    let out = Diagnostics(vec![diag(label(span, "connected here"), vec![])]).render();
+    assert!(out.contains("a.connect(&b);"), "{out}");
+    assert!(out.contains("^^^^^^^ connected here"), "{out}");
 }
 
 #[test]
 fn every_code_has_index_entry() {
+    let readme = std::fs::read_to_string("doc/errors/README.md").unwrap();
     for code in codes::ALL {
         let path = format!("doc/errors/{}.md", code.0);
         let text = std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("missing {path}"));
         assert!(text.starts_with(&format!("# {}", code.0)), "{path} title");
+        assert!(text.contains("\n## Example\n"), "{path} needs ## Example");
+        assert!(text.contains("\n## Fix\n"), "{path} needs ## Fix");
+        assert!(
+            readme.contains(&format!("| [{0}]({0}.md) |", code.0)),
+            "README table lacks a row for {}",
+            code.0
+        );
     }
 }
 
@@ -123,20 +208,76 @@ fn codes_are_unique() {
 
 #[test]
 fn json_shape() {
-    let d = diag(label(rust_span(), "connected here"), vec![]);
-    let json = Diagnostics(vec![d]).to_json();
-    assert_eq!(json[0]["code"], "S0201");
-    assert_eq!(json[0]["severity"], "error");
-    assert_eq!(json[0]["primary"]["span"]["kind"], "rust");
-    assert_eq!(json[0]["primary"]["span"]["line"], 3);
+    let d = diag(
+        label(rust_span(), "connected here"),
+        vec![
+            label(sv_span(), "port declared here"),
+            label(Span::None, "no span"),
+        ],
+    );
+    let expected = serde_json::json!([{
+        "code": "S0201",
+        "severity": "error",
+        "message": "incompatible types in connection",
+        "primary": {
+            "span": {"kind": "rust", "file": RUST_FILE, "line": 4, "column": 7},
+            "text": "connected here"
+        },
+        "secondary": [
+            {
+                "span": {"kind": "sv", "file": SV_FILE, "line": 5, "column": 9, "len": 3},
+                "text": "port declared here"
+            },
+            {"span": {"kind": "none"}, "text": "no span"}
+        ],
+        "notes": ["`req_t` and `req2_t` have equal width but different layouts"],
+        "helps": ["first differing field is `addr`"]
+    }]);
+    assert_eq!(Diagnostics(vec![d]).to_json(), expected);
+}
+
+#[track_caller]
+fn inner_helper() -> Span {
+    Span::caller()
+}
+
+#[track_caller]
+fn outer_helper() -> Span {
+    inner_helper()
+}
+
+struct Marker;
+
+impl Marker {
+    #[track_caller]
+    fn mark_here(&self) -> Span {
+        Span::caller()
+    }
 }
 
 #[test]
 fn caller_captures_location() {
-    match Span::caller() {
+    let expected_line = line!() + 1;
+    let span = outer_helper();
+    match span {
         Span::Rust { file, line, .. } => {
-            assert!(file.ends_with("mod.rs"));
-            assert!(line > 0);
+            assert!(file.ends_with("diagnostics/mod.rs"), "{file}");
+            assert_eq!(line, expected_line);
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+
+    let expected_line = line!() + 1;
+    let span = Marker.mark_here();
+    let src_line = include_str!("mod.rs")
+        .lines()
+        .nth(expected_line as usize - 1)
+        .unwrap();
+    let expected_col = src_line.find("mark_here").unwrap() as u32 + 1;
+    match span {
+        Span::Rust { line, column, .. } => {
+            assert_eq!(line, expected_line);
+            assert_eq!(column, expected_col);
         }
         other => panic!("unexpected {other:?}"),
     }

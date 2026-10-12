@@ -1,0 +1,9 @@
+error[S0201]: incompatible types in connection
+ --> tests/diagnostics/fixtures/caller.rs.txt:4:1
+  |
+4 |     a.connect(&b);
+  | ^ bad column
+  |
+  = note: tests/diagnostics/fixtures/caller.rs.txt:4:0: column 0 is invalid (columns are 1-based); marking the start of the line
+  = note: `req_t` and `req2_t` have equal width but different layouts
+  = help: first differing field is `addr`

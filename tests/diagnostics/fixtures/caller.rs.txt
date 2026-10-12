@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 fn main() {
     let parent = ModDef::new("parent");
     a.connect(&b);

@@ -1,8 +1,8 @@
 error[S0201]: incompatible types in connection
- --> tests/diagnostics/fixtures/caller.rs.txt:3:5
+ --> tests/diagnostics/fixtures/caller.rs.txt:4:7
   |
-3 |     a.connect(&b);
-  |     ^ connected here
+4 |     a.connect(&b);
+  |       ^^^^^^^ connected here
   |
  ::: tests/diagnostics/fixtures/child.sv:5:9
   |

@@ -1,0 +1,8 @@
+error[S0201]: incompatible types in connection
+ --> tests/diagnostics/fixtures/caller.rs.txt:4:18
+  |
+4 |     a.connect(&b);
+  |                  ^ expected `;`
+  |
+  = note: `req_t` and `req2_t` have equal width but different layouts
+  = help: first differing field is `addr`

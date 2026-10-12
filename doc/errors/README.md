@@ -1,8 +1,10 @@
 # Error index
 
 Each diagnostic code `S0xxx` has an entry here with a title, a minimal failing
-example, and the fix. Examples are illustrative. Every code in
-`topstitch::diagnostic::codes::ALL` must have a file (checked by tests).
+example, and the fix. Every code in `topstitch::diagnostic::codes::ALL` must have
+a file with `## Example` and `## Fix` sections and a row in the table below
+(checked by tests). Once the APIs the examples use exist, a later task checks that
+each example triggers its code.
 
 | Code | Title |
 | --- | --- |

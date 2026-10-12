@@ -1,4 +1,5 @@
 error[S0201]: incompatible types in connection
  --> tests/diagnostics/fixtures/does_not_exist.sv:5:9
+  = note: tests/diagnostics/fixtures/does_not_exist.sv:5:9: port declared here
   = note: `req_t` and `req2_t` have equal width but different layouts
   = help: first differing field is `addr`

@@ -81,10 +81,15 @@ fn find_missing_spdx_files(root: &Path) -> Vec<PathBuf> {
             }
 
             if let Some(extension) = path.extension() {
-                if extension == "md"
+                // Verbatim diagnostic snapshots cannot carry a header.
+                let is_diag_snapshot = extension == "txt"
+                    && path
+                        .parent()
+                        .is_some_and(|p| p.ends_with("tests/diagnostics/snapshots"));
+                if is_diag_snapshot
+                    || extension == "md"
                     || extension == "lock"
                     || extension == "toml"
-                    || extension == "txt"
                     || extension == "supp"
                     || extension == "swp"
                 {
