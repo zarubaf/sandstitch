@@ -52,12 +52,17 @@ across the move.
 - `README.md` replaced.
 - Removed `.github/workflows/publish.yml`, `tests/version_test.rs` and
   `check_version_is.py` (they depend on crates.io release state).
+- Removed `.pre-commit-config.yaml`: `cargo xtask ci` (`xtask/`, alias in
+  `.cargo/config.toml`) runs fmt, workspace-wide clippy with `-D warnings`,
+  text hygiene, the library boundary check and the tests, locally and as the
+  only step of `.github/workflows/ci.yml` (upstream CI ran pre-commit, then
+  the tests with a downloaded Slang and the libc++ runtime; no clippy).
 - `Cargo.toml`: `publish = false`; `repository` and `homepage` point to
   https://github.com/zarubaf/sandstitch; `documentation` removed; unused
-  dev-dependencies removed (`curl`, `semver`, `toml`, `serde_json`).
-- `.github/workflows/ci.yml`: the clippy step runs
-  `cargo clippy --all-targets --locked -- -D warnings` and gates the build
-  (upstream tolerated warnings).
+  dev-dependencies removed (`curl`, `semver`, `toml`); a workspace with
+  `crates/*`, `designs/*` and `xtask`; new dependencies `annotate-snippets`,
+  `serde`, `serde_json`, `sha2` and `tempfile` (`serde_json` and `tempfile`
+  were dev-dependencies).
 - Clippy lint fixes (behavior-preserving: redundant borrows and useless
   `format!` removed) in `src/mod_def/emit.rs`, `src/mod_def/placement.rs`,
   `src/mod_def/lefdef.rs`, `src/mod_def/hierarchy.rs` and
@@ -66,6 +71,55 @@ across the move.
   `use` and macro paths.
 - `Cargo.toml`: `slang-rs = "=0.22.0"` and `xlsynth-vast = "=0.65.0"` are
   pinned exactly (upstream used caret requirements).
+
+### Library behavior
+
+Typed specialization (#4, [design](design/typed-specialization.md)):
+
+- Diagnostics: `src/diagnostic/` (`Diagnostic`, `Diagnostics`, `ImportError`,
+  codes `S0xxx` with entries in `errors/`).
+- Fallible API: `ModDef::try_from_verilog_with_config`, `try_parameterize`,
+  `try_from_verilog_parameterized` (new: import with overrides, without
+  elaborating the defaults) and `try_manifest`. The upstream functions keep
+  their signatures and panic with the rendered diagnostic where upstream
+  panicked with a plain message or unwrapped a Slang error.
+- Import keeps port types: `PortType` (`Port::port_type`,
+  `PortSlice::port_type`) and declaration spans (`Port::source_span`).
+  Ports with unpacked dimensions, which upstream imported with their packed
+  width only, and non-integral ports are S0103; interface ports, on which
+  upstream panicked, are S0104. `skip_unsupported` skips the S0103 ports
+  (and interface ports when the sources elaborate as a top).
+- `parameterize` elaborates the module under a generated top instead of
+  re-running Slang with `-G` on the module as top, so type parameters
+  (`ParameterValue::Type`) and named constants (`ParameterValue::Expr`)
+  work; the cache key covers the whole import configuration, the Slang
+  version and the content of every file Slang read (upstream: the sources,
+  include directories, defines and overrides it passed to Slang, as strings).
+- Slang `-G` values (`ParserConfig::parameters`) of a plain import are
+  emitted as `#(...)` overrides of its instances (upstream emitted none, so
+  the instances took the defaults while the ports had the `-G` widths) and
+  are base overrides of its specializations.
+- Typed connections: `field`, `index` and `Select` on port slices,
+  `connect_bits`, and `ModDef::check` (S0201 for non-equivalent aggregate
+  ends). `emit` runs `check` first and panics on errors; connections with a
+  logic vector or untyped end are width-checked only, as upstream.
+- Typed emission: nets and ports of package-named structs and unions whose
+  uses are all typed are declared with that type and connected with member
+  selects and indices; everything else stays flat as upstream. Designs
+  without such ports emit as before, apart from the `-G` overrides above.
+- `ModDef::manifest` / `try_manifest` and `Manifest` (sources, include
+  directories, defines, library search, specializations; S0301, S0302).
+
+Upstream tests are unchanged except: `tests/syntax/params.rs` (the clippy
+fixes above), `tests/spdx_test.rs` (skips `third_party/`, `crates/slang-rs/`
+and diagnostic snapshots), `tests/test.rs` (new test modules), and the
+expected output of `test_unions` and `test_unions_complex` in
+`tests/syntax/import.rs`: the net between two package-named union ports is
+now declared with the union type (`wire my_pack::my_union_t a0_x;`,
+`wire my_pack::my_union_t [1:0] a0_x;`) instead of a flat vector, by the
+typing rule. For the unpacked union of `test_unions` the old flat output
+did not elaborate (Slang: a vector cannot be assigned to an unpacked union;
+see `slang_check_rejects_flat_union_connection` in `tests/typed/emit.rs`).
 
 ## Forked dependencies
 
@@ -98,6 +152,13 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
     `is_aggregate` recognizes signed aggregates, so a named signed struct
     resolves to its typedef name (`sp::s_t`, not `sp::s$3`); `UnsupportedPort`
     and `extract_instance_ports_checked_from_value`; `absolute_path` is public.
+  - `feat(slang-rs): list overridable parameters, instance parameter defs,
+    version`: `ParameterKind`, `extract_overridable_parameters_from_value`,
+    `extract_instance_parameter_defs_from_value`, `slang_version`.
+  - `fix(slang-rs): name array typedefs by their element type`.
+  - `feat(slang-rs): keep the AST of a failed run` and `fix(slang-rs): read a
+    failed run's AST only on request, add check_slang`: `run_slang_keep_ast`,
+    `check_slang`.
 
 ### xlsynth-vast (vendored)
 
@@ -122,7 +183,8 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
   - Sandstitch extensions (`feat(xlsynth-vast): type expressions, package refs
     and member selects`): `make_type_expr`, `make_package_ref`,
     `make_member_select`, `make_member_select_indexable` and
-    `tests/sandstitch_ext_test.rs`.
+    `tests/sandstitch_ext_test.rs`; later `make_name_ref` and
+    `make_packed_array_type_ranges` (packed arrays with declared ranges).
 - Upstreaming: send patches against the xlsynth-crate monorepo.
 
 ### Third-party RTL
