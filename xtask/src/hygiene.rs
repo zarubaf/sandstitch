@@ -228,6 +228,7 @@ mod tests {
         assert!(check("a.yml", b"a: 1\n").is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn broken_symlink() {
         let d = tempfile::tempdir().unwrap();

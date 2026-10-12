@@ -19,14 +19,60 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Prose phrases that merely resemble the forbidden names. They only count as
+/// benign when bounded by whitespace, line ends or light punctuation, never by
+/// `.`/`-`/identifier characters (so `x axis.tdata` is still flagged).
+fn strip_phrases(line: &str) -> String {
+    let phrase = Regex::new(r"(?i)axis-aligned|[xy] axis|\w+'s axis").unwrap();
+    let mut out = String::new();
+    let mut last = 0;
+    for m in phrase.find_iter(line) {
+        let before_ok = line[..m.start()]
+            .chars()
+            .next_back()
+            .is_none_or(char::is_whitespace);
+        let mut after = line[m.end()..].chars();
+        let after_ok = match after.next() {
+            None => true,
+            Some(c) if c.is_whitespace() || ",;:)\"".contains(c) => true,
+            Some('.') => after.next().is_none_or(char::is_whitespace),
+            Some(_) => false,
+        };
+        if before_ok && after_ok {
+            out.push_str(&line[last..m.start()]);
+            out.push(' ');
+            last = m.end();
+        }
+    }
+    out.push_str(&line[last..]);
+    out
+}
+
+/// Whole identifier tokens that are ordinary words.
+fn benign_token(tok: &str, rest: &str) -> bool {
+    let words = Regex::new(r"(?i)^floor(plan\w*|s)?$").unwrap();
+    if words.is_match(tok) {
+        return true;
+    }
+    tok == "axis_coordinate"
+        && !(rest.starts_with('-')
+            || rest
+                .strip_prefix('.')
+                .is_some_and(|r| r.starts_with(|c: char| c.is_alphanumeric() || c == '_')))
+}
+
+fn line_violates(line: &str) -> bool {
+    // `axi` must start a token ("s_axi_aw" counts, "taxing" does not).
+    let forbidden = Regex::new(r"(?i)floo|pulp|(^|[^a-z0-9])axi").unwrap();
+    let token = Regex::new(r"[A-Za-z0-9_]+").unwrap();
+    let line = strip_phrases(line);
+    token
+        .find_iter(&line)
+        .any(|m| !benign_token(m.as_str(), &line[m.end()..]) && forbidden.is_match(m.as_str()))
+}
+
 /// Returns `path:line` for every offending line.
 pub fn check_repo(root: &Path) -> Vec<String> {
-    // `axi` must start a token ("s_axi_aw" counts, "taxing" does not).
-    let re = Regex::new(r"(?i)floo|pulp|(^|[^a-z0-9])axi").unwrap();
-    // Ordinary phrases that merely resemble the forbidden names.
-    let benign =
-        Regex::new(r"(?i)floor|axis-aligned|\b[xy] axis\b|\baxis_coordinate\b|'s axis\b").unwrap();
-    Regex::new(r"(?i)floor|axis-aligned|[xy] axis|(?-i:\baxis(_coordinate)?\b)").unwrap();
     let mut files = Vec::new();
     collect(&root.join("src"), &mut files);
     if let Ok(rd) = std::fs::read_dir(root.join("crates")) {
@@ -42,7 +88,7 @@ pub fn check_repo(root: &Path) -> Vec<String> {
         };
         let rel = f.strip_prefix(root).unwrap_or(&f);
         for (i, line) in text.lines().enumerate() {
-            if re.is_match(&benign.replace_all(line, "")) {
+            if line_violates(line) {
                 out.push(format!("{}:{}", rel.display(), i + 1));
             }
         }
@@ -98,6 +144,40 @@ mod tests {
             write(d.path(), &format!("src/f{i}.rs"), &format!("{l}\n"));
         }
         assert_eq!(check_repo(d.path()).len(), cases.len());
+    }
+
+    #[test]
+    fn evasions_are_caught_and_prose_is_benign() {
+        for bad in [
+            "FlooRouter",
+            "FlooRoute",
+            "use FlooRouterCfg;",
+            "x axis.tdata",
+            "y axis-tdata",
+            "edge's axis.tdata",
+            "axis_coordinate.tdata",
+            "s_axi_aw",
+            "AXIS",
+            "fn f(axis: Port) {}",
+            "relax axis_tvalid",
+            "ready axis_tdata",
+        ] {
+            assert!(line_violates(bad), "should flag: {bad}");
+        }
+        for ok in [
+            "floorplan",
+            "floor",
+            "Floorplan",
+            "// Floorplanning-related types",
+            "axis-aligned",
+            "// along the X axis",
+            "the edge's axis",
+            "the edge's axis.",
+            "let axis_coordinate = 1;",
+            "f(axis_coordinate);",
+        ] {
+            assert!(!line_violates(ok), "should allow: {ok}");
+        }
     }
 
     #[test]
