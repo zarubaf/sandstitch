@@ -8,15 +8,10 @@ Sandstitch is a hard fork of Topstitch.
 
 ## Policy
 
-- Upstream paths are no longer kept (decided 2026-10-12): `src/` is organised
-  by concern (see Layout), so upstream commits touching `src/` no longer
-  cherry-pick or merge cleanly.
-- Upstream fixes are ported by hand: apply the change at the new path and
-  name the upstream commit in the message
-  (`Ported from xlsynth/topstitch@<sha>`). Changes outside `src/` that still
-  apply may be taken with `git cherry-pick -x`.
-- The base above stays recorded as the reference point for porting. Update it
-  when the ported fixes catch up to a newer upstream tag.
+- Port upstream fixes by hand and reference the upstream commit
+  (`xlsynth/topstitch@<sha>`) in the commit body.
+- Upstream tag merges no longer apply: `src/` is organised by concern (see
+  Layout), so the paths have diverged. The base above stays recorded.
 - Divergences are listed below as they happen.
 
 ## Layout
@@ -39,6 +34,13 @@ Upstream path (base `v0.100.0`) to Sandstitch path:
 | `src/lefdef.rs` | `src/physical/lefdef.rs` (still public as `topstitch::lefdef`) |
 | `src/mod_def/{def_parse,lef_parse,pins,tracks,placement,shape,edges}.rs` | `src/physical/` |
 | `src/validate.rs` + `src/validate/` | `src/physical/validate.rs` + `src/physical/validate/` |
+
+Items also moved between files: the physical methods of `ModDef`, `ModInst`,
+`Port`, `PortSlice`, `Intf` and `IO` now live in
+`src/physical/{mod_def,mod_inst,port,port_slice,intf,io}.rs`; `ParameterType`,
+`ParameterSpec` and `ParameterValue` are in `src/model/parameter.rs`;
+`VerilogImport` is in `src/import/parser.rs`; `populate_hierarchy` is in
+`src/import/hierarchy.rs`.
 
 `src/lib.rs`, `src/util.rs` and `src/diagnostic/` keep their paths. The public
 API (`topstitch::*`, `topstitch::lefdef`, `topstitch::diagnostic`) is

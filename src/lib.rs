@@ -5,12 +5,13 @@
 //! The source is organised by concern:
 //!
 //! - `model`: the structural model (`ModDef`, `ModInst`, `Port`, `PortSlice`,
-//!   `Intf`, connections and the helpers built on them).
-//! - `import`: SystemVerilog import through Slang, parameterization and
-//!   package extraction.
+//!   `Intf`, connections, parameters).
+//! - `import`: SystemVerilog import through Slang (the only user of
+//!   `slang_rs`), parameterization and package extraction.
 //! - `emit`: SystemVerilog emission.
 //! - `check`: structural validation.
-//! - `physical`: geometry, tracks, pin and instance placement, LEF/DEF.
+//! - `physical`: geometry, tracks, pins, placement, LEF/DEF, and the physical
+//!   methods of the model types.
 //! - [`diagnostic`]: structured diagnostics.
 //!
 //! The public API is re-exported at the crate root.

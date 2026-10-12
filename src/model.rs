@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Structural model: module definitions and instances, ports and port
-//! slices, interfaces, connections, and the helpers built on them.
+//! slices, interfaces, connections and parameters. Physical-design methods
+//! of these types live in `crate::physical`.
 
 pub(crate) mod connection;
 pub(crate) mod funnel;
