@@ -67,8 +67,10 @@ fn find_missing_spdx_files(root: &Path) -> Vec<PathBuf> {
                 let is_vendored = path.strip_prefix(root).is_ok_and(|rel| {
                     rel == Path::new("third_party") || rel == Path::new("crates/slang-rs")
                 });
+                // `.claude/` holds local, git-ignored agent settings.
                 if entry.file_name() != "target"
                     && entry.file_name() != ".git"
+                    && entry.file_name() != ".claude"
                     && !is_vendored
                     && !(entry.file_name() == "output"
                         && entry.path().parent().and_then(|p| p.file_name())
