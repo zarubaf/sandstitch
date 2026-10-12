@@ -99,6 +99,11 @@ fn check_record(record: &ConnectionRecord) -> Option<Diagnostic> {
     if matches!(left, PortType::Logic { .. }) || matches!(right, PortType::Logic { .. }) {
         return None;
     }
+    // An unpacked end is checked by S0206, which also requires the same
+    // named type.
+    if super::unpacked::is_unpacked(&left) || super::unpacked::is_unpacked(&right) {
+        return None;
+    }
     let difference = left.equivalent(&right).err()?;
     let note = if difference.path.is_empty() {
         format!("`{}` vs `{}`", difference.left, difference.right)

@@ -19,7 +19,7 @@ use crate::model::connection::connected_item::ConnectedItem;
 use crate::model::connection::port_slice::PortSliceConnection;
 use crate::{Diagnostic, Label, Port, PortSlice, PortType, Severity};
 
-fn is_unpacked(ty: &PortType) -> bool {
+pub(super) fn is_unpacked(ty: &PortType) -> bool {
     matches!(
         ty,
         PortType::Struct {
@@ -148,7 +148,7 @@ pub(super) fn check_connections(
                     .into(),
             ],
             helps: vec![
-                "connect the whole port to a port of an equivalent type named with its package, \
+                "connect the whole port to a port of the same type, named with its package, \
                  or declare the type `packed`"
                     .into(),
             ],

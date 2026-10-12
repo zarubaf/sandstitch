@@ -624,13 +624,13 @@ fn packed_and_unpacked_structs_are_not_equivalent() {
     let d = top.instantiate(&dst, Some("d"), None);
     s.get_port("o").connect(&d.get_port("q"));
     s.get_port("p").connect(&d.get_port("i"));
-    // Each connection is S0201; each unpacked end is also S0206, as its
-    // net would be flat.
+    // Each unpacked end is S0206, as its net would be flat; S0201 is not
+    // reported in addition.
     let diagnostics = top.check();
     let codes_found: Vec<Code> = diagnostics.0.iter().map(|d| d.code).collect();
     assert_eq!(
         codes_found,
-        [codes::S0206, codes::S0206, codes::S0201, codes::S0201],
+        [codes::S0206, codes::S0206],
         "{}",
         diagnostics.render()
     );
