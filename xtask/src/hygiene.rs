@@ -3,6 +3,7 @@
 //! First-party file hygiene (port of the former pre-commit hooks).
 
 use regex::Regex;
+use regex::bytes::Regex as BytesRegex;
 use std::path::Path;
 use std::process::Command;
 
@@ -14,10 +15,16 @@ const TRAILING_WS_EXCLUDES: [&str; 3] = [
 ];
 const MAX_BYTES: u64 = 500 * 1024;
 
-/// Checks every git-tracked first-party file under `root`.
+/// Checks every tracked or untracked-but-not-ignored first-party file under `root`.
 pub fn check_repo(root: &Path) -> Result<Vec<String>, String> {
     let out = Command::new("git")
-        .args(["ls-files", "-z"])
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
         .current_dir(root)
         .output()
         .map_err(|e| format!("spawn git: {e}"))?;
@@ -35,8 +42,7 @@ pub fn check_repo(root: &Path) -> Result<Vec<String>, String> {
 /// Checks the given repo-relative `files`; returns one message per violation.
 pub fn check_files(root: &Path, files: &[String]) -> Vec<String> {
     let lef_def = Regex::new(r"(?i)\.(lef|def)(\..*)?$").unwrap();
-    let private_key = Regex::new(r"-----BEGIN .*PRIVATE KEY-----").unwrap();
-    let conflict = Regex::new(r"^(<<<<<<< |=======$|>>>>>>> )").unwrap();
+    let private_key = BytesRegex::new(r"-----BEGIN [A-Z ]*PRIVATE KEY-----").unwrap();
     let mut out = Vec::new();
     for rel in files {
         if SKIP_DIRS.iter().any(|d| rel.starts_with(d)) {
@@ -65,6 +71,9 @@ pub fn check_files(root: &Path, files: &[String]) -> Vec<String> {
             out.push(format!("{rel}: unreadable"));
             continue;
         };
+        if private_key.is_match(&bytes) {
+            out.push(format!("{rel}: private key"));
+        }
         if bytes.contains(&0) {
             continue; // binary
         }
@@ -74,21 +83,31 @@ pub fn check_files(root: &Path, files: &[String]) -> Vec<String> {
         if !text.is_empty() && !text.ends_with('\n') {
             out.push(format!("{rel}: missing final newline"));
         }
+        if text.ends_with("\n\n") {
+            out.push(format!("{rel}: multiple trailing newlines"));
+        }
         if text.contains("\r\n") {
             out.push(format!("{rel}: CRLF line ending"));
         }
         let ws_ok = TRAILING_WS_EXCLUDES.contains(&rel.as_str());
+        let mut conflict_open = false;
         for (i, line) in text.lines().enumerate() {
             let n = i + 1;
-            let body = line.strip_suffix('\r').unwrap_or(line);
-            if !ws_ok && body.ends_with([' ', '\t']) {
+            if !ws_ok && line.ends_with([' ', '\t']) {
                 out.push(format!("{rel}:{n}: trailing whitespace"));
             }
-            if conflict.is_match(body) {
+            if line.starts_with("<<<<<<< ") {
+                conflict_open = true;
+            }
+            if conflict_open
+                && (line.starts_with("<<<<<<< ")
+                    || line == "======="
+                    || line.starts_with(">>>>>>> "))
+            {
                 out.push(format!("{rel}:{n}: merge conflict marker"));
             }
-            if private_key.is_match(body) {
-                out.push(format!("{rel}:{n}: private key"));
+            if line.starts_with(">>>>>>> ") {
+                conflict_open = false;
             }
         }
         if rel.ends_with(".toml") {
@@ -152,13 +171,31 @@ mod tests {
 
     #[test]
     fn merge_markers() {
-        assert!(has(&check("a.rs", b"<<<<<<< HEAD\nx\n"), "merge conflict"));
+        let v = check("a.rs", b"<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> topic\n");
+        assert_eq!(v.iter().filter(|m| m.contains("merge conflict")).count(), 3);
+        // A Markdown setext underline is not a conflict.
+        assert!(check("a.md", b"Title\n=======\n").is_empty());
+    }
+
+    #[test]
+    fn multiple_trailing_newlines() {
+        assert!(has(&check("a.rs", b"x\n\n"), "multiple trailing"));
+    }
+
+    #[test]
+    fn real_repository_is_clean() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let v = check_repo(root).unwrap();
+        assert!(v.is_empty(), "{v:#?}");
     }
 
     #[test]
     fn private_key() {
-        let k = b"-----BEGIN RSA PRIVATE KEY-----\n";
-        assert!(has(&check("k.txt", k), "private key"));
+        let k = format!("-----BEGIN {} PRIVATE KEY-----\n", "RSA");
+        assert!(has(&check("k.txt", k.as_bytes()), "private key"));
+        let mut bin = vec![0u8, 0xff];
+        bin.extend_from_slice(k.as_bytes());
+        assert!(has(&check("k.bin", &bin), "private key"));
     }
 
     #[test]

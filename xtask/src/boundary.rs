@@ -21,9 +21,10 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// Returns `path:line` for every offending line.
 pub fn check_repo(root: &Path) -> Vec<String> {
-    let re = Regex::new(r"(?i)floo|pulp|\baxi").unwrap();
-    // Ordinary words that merely contain the forbidden prefixes.
-    let benign = Regex::new(r"(?i)floor|axis").unwrap();
+    // `axi` must start a token ("s_axi_aw" counts, "taxing" does not).
+    let re = Regex::new(r"(?i)floo|pulp|(^|[^a-z0-9])axi").unwrap();
+    // Ordinary phrases that merely resemble the forbidden names.
+    let benign = Regex::new(r"(?i)floor|axis-aligned|[xy] axis|(?-i:\baxis\b)").unwrap();
     let mut files = Vec::new();
     collect(&root.join("src"), &mut files);
     if let Ok(rd) = std::fs::read_dir(root.join("crates")) {
@@ -76,8 +77,20 @@ mod tests {
         write(
             d.path(),
             "src/a.rs",
-            "fn taxing() {} // axis-aligned floorplan\n",
+            "fn taxing() {} // axis-aligned floorplan, X axis, axis\n",
         );
         assert!(check_repo(d.path()).is_empty());
+    }
+
+    #[test]
+    fn token_forms_are_caught() {
+        let d = tempfile::tempdir().unwrap();
+        for (i, l) in ["s_axi_aw", "m_axi_b", "AXIS", "floo_", "floonoc"]
+            .iter()
+            .enumerate()
+        {
+            write(d.path(), &format!("src/f{i}.rs"), &format!("{l}\n"));
+        }
+        assert_eq!(check_repo(d.path()).len(), 5);
     }
 }

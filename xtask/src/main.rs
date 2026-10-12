@@ -49,13 +49,7 @@ fn ci(root: &Path) -> Result<(), String> {
         &[],
         &[
             "clippy",
-            // The vendored crates under `crates/` carry upstream lint debt and
-            // are intentionally not edited here.
-            "--no-deps",
-            "-p",
-            "topstitch",
-            "-p",
-            "xtask",
+            "--workspace",
             "--all-targets",
             "--locked",
             "--",

@@ -28,15 +28,24 @@ fn tarball_ok(tarball: &Path) -> Result<bool, String> {
     Ok(tarball.is_file() && sha256_hex(tarball)? == SHA256)
 }
 
+fn is_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
 /// Returns the path of the `slang` binary from the verified pinned tarball,
 /// downloading and extracting it if the cache is incomplete.
 pub fn ensure() -> Result<PathBuf, String> {
+    if (std::env::consts::OS, std::env::consts::ARCH) != ("linux", "x86_64") {
+        return Err(format!(
+            "the pinned Slang release is linux-x86_64 only; this is {}-{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ));
+    }
     let dir = cache_dir()?;
     let bin = dir.join("slang");
     let tarball = dir.join("slang.tar.gz");
-    if bin.is_file() && tarball_ok(&tarball)? {
-        return Ok(bin);
-    }
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     if !tarball_ok(&tarball)? {
         eprintln!("downloading Slang {VERSION}");
@@ -54,6 +63,7 @@ pub fn ensure() -> Result<PathBuf, String> {
             .status()
             .map_err(|e| format!("spawn curl: {e}"))?;
         if !status.success() {
+            let _ = std::fs::remove_file(&tarball);
             return Err(format!("curl failed ({status})"));
         }
         let got = sha256_hex(&tarball)?;
@@ -62,16 +72,30 @@ pub fn ensure() -> Result<PathBuf, String> {
             return Err(format!("sha256 mismatch: expected {SHA256}, got {got}"));
         }
     }
+    if is_executable(&bin) {
+        return Ok(bin);
+    }
+    // Extract into a private temp dir, then rename into place atomically.
+    let tmp = dir.join(format!("extract.{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("mkdir {}: {e}", tmp.display()))?;
     let status = Command::new("tar")
         .arg("-xzf")
         .arg(&tarball)
         .arg("-C")
-        .arg(&dir)
+        .arg(&tmp)
         .arg("slang")
         .status()
         .map_err(|e| format!("spawn tar: {e}"))?;
-    if !status.success() {
-        return Err(format!("tar failed ({status})"));
-    }
+    let extracted = tmp.join("slang");
+    let result = if !status.success() {
+        Err(format!("tar failed ({status})"))
+    } else if !is_executable(&extracted) {
+        Err("extracted slang is not an executable file".to_string())
+    } else {
+        std::fs::rename(&extracted, &bin).map_err(|e| format!("install slang: {e}"))
+    };
+    let _ = std::fs::remove_dir_all(&tmp);
+    result?;
     Ok(bin)
 }
