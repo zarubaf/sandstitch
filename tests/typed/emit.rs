@@ -637,6 +637,9 @@ fn manifest_lists_sources_and_specializations() {
     let pkg = Sources::new(&[PKG]);
     let mods = Sources::new(&[MODS]);
     let child_sv = Sources::new(&[CHILD]);
+    // A module in a file of its own, emitted as a stub below.
+    let blk_sv =
+        Sources::new(&["module blk (input logic [44:0] x, input cfg_pkg::flat_t f);\nendmodule\n"]);
     // A source given by a relative path is listed as an absolute one.
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     std::fs::write(
@@ -662,8 +665,9 @@ fn manifest_lists_sources_and_specializations() {
         ModDef::from_verilog_with_config(name, &cfg)
     };
     let (p, m, c) = (pkg.paths()[0], mods.paths()[0], child_sv.paths()[0]);
+    let b = blk_sv.paths()[0];
     let src = import(&[p, m], "src");
-    let raw = import(&[p, m], "raw");
+    let blk = import(&[p, b], "blk");
     let child = import(&[p, c], "child");
     let rel = import(&[&relative], "rel");
     let with_flit = child.parameterize(&[("T", ty("cfg_pkg::flit_t"))]);
@@ -675,9 +679,8 @@ fn manifest_lists_sources_and_specializations() {
         false,
         false,
     );
-    // `raw` is emitted from the model (a stub), so it lists no sources; it
-    // is only instantiated below where `src`, which shares its file, is not.
-    raw.set_usage(Usage::EmitStubAndStop);
+    // `blk` is emitted from the model (a stub), so it lists no sources.
+    blk.set_usage(Usage::EmitStubAndStop);
 
     let mid = ModDef::new("mid");
     let c0 = mid.instantiate(&with_hdr, Some("c"), None);
@@ -690,6 +693,7 @@ fn manifest_lists_sources_and_specializations() {
     let m1 = top.instantiate(&mid, Some("m1"), None);
     let l = top.instantiate(&rel, Some("l"), None);
     let i = top.instantiate(&inline, Some("i"), None);
+    let k = top.instantiate(&blk, Some("k"), None);
     a.get_port("in_i").tieoff(0);
     a.get_port("out_o").unused();
     for port in ["o", "arr", "off"] {
@@ -701,6 +705,8 @@ fn manifest_lists_sources_and_specializations() {
     m1.get_port("out_o").unused();
     l.get_port("a").tieoff(0);
     i.get_port("a").tieoff(0);
+    k.get_port("x").tieoff(0);
+    k.get_port("f").tieoff(0);
 
     let manifest = top.manifest();
     let abs = |s: &str| std::path::absolute(s).unwrap();
@@ -708,6 +714,7 @@ fn manifest_lists_sources_and_specializations() {
         manifest.sources,
         vec![abs(p), abs(c), abs(m), cwd.join(&relative)]
     );
+    assert!(!manifest.sources.contains(&abs(b)));
     let flit = with_flit.specialization_key().unwrap().short_hash();
     let hdr = with_hdr.specialization_key().unwrap().short_hash();
     assert_ne!(flit, hdr);
@@ -723,15 +730,15 @@ fn manifest_lists_sources_and_specializations() {
     // Without the inline module, emitted RTL and manifest elaborate together.
     let top = ModDef::new("top2");
     let a = top.instantiate(&with_flit, Some("a"), None);
-    let r = top.instantiate(&raw, Some("r"), None);
+    let k = top.instantiate(&blk, Some("k"), None);
     let l = top.instantiate(&rel, Some("l"), None);
     a.get_port("in_i").tieoff(0);
     a.get_port("out_o").export_as("o");
-    r.get_port("x").tieoff(0);
-    r.get_port("f").tieoff(0);
+    k.get_port("x").tieoff(0);
+    k.get_port("f").tieoff(0);
     l.get_port("a").tieoff(0);
     let manifest = top.manifest();
-    // `raw` is stubbed: its sources would define it twice; `child` brings
+    // `blk` is stubbed: its source would define it twice; `child` brings
     // the package.
     assert_eq!(manifest.sources, vec![abs(p), abs(c), cwd.join(&relative)]);
     let files: Vec<&Path> = manifest.sources.iter().map(PathBuf::as_path).collect();
