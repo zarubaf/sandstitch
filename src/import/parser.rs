@@ -243,7 +243,7 @@ impl ModDef {
             let mod_def_with_hierarchy = mod_def.stub(&name);
             let hierarchy = slang_rs::extract_hierarchy_from_value(&value);
             if let Some(inst) = hierarchy.get(name.as_ref()) {
-                crate::model::mod_def::hierarchy::populate_hierarchy(&mod_def_with_hierarchy, inst);
+                crate::import::hierarchy::populate_hierarchy(&mod_def_with_hierarchy, inst);
             }
             mod_def_with_hierarchy
         } else {
@@ -267,7 +267,7 @@ impl ModDef {
                 let mod_def_name = mod_def.get_name();
                 if let Some(inst) = hierarchy.get(&mod_def_name) {
                     let stubbed_mod_def = mod_def.stub(&mod_def_name);
-                    crate::model::mod_def::hierarchy::populate_hierarchy(&stubbed_mod_def, inst);
+                    crate::import::hierarchy::populate_hierarchy(&stubbed_mod_def, inst);
                     mod_defs_with_hierarchy.push(stubbed_mod_def);
                 }
             }

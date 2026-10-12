@@ -16,7 +16,7 @@ pub use core::ModDefCore;
 use crate::physical::geometry::{BoundingBox, Coordinate, Edge, EdgeOrientation, Polygon};
 
 mod feedthrough;
-pub(crate) mod hierarchy;
+mod hierarchy;
 mod instances;
 mod intf;
 mod ports;
