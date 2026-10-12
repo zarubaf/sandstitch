@@ -402,8 +402,7 @@ fn test_64bit_param_import() {
         .wrap(None, None);
     assert_eq!(
         modified.emit(EmitOptions::default()),
-        format!(
-            "\
+        "\
 module bigcounter_wrapper(
   input wire clk,
   input wire rst,
@@ -419,8 +418,7 @@ module bigcounter_wrapper(
     .count(count)
   );
 endmodule
-",
-        )
+"
     );
 }
 
@@ -461,8 +459,7 @@ fn test_dependent_param_width() {
         .wrap(None, None);
     assert_eq!(
         modified.emit(EmitOptions::default()),
-        format!(
-            "\
+        "\
 module bigcounter_wrapper(
   input wire clk,
   input wire rst,
@@ -479,8 +476,7 @@ module bigcounter_wrapper(
     .count(count)
   );
 endmodule
-",
-        )
+"
     );
 }
 

@@ -478,6 +478,6 @@ fn lef_def_pin_name(
     if port_width == 1 {
         port_name.to_string()
     } else {
-        format!("{}{}{}{}", &port_name, open_char, bit, close_char)
+        format!("{}{}{}{}", port_name, open_char, bit, close_char)
     }
 }

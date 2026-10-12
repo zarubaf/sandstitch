@@ -13,7 +13,7 @@ pub(crate) fn populate_hierarchy(parent: &ModDef, inst: &slang_rs::Instance) {
             child_hier_prefix = child_hier_prefix[..child_hier_prefix.len() - 1].to_string();
         }
         if !child_hier_prefix.is_empty() {
-            child_inst_name = format!("{}.{}", child_hier_prefix, &child.borrow().inst_name);
+            child_inst_name = format!("{}.{}", child_hier_prefix, child.borrow().inst_name);
         }
         let child_mod_def = ModDef::new(child_def_name);
         parent.instantiate(&child_mod_def, Some(&child_inst_name), None);

@@ -101,7 +101,7 @@ impl ModDef {
                     .map(|(inst_name, p)| {
                         let mod_def = mod_defs
                             .get(&p.module)
-                            .unwrap_or_else(|| panic!("ModDef for module {} not found when checking for instance overlaps", &p.module));
+                            .unwrap_or_else(|| panic!("ModDef for module {} not found when checking for instance overlaps", p.module));
                         let shape = mod_def
                             .get_keepout()
                             .or_else(|| mod_def.get_shape())
