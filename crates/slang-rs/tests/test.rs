@@ -239,6 +239,7 @@ mod tests {
                     name: "bus".to_string(),
                     ty: Type::Union {
                         name: "bus_t".to_string(),
+                        signed: false,
                         fields: vec![
                             Field {
                                 name: "data".to_string(),
@@ -309,6 +310,7 @@ mod tests {
                     name: "bus".to_string(),
                     ty: Type::Struct {
                         name: "bus_t".to_string(),
+                        signed: false,
                         fields: vec![
                             Field {
                                 name: "data".to_string(),
@@ -367,6 +369,7 @@ mod tests {
                 name: "bus".to_string(),
                 ty: Type::Struct {
                     name: "bus_t".to_string(),
+                    signed: false,
                     fields: vec![Field {
                         name: "data".to_string(),
                         ty: Type::Logic {
@@ -419,16 +422,19 @@ mod tests {
                             name: "RED".to_string(),
                             width: 2,
                             value: BigInt::from(0),
+                            signed: false,
                         },
                         Variant {
                             name: "GREEN".to_string(),
                             width: 2,
                             value: BigInt::from(1),
+                            signed: false,
                         },
                         Variant {
                             name: "BLUE".to_string(),
                             width: 2,
                             value: BigInt::from(2),
+                            signed: false,
                         },
                     ],
                     packed_dimensions: vec![Range { msb: 3, lsb: 0 }],
@@ -487,6 +493,7 @@ mod tests {
                     name: "bus".to_string(),
                     ty: Type::Struct {
                         name: "mypack::bus_t".to_string(),
+                        signed: false,
                         fields: vec![
                             Field {
                                 name: "data".to_string(),
@@ -520,11 +527,13 @@ mod tests {
                                 name: "A".to_string(),
                                 width: 16,
                                 value: BigInt::from(1234),
+                                signed: false,
                             },
                             Variant {
                                 name: "B".to_string(),
                                 width: 16,
                                 value: BigInt::from(2345),
+                                signed: false,
                             },
                         ],
                         packed_dimensions: vec![],
@@ -582,11 +591,13 @@ mod tests {
                                 name: "A".to_string(),
                                 width: 16,
                                 value: BigInt::from(1234),
+                                signed: false,
                             },
                             Variant {
                                 name: "B".to_string(),
                                 width: 16,
                                 value: BigInt::from(2345),
+                                signed: false,
                             },
                         ],
                         packed_dimensions: vec![],

@@ -8,8 +8,9 @@ use std::process::{Command, Stdio};
 
 mod extract;
 pub use extract::{
-    Field, InterfacePort, ParameterDef, Port, PortDir, Range, SourceLoc, Type, Variant,
-    extract_instance_interface_ports_from_value, extract_instance_ports_from_value,
+    Field, InterfacePort, ParameterDef, Port, PortDir, Range, SourceLoc, Type, UnsupportedPort,
+    Variant, extract_instance_interface_ports_from_value,
+    extract_instance_ports_checked_from_value, extract_instance_ports_from_value,
     extract_interface_ports_from_value, extract_modules, extract_modules_from_value,
     extract_parameter_defs, extract_parameter_defs_from_value, extract_ports,
     extract_ports_from_value, extract_type_parameter_names_from_value, parse_type_definition,
@@ -252,7 +253,9 @@ fn absolutize_source_files(value: &mut Value, working_dir: &Path) {
     }
 }
 
-fn absolute_path(working_dir: &Path, path: &str) -> String {
+/// Joins `path` onto `working_dir` and normalizes `.` and `..` lexically
+/// (without touching the file system). An absolute `path` is kept as is.
+pub fn absolute_path(working_dir: &Path, path: &str) -> String {
     let mut normalized = PathBuf::new();
     for component in working_dir.join(path).components() {
         match component {

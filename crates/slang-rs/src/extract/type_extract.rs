@@ -20,12 +20,16 @@ pub enum Type {
     },
     Struct {
         name: String,
+        /// `struct packed signed`.
+        signed: bool,
         fields: Vec<Field>,
         packed_dimensions: Vec<Range>,
         unpacked_dimensions: Vec<Range>,
     },
     Union {
         name: String,
+        /// `union packed signed`.
+        signed: bool,
         fields: Vec<Field>,
         packed_dimensions: Vec<Range>,
         unpacked_dimensions: Vec<Range>,
@@ -55,6 +59,9 @@ pub struct Variant {
     pub name: String,
     pub width: usize,
     pub value: BigInt,
+    /// Whether the value is a signed literal (`'sd`), i.e. the enum's base
+    /// type is signed.
+    pub signed: bool,
 }
 
 impl Type {
@@ -158,6 +165,10 @@ fn build_field_type(pair: pest::iterators::Pair<Rule>) -> Type {
         Rule::enum_type => build_enum_type(inner_pair),
         Rule::int_type => build_logic_type(inner_pair, Some(Range { msb: 31, lsb: 0 }), true),
         Rule::longint_type => build_logic_type(inner_pair, Some(Range { msb: 63, lsb: 0 }), true),
+        Rule::integer_type => build_logic_type(inner_pair, Some(Range { msb: 31, lsb: 0 }), true),
+        Rule::shortint_type => build_logic_type(inner_pair, Some(Range { msb: 15, lsb: 0 }), true),
+        Rule::byte_type => build_logic_type(inner_pair, Some(Range { msb: 7, lsb: 0 }), true),
+        Rule::time_type => build_logic_type(inner_pair, Some(Range { msb: 63, lsb: 0 }), false),
         _ => unreachable!(),
     }
 }
@@ -221,9 +232,13 @@ fn build_struct_or_union_type(pair: pest::iterators::Pair<Rule>, is_union: bool)
     let mut packed_dimensions = Vec::new();
     let mut unpacked_dimensions = Vec::new();
     let mut name = String::new();
+    let mut signed = false;
 
     for inner_pair in inner {
         match inner_pair.as_rule() {
+            Rule::signed_modifier => {
+                signed = inner_pair.into_inner().next().unwrap().as_rule() == Rule::signed_keyword
+            }
             Rule::field_list => {
                 for field_pair in inner_pair.into_inner() {
                     if field_pair.as_rule() == Rule::field {
@@ -262,6 +277,7 @@ fn build_struct_or_union_type(pair: pest::iterators::Pair<Rule>, is_union: bool)
     if is_union {
         Type::Union {
             name,
+            signed,
             fields,
             packed_dimensions,
             unpacked_dimensions,
@@ -269,6 +285,7 @@ fn build_struct_or_union_type(pair: pest::iterators::Pair<Rule>, is_union: bool)
     } else {
         Type::Struct {
             name,
+            signed,
             fields,
             packed_dimensions,
             unpacked_dimensions,
@@ -345,18 +362,22 @@ fn build_variant(pair: pest::iterators::Pair<Rule>) -> Variant {
 
     let name = inner.next().unwrap().as_str().to_string();
 
-    let mut inner_inner = inner.next().unwrap().into_inner();
-
-    let mut width = inner_inner.next().unwrap();
     let mut negative = false;
-    if width.as_rule() == Rule::negative_sign {
-        negative = true;
-        width = inner_inner.next().unwrap();
+    let mut signed = false;
+    let mut numbers = Vec::new();
+    for part in inner.next().unwrap().into_inner() {
+        match part.as_rule() {
+            Rule::negative_sign => negative = true,
+            Rule::signed_literal => signed = true,
+            Rule::non_negative_integer => numbers.push(part.as_str()),
+            _ => unreachable!(),
+        }
     }
+    let [width, magnitude_str] = numbers[..] else {
+        unreachable!("a sized decimal has a width and a magnitude")
+    };
 
-    let width = width.as_str().parse::<usize>().unwrap();
-
-    let magnitude_str = inner_inner.next().unwrap().as_str();
+    let width = width.parse::<usize>().unwrap();
     let magnitude = BigUint::parse_bytes(magnitude_str.as_bytes(), 10).unwrap();
 
     let sign = if magnitude.is_zero() {
@@ -371,6 +392,7 @@ fn build_variant(pair: pest::iterators::Pair<Rule>) -> Variant {
         name,
         width,
         value: BigInt::from_biguint(sign, magnitude),
+        signed,
     }
 }
 
@@ -397,16 +419,19 @@ mod tests {
                         name: "a".to_string(),
                         width: 42,
                         value: BigInt::from(1),
+                        signed: false,
                     },
                     Variant {
                         name: "b".to_string(),
                         width: 42,
                         value: BigInt::from(-2),
+                        signed: true,
                     },
                     Variant {
                         name: "c".to_string(),
                         width: 42,
                         value: BigInt::from(3),
+                        signed: false,
                     },
                 ],
                 packed_dimensions: vec![],

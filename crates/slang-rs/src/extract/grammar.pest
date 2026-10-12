@@ -30,9 +30,9 @@ signed_modifier = { signed_keyword | unsigned_keyword }
 
 logic_type = { ( "logic" | "reg" | "bit" ) ~ signed_modifier? ~ dimensions }
 
-struct_type = { "struct" ~ ("packed")? ~ "{" ~ field_list ~ "}" ~ full_identifier ~ dimensions }
+struct_type = { "struct" ~ ("packed" ~ signed_modifier?)? ~ "{" ~ field_list ~ "}" ~ full_identifier ~ dimensions }
 
-union_type = { "union" ~ ("packed")? ~ "{" ~ field_list ~ "}" ~ full_identifier ~ dimensions }
+union_type = { "union" ~ ("packed" ~ signed_modifier?)? ~ "{" ~ field_list ~ "}" ~ full_identifier ~ dimensions }
 
 enum_type = { "enum" ~ "{" ~ variant_list ~ "}" ~ full_identifier ~ dimensions }
 
@@ -40,13 +40,24 @@ int_type = { "int" ~ signed_modifier? ~ dimensions }
 
 longint_type = { "longint" ~ signed_modifier? ~ dimensions }
 
-allowed_type = { logic_type | struct_type | union_type | enum_type | int_type | longint_type }
+shortint_type = { "shortint" ~ signed_modifier? ~ dimensions }
+
+byte_type = { "byte" ~ signed_modifier? ~ dimensions }
+
+integer_type = { "integer" ~ signed_modifier? ~ dimensions }
+
+time_type = { "time" ~ signed_modifier? ~ dimensions }
+
+// `integer` before `int`, which is its prefix.
+allowed_type = { logic_type | struct_type | union_type | enum_type | integer_type | int_type | longint_type | shortint_type | byte_type | time_type }
 
 field = { allowed_type ~ identifier }
 
 field_list = { field ~ (";" ~ field)* ~ (";")? }
 
-verilog_decimal = { negative_sign? ~ non_negative_integer ~ "'" ~ ("s")? ~ "d" ~ non_negative_integer }
+signed_literal = { "s" }
+
+verilog_decimal = { negative_sign? ~ non_negative_integer ~ "'" ~ signed_literal? ~ "d" ~ non_negative_integer }
 
 variant = { identifier ~ "=" ~ verilog_decimal }
 

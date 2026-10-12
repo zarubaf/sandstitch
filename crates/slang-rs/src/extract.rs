@@ -78,6 +78,18 @@ pub struct InterfacePort {
     pub loc: Option<SourceLoc>,
 }
 
+/// A port whose type could not be parsed (for example `real`, `string` or
+/// `event`), as listed by [`extract_instance_ports_checked_from_value`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnsupportedPort {
+    pub name: String,
+    /// The port's type text, after type-parameter and alias resolution.
+    pub type_text: String,
+    /// Why the type could not be parsed.
+    pub error: String,
+    pub loc: Option<SourceLoc>,
+}
+
 pub struct ParameterDef {
     pub name: String,
     pub ty: Type,
@@ -221,27 +233,14 @@ fn body_ports(type_resolver: &TypeResolver, body: &Value, skip_unsupported: bool
     for instance_member in MemberIter::new(body, &["Port", "InterfacePort"]) {
         let kind = instance_member["kind"].as_str().unwrap();
         match kind {
-            "Port" => {
-                let port_name = instance_member["name"].as_str().unwrap();
-                let direction = instance_member["direction"].as_str().unwrap();
-                let type_str = type_resolver
-                    .resolve_with(instance_member["type"].as_str().unwrap(), &type_parameters);
-                match parse_type_definition_no_error(&type_str) {
-                    Ok(ty) => ports.push(Port {
-                        dir: PortDir::from_str(direction).unwrap(),
-                        name: port_name.to_string(),
-                        ty,
-                        loc: source_loc(instance_member),
-                    }),
-                    Err(e) => {
-                        if skip_unsupported {
-                            continue;
-                        } else {
-                            panic!("{}", e);
-                        }
+            "Port" => match parse_port(type_resolver, &type_parameters, instance_member) {
+                Ok(port) => ports.push(port),
+                Err(unsupported) => {
+                    if !skip_unsupported {
+                        panic!("{}", unsupported.error);
                     }
                 }
-            }
+            },
             "InterfacePort" => {
                 if !skip_unsupported {
                     panic!("Interface ports are not currently supported.")
@@ -251,6 +250,31 @@ fn body_ports(type_resolver: &TypeResolver, body: &Value, skip_unsupported: bool
         }
     }
     ports
+}
+
+/// Parses one `Port` member of an instance body.
+fn parse_port(
+    type_resolver: &TypeResolver,
+    type_parameters: &HashMap<String, String>,
+    member: &Value,
+) -> Result<Port, UnsupportedPort> {
+    let port_name = member["name"].as_str().unwrap();
+    let direction = member["direction"].as_str().unwrap();
+    let type_text = type_resolver.resolve_with(member["type"].as_str().unwrap(), type_parameters);
+    match parse_type_definition_no_error(&type_text) {
+        Ok(ty) => Ok(Port {
+            dir: PortDir::from_str(direction).unwrap(),
+            name: port_name.to_string(),
+            ty,
+            loc: source_loc(member),
+        }),
+        Err(e) => Err(UnsupportedPort {
+            name: port_name.to_string(),
+            type_text,
+            error: e.to_string(),
+            loc: source_loc(member),
+        }),
+    }
 }
 
 fn body_interface_ports(body: &Value) -> Vec<InterfacePort> {
@@ -306,6 +330,26 @@ pub fn extract_instance_ports_from_value(
     let type_resolver = TypeResolver::new(value);
     let body = find_instance_body(value, &type_resolver, path)?;
     Some(body_ports(&type_resolver, body, skip_unsupported))
+}
+
+/// Extracts the ports of the instance at the dot-separated hierarchical
+/// `path`, like [`extract_instance_ports_from_value`], but never panics or
+/// skips silently: a port whose type cannot be parsed is an
+/// [`UnsupportedPort`]. Ports are in declaration order. Interface ports are
+/// not included; use [`extract_instance_interface_ports_from_value`].
+/// Returns `None` if no such instance exists.
+pub fn extract_instance_ports_checked_from_value(
+    value: &Value,
+    path: &str,
+) -> Option<Vec<Result<Port, UnsupportedPort>>> {
+    let type_resolver = TypeResolver::new(value);
+    let body = find_instance_body(value, &type_resolver, path)?;
+    let type_parameters = type_resolver.type_parameters(body);
+    Some(
+        MemberIter::new(body, &["Port"])
+            .map(|member| parse_port(&type_resolver, &type_parameters, member))
+            .collect(),
+    )
 }
 
 /// Lists the interface ports of every top-level module, keyed by module name.
@@ -696,14 +740,13 @@ impl<'a> TypeResolver<'a> {
 
 /// Whether a textual type is a struct, union or enum declaration (which ends
 /// in a nominal name, followed by any dimensions).
+/// The prefix may carry `packed` and a signing (`struct packed signed{`).
 fn is_aggregate(type_text: &str) -> bool {
     matches!(
-        type_text.split_once('{').map(|(prefix, _)| prefix.trim()),
-        Some("struct")
-            | Some("struct packed")
-            | Some("union")
-            | Some("union packed")
-            | Some("enum")
+        type_text
+            .split_once('{')
+            .and_then(|(prefix, _)| prefix.split_whitespace().next()),
+        Some("struct") | Some("union") | Some("enum")
     )
 }
 

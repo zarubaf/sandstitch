@@ -67,6 +67,7 @@ endmodule
         ports[0].ty,
         Type::Struct {
             name: "cfg_pkg::flit_t".to_string(),
+            signed: false,
             fields: flit_fields(),
             packed_dimensions: vec![Range { msb: 2, lsb: 0 }],
             unpacked_dimensions: vec![],
@@ -267,6 +268,7 @@ endmodule
         flit[0].ty,
         Type::Struct {
             name: "cfg_pkg::flit_t".to_string(),
+            signed: false,
             fields: flit_fields(),
             packed_dimensions: vec![Range { msb: 2, lsb: 0 }],
             unpacked_dimensions: vec![],
@@ -356,4 +358,189 @@ endmodule
         let ports = extract_instance_ports_from_value(&value, instance, false).unwrap();
         assert_named_unpacked(&ports[0].ty, name);
     }
+}
+
+fn logic(signed: bool, msb: i32) -> Type {
+    Type::Logic {
+        signed,
+        packed_dimensions: vec![Range { msb, lsb: 0 }],
+        unpacked_dimensions: vec![],
+    }
+}
+
+#[test]
+fn integral_atom_types_parse() {
+    let sv = "
+module atoms (
+  input byte b_i,
+  input shortint s_i,
+  input integer i_i,
+  input integer unsigned iu_i,
+  input time t_i,
+  input byte unsigned bu_i
+);
+endmodule
+";
+    let value = elaborate(&[sv], &["atoms"], &[]);
+    let ports = extract_ports_from_value(&value, false);
+    let types: Vec<(&str, &Type)> = ports["atoms"]
+        .iter()
+        .map(|p| (p.name.as_str(), &p.ty))
+        .collect();
+    assert_eq!(
+        types,
+        vec![
+            ("b_i", &logic(true, 7)),
+            ("s_i", &logic(true, 15)),
+            ("i_i", &logic(true, 31)),
+            ("iu_i", &logic(false, 31)),
+            ("t_i", &logic(false, 63)),
+            ("bu_i", &logic(false, 7)),
+        ]
+    );
+}
+
+#[test]
+fn signed_packed_struct_and_atom_fields_parse() {
+    let sv = "
+package sp;
+  typedef struct packed signed { byte a; integer b; shortint c; } s_t;
+endpackage
+module sm (input sp::s_t x);
+endmodule
+";
+    let value = elaborate(&[sv], &["sm"], &[]);
+    let ports = extract_ports_from_value(&value, false);
+    let Type::Struct { fields, .. } = &ports["sm"][0].ty else {
+        panic!("expected a struct, got {:?}", ports["sm"][0].ty);
+    };
+    let fields: Vec<(&str, &Type)> = fields.iter().map(|f| (f.name.as_str(), &f.ty)).collect();
+    assert_eq!(
+        fields,
+        vec![
+            ("a", &logic(true, 7)),
+            ("b", &logic(true, 31)),
+            ("c", &logic(true, 15)),
+        ]
+    );
+    assert_eq!(ports["sm"][0].ty.width().unwrap(), 56);
+    // The typedef name replaces Slang's internal name, as for unsigned structs.
+    let Type::Struct { name, .. } = &ports["sm"][0].ty else {
+        unreachable!()
+    };
+    assert_eq!(name, "sp::s_t");
+}
+
+#[test]
+fn struct_and_union_signing() {
+    let sv = "
+package sg;
+  typedef struct packed signed { logic [3:0] a; } ss_t;
+  typedef struct packed unsigned { logic [3:0] a; } su_t;
+  typedef struct packed { logic [3:0] a; } sp_t;
+  typedef union packed signed { logic [3:0] a; logic [3:0] b; } us_t;
+  typedef union packed { logic [3:0] a; logic [3:0] b; } up_t;
+endpackage
+module sgm (input sg::ss_t ss, input sg::su_t su, input sg::sp_t sp,
+            input sg::us_t us, input sg::up_t up);
+endmodule
+";
+    let value = elaborate(&[sv], &["sgm"], &[]);
+    let ports = extract_ports_from_value(&value, false);
+    let signing: Vec<(&str, &str, bool)> = ports["sgm"]
+        .iter()
+        .map(|p| match &p.ty {
+            Type::Struct { name, signed, .. } | Type::Union { name, signed, .. } => {
+                (p.name.as_str(), name.as_str(), *signed)
+            }
+            other => panic!("expected a struct or union, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        signing,
+        vec![
+            ("ss", "sg::ss_t", true),
+            ("su", "sg::su_t", false),
+            ("sp", "sg::sp_t", false),
+            ("us", "sg::us_t", true),
+            ("up", "sg::up_t", false),
+        ]
+    );
+}
+
+#[test]
+fn enum_variant_signedness() {
+    let sv = "
+package ep;
+  typedef enum { X, Y } int_e;
+  typedef enum logic signed [3:0] { SA = 1, SB = -2 } signed_e;
+  typedef enum logic [3:0] { UA = 1, UB = 2 } unsigned_e;
+endpackage
+module em (input ep::int_e i_i, input ep::signed_e s_i, input ep::unsigned_e u_i);
+endmodule
+";
+    let value = elaborate(&[sv], &["em"], &[]);
+    let ports = extract_ports_from_value(&value, false);
+    let signedness: Vec<(&str, Vec<bool>)> = ports["em"]
+        .iter()
+        .map(|p| match &p.ty {
+            Type::Enum { variants, .. } => {
+                (p.name.as_str(), variants.iter().map(|v| v.signed).collect())
+            }
+            other => panic!("expected an enum, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        signedness,
+        vec![
+            ("i_i", vec![true, true]),
+            ("s_i", vec![true, true]),
+            ("u_i", vec![false, false]),
+        ]
+    );
+}
+
+#[test]
+fn unparsable_port_types_listed() {
+    let sv = "
+module np (
+  input real r_i,
+  input logic x,
+  input string s_i
+);
+endmodule
+";
+    let value = elaborate(&[sv], &["np"], &[]);
+    let ports = extract_instance_ports_checked_from_value(&value, "np").unwrap();
+    // Declaration order, parsed and unparsed interleaved.
+    type Listed<'a> = (&'a str, Option<(&'a str, u32, Option<u32>)>);
+    let listed: Vec<Listed> = ports
+        .iter()
+        .map(|port| match port {
+            Ok(port) => (port.name.as_str(), None),
+            Err(u) => {
+                let loc = u.loc.as_ref().unwrap();
+                (
+                    u.name.as_str(),
+                    Some((u.type_text.as_str(), loc.line, loc.column)),
+                )
+            }
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            ("r_i", Some(("real", 3, Some(14)))),
+            ("x", None),
+            ("s_i", Some(("string", 5, Some(16)))),
+        ]
+    );
+    assert!(extract_instance_ports_checked_from_value(&value, "nope").is_none());
+}
+
+#[test]
+fn absolute_path_normalizes() {
+    let dir = std::path::Path::new("/a/b/c");
+    assert_eq!(absolute_path(dir, "../../x/./y.sv"), "/a/x/y.sv");
+    assert_eq!(absolute_path(dir, "/abs/z.sv"), "/abs/z.sv");
 }

@@ -89,6 +89,15 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
   used (`curl`, `toml`, `semver`, `cargo_metadata`, `log`, `env_logger`);
   `[lints.clippy]` allows `collapsible_if`, `unneeded_wildcard_pattern` and
   `while_let_loop` for pre-existing upstream code.
+- Sandstitch extensions:
+  - `feat(slang-rs): resolve type parameters, add locations and interface ports`.
+  - `feat(slang-rs): parse integral atom types, keep enum and struct signedness
+    and list unparsable ports`: the grammar accepts `byte`, `shortint`,
+    `integer`, `time` and `struct|union packed signed|unsigned`;
+    `Type::Struct::signed`, `Type::Union::signed` and `Variant::signed`;
+    `is_aggregate` recognizes signed aggregates, so a named signed struct
+    resolves to its typedef name (`sp::s_t`, not `sp::s$3`); `UnsupportedPort`
+    and `extract_instance_ports_checked_from_value`; `absolute_path` is public.
 
 ### xlsynth-vast (vendored)
 
