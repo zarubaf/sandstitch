@@ -9,37 +9,40 @@ Let a design package configure an imported SystemVerilog module with value **and
 ## Decisions
 
 1. **Types come from SystemVerilog, not Rust.** A design package writes a small SV package (typically the IP's own typedef macros with chosen widths) and passes it as a source. Type overrides are SV type expressions, e.g. `cfg_pkg::flit_t`. Slang resolves them; the library does not model type construction. A Rust type builder is deferred until a design needs computed types the IP macros cannot express.
-1. **Direct parameterized instances.** Emitted RTL instantiates the original module with `#(...)` overrides. Generated elaboration tops exist only for import and never reach emitted RTL. This replaces upstream's wrapper-emitting `parameterize` (recorded in `doc/fork.md`).
+1. **Direct parameterized instances.** Emitted RTL instantiates the original module with `#(...)` overrides. Generated elaboration tops exist only for import and never reach emitted RTL. Upstream `parameterize` already emits direct instances (wrappers come only from `wrap()`); it gains type parameters and a new elaboration path.
 1. **Equivalent types connect; bits need intent.** Typed ends must have structurally equivalent types. A plain bit slice or `connect_bits` drops to width-only checking.
 1. **Typed nets in emitted RTL** where the type can be named; flat `logic` otherwise.
 1. **slang-rs is hard-forked** as a git subtree at `crates/slang-rs` (tag `v0.22.0`) so fixes can be contributed back.
+1. **xlsynth-vast is vendored** at `crates/xlsynth-vast` from the published 0.65.0 crate (upstream lives in the xlsynth-crate monorepo, so a subtree is impractical). Needed for type-valued parameters and member selects, which it cannot express today; fixes go upstream as patches.
+1. **Fallible variants, panicking wrappers.** New `try_*` functions return `Result<_, ImportError>`; existing upstream functions keep their signatures and panic with the rendered diagnostic. This keeps upstream tests and cherry-picks working.
 1. **Diagnostics follow rustc**: codes, spans into Rust call sites and SV sources, notes and help, one model rendered to terminal and JSON.
-1. **One entry point**: `cargo xtask` runs every check locally and in CI.
+1. **One entry point**: `cargo xtask` runs every check locally and in CI, replacing pre-commit. Markdown auto-formatting (mdformat, Python) is dropped; text hygiene checks stay.
 
 ## Layout
 
 ```
 /                    library crate (Topstitch fork), workspace root
 crates/slang-rs/     slang-rs subtree (hard fork)
+crates/xlsynth-vast/ xlsynth-vast 0.65.0, vendored (hard fork)
 designs/floonoc/     FlooNoC design package, publish = false
 third_party/         pinned RTL subtrees (floonoc, common_cells, axi) with licences
 xtask/               cargo xtask: ci, slang, explain
 ```
 
-Dependencies: `designs/floonoc → library → crates/slang-rs`. `cargo xtask ci` fails if library or `crates/slang-rs` sources mention `floo`, `pulp` or `axi` (case-insensitive, outside tests' inline fixtures). `designs/` and `third_party/` are test and example material: not published, not part of release artifacts. Third-party sources keep their headers and licence files.
+Dependencies: `designs/floonoc → library → crates/{slang-rs, xlsynth-vast}`. `cargo xtask ci` fails if library or `crates/slang-rs` sources mention `floo`, `pulp` or `axi` (case-insensitive, outside tests' inline fixtures). `designs/` and `third_party/` are test and example material: not published, not part of release artifacts. Third-party sources keep their headers and licence files.
 
 ## Specialization
 
 ```rust
-let router = ModDef::from_verilog_with_config(&cfg)?;      // sources include generated cfg_pkg.sv
-let r5 = router.parameterize(&[
+let router = ModDef::try_from_verilog_with_config("floo_nw_router", &cfg)?; // sources include cfg_pkg.sv
+let r5 = router.try_parameterize(&[
     ("NumRoutes", 5.into()),
     ("flit_t", ParameterValue::Type("cfg_pkg::flit_t".into())),
 ])?;                                                        // Result<ModDef, ImportError>
 ```
 
 - **Identity**: original module name, ordered overrides, and the import configuration including each source file's content hash and the Slang version. The key has a stable short hash recorded for provenance.
-- **Elaboration**: on a cache miss, write a portless top that instantiates the original with the overrides into a temporary directory; Slang elaborates it; read the instance's ports with resolved types. Value-only overrides use the same path.
+- **Elaboration**: on a cache miss, write a portless top that instantiates the original with the overrides into a temporary directory; Slang elaborates it (with `--ast-json-source-info`); read the instance's ports with resolved types. Slang's JSON leaves ports typed by a type parameter unresolved (`child.T[2:0]`); the slang-rs fork substitutes the instance's `TypeParameter` type and re-applies the dimensions. Value-only overrides use the same path.
 - **Result**: a specialized `ModDef` referencing the original module and its overrides; ports carry `PortType`. Specializations of one module coexist; emission uses the original name with different overrides.
 - **Errors**: `ImportError` with Slang diagnostics (file, line): unknown type, unknown parameter, unsupported port form.
 
@@ -70,8 +73,8 @@ let r5 = router.parameterize(&[
 ## Diagnostics
 
 - `Diagnostic { code: "S0xxx", severity, message, primary label, secondary labels, notes, helps }`, spans into Rust (captured with `#[track_caller]`) and SV (Slang locations).
-- Rendered with `annotate-snippets` for terminals; serialized to JSON for the explorer, documentation and CI.
-- `check()` collects all structural diagnostics; import errors report all Slang diagnostics for that specialization.
+- Rendered with `annotate-snippets` for terminals (Rust spans via `std::panic::Location`, SV spans from `--ast-json-source-info`); serialized to JSON for the explorer, documentation and CI.
+- `check()` collects all structural diagnostics; import errors report all Slang diagnostics for that specialization. Upstream `connect` keeps its immediate width/direction panics; type-equivalence violations are reported by `check()`, and `emit()` panics with the rendered diagnostics if `check()` has errors. Converting the remaining upstream panics is later work.
 - Error index: one Markdown entry per code with a failing example and the fix; `cargo xtask explain S0xxx`. Tests assert every code has an entry and each example triggers its code.
 - Diagnostic output is snapshot-tested on broken fixtures; confusing messages become new fixtures.
 
