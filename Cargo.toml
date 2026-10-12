@@ -8,11 +8,15 @@ description = "Stitch together Verilog modules with Rust"
 repository = "https://github.com/zarubaf/sandstitch"
 homepage = "https://github.com/zarubaf/sandstitch"
 
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
 [dependencies]
 num-bigint = "0.4.3"
 indexmap = "2.5.0"
-xlsynth-vast = "=0.65.0"
-slang-rs = "=0.22.0"
+xlsynth-vast = { path = "crates/xlsynth-vast", version = "=0.65.0" }
+slang-rs = { path = "crates/slang-rs", version = "=0.22.0" }
 itertools = "0.10"
 regex = "1.11.0"
 nalgebra = { version = "0.32", default-features = false, features = ["macros"] }
