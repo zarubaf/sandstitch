@@ -28,9 +28,15 @@ fn tarball_ok(tarball: &Path) -> Result<bool, String> {
     Ok(tarball.is_file() && sha256_hex(tarball)? == SHA256)
 }
 
+#[cfg(unix)]
 fn is_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(p: &Path) -> bool {
+    p.is_file()
 }
 
 /// Returns the path of the `slang` binary from the verified pinned tarball,
@@ -72,9 +78,14 @@ pub fn ensure() -> Result<PathBuf, String> {
             return Err(format!("sha256 mismatch: expected {SHA256}, got {got}"));
         }
     }
-    if is_executable(&bin) {
+    // The marker records the tarball digest the binary was extracted from, so
+    // a truncated or foreign binary is never trusted.
+    let marker = dir.join("slang.ok");
+    let marker_ok = std::fs::read_to_string(&marker).is_ok_and(|m| m.trim() == SHA256);
+    if marker_ok && is_executable(&bin) {
         return Ok(bin);
     }
+    let _ = std::fs::remove_file(&marker);
     // Extract into a private temp dir, then rename into place atomically.
     let tmp = dir.join(format!("extract.{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
@@ -97,5 +108,6 @@ pub fn ensure() -> Result<PathBuf, String> {
     };
     let _ = std::fs::remove_dir_all(&tmp);
     result?;
+    std::fs::write(&marker, format!("{SHA256}\n")).map_err(|e| format!("write marker: {e}"))?;
     Ok(bin)
 }

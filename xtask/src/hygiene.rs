@@ -183,9 +183,18 @@ mod tests {
     }
 
     #[test]
-    fn real_repository_is_clean() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let v = check_repo(root).unwrap();
+    fn own_sources_are_clean() {
+        // Guards against the checks flagging their own source (no git needed).
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.parent().unwrap();
+        let mut files = vec!["xtask/Cargo.toml".to_string()];
+        for e in std::fs::read_dir(manifest.join("src")).unwrap() {
+            files.push(format!(
+                "xtask/src/{}",
+                e.unwrap().file_name().to_string_lossy()
+            ));
+        }
+        let v = check_files(root, &files);
         assert!(v.is_empty(), "{v:#?}");
     }
 
