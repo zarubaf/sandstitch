@@ -151,7 +151,7 @@ fn end_of_line_column_renders_snippet() {
 }
 
 #[test]
-fn column_zero_is_printed_as_given_and_points_at_line_start() {
+fn column_zero_is_treated_as_column_one() {
     let span = Span::Rust {
         file: RUST_FILE.into(),
         line: 4,

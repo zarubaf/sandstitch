@@ -5,16 +5,16 @@ use annotate_snippets::{AnnotationKind, Group, Level, Origin, Renderer, Snippet}
 use std::ops::Range;
 use std::path::Path;
 
-/// Location of a span: file, 1-based line/column, and requested length in chars.
+/// Location of a span: file, 1-based line/column (column 0 is treated as 1), and requested length in chars.
 fn locate(span: &Span) -> Option<(&str, u32, u32, u32)> {
     match span {
-        Span::Rust { file, line, column } => Some((file, *line, *column, 0)),
+        Span::Rust { file, line, column } => Some((file, *line, (*column).max(1), 0)),
         Span::Sv {
             file,
             line,
             column,
             len,
-        } => Some((file, *line, *column, *len)),
+        } => Some((file, *line, (*column).max(1), *len)),
         Span::None => None,
     }
 }
@@ -37,7 +37,7 @@ fn read_source(file: &str) -> Option<String> {
 
 /// Byte range of the highlighted text, or None if the position is outside the source.
 /// A zero `len` highlights the identifier-like token at the position (at least one char).
-/// Column 0 is placed at line start; the column just past the line end gives an empty range.
+/// The column just past the line end gives an empty range.
 fn byte_range(src: &str, line: u32, column: u32, len: u32) -> Option<Range<usize>> {
     let mut start_of_line = 0usize;
     for (i, l) in src.split_inclusive('\n').enumerate() {
@@ -112,18 +112,6 @@ fn render_one(d: &Diagnostic, renderer: &Renderer) -> String {
             source_of(f).and_then(|s| byte_range(s, line, column, len))
         });
         match (loc, range) {
-            (Some((file, line, 0, _)), Some(range)) => {
-                unshown.push(format!(
-                    "{file}:{line}:0: column 0 is invalid (columns are 1-based); \
-                     marking the start of the line"
-                ));
-                located.push(Located {
-                    file,
-                    range,
-                    text: &l.text,
-                    primary: *primary,
-                });
-            }
             (Some((file, ..)), Some(range)) => located.push(Located {
                 file,
                 range,
