@@ -27,6 +27,7 @@ fn interface_port_error_of_definition(module: &str, cfg: &ParserConfig) -> Optio
 /// elaboration.
 #[derive(Clone)]
 pub(crate) struct VerilogImport {
+    /// Absolute source paths, in compile order.
     pub(crate) sources: Vec<String>,
     pub(crate) incdirs: Vec<String>,
     pub(crate) defines: Vec<(String, String)>,
@@ -41,6 +42,10 @@ pub(crate) struct VerilogImport {
     /// Set on a specialization ([`ModDef::try_parameterize`]): the identity of
     /// the module and overrides it was elaborated with.
     pub(crate) specialization: Option<SpecializationKey>,
+    /// The sources are a temporary file written from text passed to
+    /// [`ModDef::from_verilog`]; it is deleted once the import returns, so
+    /// the build manifest leaves it out.
+    pub(crate) inline: bool,
 }
 
 impl VerilogImport {
@@ -87,7 +92,7 @@ impl VerilogImport {
     pub(crate) fn new(cfg: &ParserConfig) -> Self {
         let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect();
         VerilogImport {
-            sources: strings(cfg.sources),
+            sources: cfg.sources.iter().map(|s| absolute(s)).collect(),
             incdirs: strings(cfg.incdirs),
             defines: cfg
                 .defines
@@ -103,8 +108,16 @@ impl VerilogImport {
             skip_unsupported: cfg.skip_unsupported,
             extra_arguments: strings(cfg.extra_arguments),
             specialization: None,
+            inline: false,
         }
     }
+}
+
+/// `source` as an absolute path, relative to the current directory.
+fn absolute(source: &str) -> String {
+    std::path::absolute(source)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| source.to_string())
 }
 
 pub(crate) fn parser_param_to_param(
@@ -257,7 +270,11 @@ impl ModDef {
             ..Default::default()
         };
 
-        Self::from_verilog_with_config(name, &cfg)
+        let mod_def = Self::from_verilog_with_config(name, &cfg);
+        if let Some(import) = mod_def.core.write().verilog_import.as_mut() {
+            import.inline = true;
+        }
+        mod_def
     }
 
     /// Creates a new module definition from Verilog sources. The `name`

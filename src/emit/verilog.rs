@@ -217,14 +217,14 @@ impl NetCollection {
         options: &EmitOptions,
     ) -> Expr {
         match self.declared.get(name) {
-            Some(ty) => {
+            Some(_) => {
                 let path = typed_path(slice, &end).unwrap_or_else(|| {
                     panic!(
                         "typed net {name} has an untyped use: {}",
                         slice.debug_string()
                     )
                 });
-                typed_net_expression(net, ty, &path, file)
+                typed_net_expression(net, &path, file)
             }
             None => slice_net(
                 &net,
@@ -239,7 +239,7 @@ impl NetCollection {
 }
 
 /// The declaration type of a typed net: the named type with the packed
-/// dimensions of `ty`, each renumbered `[n-1:0]`.
+/// dimensions of `ty` as declared.
 fn declared_type(ty: &PortType, file: &mut VastFile) -> VastDataType {
     let (package, name) = declarable(ty).expect("typed nets have a declarable type");
     let element = file.make_extern_package_type(package, name);
@@ -247,8 +247,8 @@ fn declared_type(ty: &PortType, file: &mut VastFile) -> VastDataType {
     if dims.is_empty() {
         element
     } else {
-        let sizes: Vec<i64> = dims.iter().map(|d| d.size() as i64).collect();
-        file.make_packed_array_type(element, &sizes)
+        let ranges: Vec<(i64, i64)> = dims.iter().map(|d| (d.msb, d.lsb)).collect();
+        file.make_packed_array_type_ranges(element, &ranges)
     }
 }
 
@@ -261,30 +261,18 @@ fn packed_dims(ty: &PortType) -> &[Dim] {
     }
 }
 
-/// The selection `path` of a net declared with type `ty`.
-fn typed_net_expression(
-    net: LogicRef,
-    ty: &PortType,
-    path: &[Select],
-    file: &mut VastFile,
-) -> Expr {
+/// The selection `path` of a typed net.
+fn typed_net_expression(net: LogicRef, path: &[Select], file: &mut VastFile) -> Expr {
     if path.is_empty() {
         return net.to_expr();
     }
-    // The net's own dimensions are declared `[n-1:0]`: an index into them
-    // becomes the element's position above the least significant end.
-    let dims = packed_dims(ty);
+    // Dimensions are declared as in the type, so indices are emitted as
+    // selected.
     let mut expr = net.to_indexable_expr();
-    for (i, select) in path.iter().enumerate() {
+    for select in path {
         expr = match select {
             Select::Field(name) => file.make_member_select_indexable(&expr.to_expr(), name),
-            Select::Index(index) => {
-                let index = match dims.get(i) {
-                    Some(dim) => (*index as i64 - dim.lsb).abs(),
-                    None => *index as i64,
-                };
-                file.make_index(&expr, index).to_indexable_expr()
-            }
+            Select::Index(index) => file.make_index(&expr, *index as i64).to_indexable_expr(),
         };
     }
     expr.to_expr()

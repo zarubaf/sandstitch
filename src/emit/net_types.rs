@@ -9,10 +9,17 @@
 //! equivalent to a whole value covering the bits of the other end. Such a use
 //! is emitted as a member select or index. If any use is not typed
 //! (`connect_bits` between different layouts, a struct connected to a plain
-//! vector or an untyped port, a bit range that is no member, a wire), the net
-//! is declared as a flat bit vector, as in untyped designs, and every use is
-//! a bit slice. A typed net is therefore never connected to an end of
-//! another type.
+//! vector or an untyped port, a bit range that is no member, a wire, a
+//! tieoff), the net is declared as a flat bit vector, as in untyped designs,
+//! and every use is a bit slice. A typed net is therefore never connected to
+//! an end of another type.
+//!
+//! Tieoffs keep a net flat because a literal does not assign to every
+//! aggregate: not to an enum, nor to an unpacked struct or union, and
+//! [`PortType`] does not record whether an aggregate is packed.
+//!
+//! Typed declarations keep the declared `[msb:lsb]` ranges of the type's
+//! packed dimensions, so element indices are emitted as declared.
 
 use indexmap::IndexMap;
 
@@ -21,8 +28,17 @@ use crate::model::port_slice::selections_covering;
 use crate::{PortSlice, PortType, QualifiedName, Select};
 
 /// The package and name of a type a declaration can name: a struct or union
-/// declared in a package.
+/// declared in a package, without negative bounds in its own packed
+/// dimensions. The name always denotes the element type: an array typedef is
+/// imported under its element's name with the typedef's dimensions.
 pub(super) fn declarable(ty: &PortType) -> Option<(&str, &str)> {
+    let dims = match ty {
+        PortType::Struct { packed, .. } | PortType::Union { packed, .. } => packed,
+        _ => return None,
+    };
+    if dims.iter().any(|d| d.msb < 0 || d.lsb < 0) {
+        return None;
+    }
     match ty {
         PortType::Struct {
             name:
@@ -47,7 +63,6 @@ pub(super) fn declarable(ty: &PortType) -> Option<(&str, &str)> {
 /// What a use of a net is connected to.
 pub(super) enum End<'a> {
     Slice(&'a PortSlice),
-    Tieoff,
     Untyped,
 }
 
@@ -55,8 +70,9 @@ impl<'a> End<'a> {
     pub(super) fn of(item: &'a ConnectedItem) -> Self {
         match item {
             ConnectedItem::PortSlice(slice) => End::Slice(slice),
-            ConnectedItem::Tieoff(_) => End::Tieoff,
-            ConnectedItem::Unused(_) | ConnectedItem::Wire(_) => End::Untyped,
+            ConnectedItem::Tieoff(_) | ConnectedItem::Unused(_) | ConnectedItem::Wire(_) => {
+                End::Untyped
+            }
         }
     }
 }
@@ -88,11 +104,6 @@ pub(super) fn typed_path(net_slice: &PortSlice, end: &End) -> Option<Vec<Select>
                 .find(|(_, ty)| ends.iter().any(|(_, other)| ty.equivalent(other).is_ok()))
                 .map(|(path, _)| path)
         }
-        // A literal assigns to a struct, union or vector, not to an enum.
-        End::Tieoff => values
-            .into_iter()
-            .find(|(_, ty)| !matches!(ty, PortType::Enum { .. }))
-            .map(|(path, _)| path),
         End::Untyped => None,
     }
 }

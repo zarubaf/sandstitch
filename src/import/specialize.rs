@@ -95,6 +95,8 @@ impl KeyHasher {
             extra_arguments,
             // Derived from the other fields.
             specialization: _,
+            // Provenance only; the sources themselves are hashed.
+            inline: _,
         } = import;
         self.strs(sources);
         self.strs(incdirs);
