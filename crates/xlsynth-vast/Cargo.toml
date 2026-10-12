@@ -15,10 +15,7 @@ name = "xlsynth-vast"
 version = "0.65.0"
 authors = ["Christopher D. Leary <cdleary@gmail.com>"]
 build = false
-autolib = false
-autobins = false
 autoexamples = false
-autotests = false
 autobenches = false
 description = "A Rust-native Verilog and SystemVerilog abstract syntax tree and emitter"
 homepage = "https://github.com/xlsynth/xlsynth-crate"
@@ -26,51 +23,20 @@ documentation = "https://docs.rs/xlsynth-vast"
 readme = "README.md"
 license = "Apache-2.0"
 repository = "https://github.com/xlsynth/xlsynth-crate"
-resolver = "2"
 
 [lib]
 name = "xlsynth_vast"
 path = "src/lib.rs"
 
-[[test]]
-name = "array_type_test"
-path = "tests/array_type_test.rs"
 
-[[test]]
-name = "correctness_test"
-path = "tests/correctness_test.rs"
 
-[[test]]
-name = "expression_test"
-path = "tests/expression_test.rs"
 
-[[test]]
-name = "literal_format_test"
-path = "tests/literal_format_test.rs"
 
-[[test]]
-name = "operator_precedence_test"
-path = "tests/operator_precedence_test.rs"
 
-[[test]]
-name = "ownership_validation_test"
-path = "tests/ownership_validation_test.rs"
 
-[[test]]
-name = "public_api_test"
-path = "tests/public_api_test.rs"
 
-[[test]]
-name = "statement_test"
-path = "tests/statement_test.rs"
 
-[[test]]
-name = "string_literal_test"
-path = "tests/string_literal_test.rs"
 
-[[test]]
-name = "vast_test"
-path = "tests/vast_test.rs"
 
 [dependencies.num-bigint]
 version = "0.4.6"
@@ -78,6 +44,7 @@ version = "0.4.6"
 [lints.rust]
 warnings = "deny"
 
-[[test]]
-name = "sandstitch_ext_test"
-path = "tests/sandstitch_ext_test.rs"
+
+[lints.clippy]
+write_with_newline = "allow"
+clone_on_copy = "allow"

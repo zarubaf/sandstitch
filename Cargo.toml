@@ -10,7 +10,6 @@ homepage = "https://github.com/zarubaf/sandstitch"
 
 [workspace]
 members = ["crates/*"]
-resolver = "3"
 
 [dependencies]
 num-bigint = "0.4.3"
