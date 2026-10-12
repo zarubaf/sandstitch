@@ -8,13 +8,42 @@ Sandstitch is a hard fork of Topstitch.
 
 ## Policy
 
-- Compatible upstream fixes are taken with `git cherry-pick -x`, so the
-  original commit is recorded in the message.
-- Larger syncs merge an upstream tag (`git merge <tag>`), the one allowed
-  exception to linear history. Update the base above when doing so.
-- Upstream paths stay at the repository root to keep cherry-picks and merges
-  applying.
+- Upstream paths are no longer kept (decided 2026-10-12): `src/` is organised
+  by concern (see Layout), so upstream commits touching `src/` no longer
+  cherry-pick or merge cleanly.
+- Upstream fixes are ported by hand: apply the change at the new path and
+  name the upstream commit in the message
+  (`Ported from xlsynth/topstitch@<sha>`). Changes outside `src/` that still
+  apply may be taken with `git cherry-pick -x`.
+- The base above stays recorded as the reference point for porting. Update it
+  when the ported fixes catch up to a newer upstream tag.
 - Divergences are listed below as they happen.
+
+## Layout
+
+Upstream path (base `v0.100.0`) to Sandstitch path:
+
+| Upstream | Sandstitch |
+| --- | --- |
+| `src/mod_def.rs` | `src/model/mod_def.rs` |
+| `src/mod_def/{core,feedthrough,hierarchy,instances,intf,ports,stub,wrap}.rs` | `src/model/mod_def/` |
+| `src/mod_inst.rs`, `src/funnel.rs`, `src/pipeline.rs`, `src/io.rs`, `src/usage.rs`, `src/metadata.rs` | `src/model/` |
+| `src/port.rs` + `src/port/`, `src/port_slice.rs` + `src/port_slice/`, `src/intf.rs` + `src/intf/` | `src/model/` |
+| `src/connection.rs` + `src/connection/{connected_item,expression_source,port_slice}.rs` | `src/model/` |
+| `src/connection/validate.rs` | `src/check/connection.rs` |
+| `src/mod_def/validate.rs` | `src/check/mod_def.rs` |
+| `src/mod_def/{parser,parser_cfg,parameterize}.rs`, `src/package.rs` | `src/import/` |
+| `src/mod_def/emit.rs` | `src/emit/verilog.rs` |
+| `src/mod_def/dtypes.rs` | `src/physical/geometry.rs` |
+| `src/mod_def/lefdef.rs` | `src/physical/lefdef_io.rs` |
+| `src/lefdef.rs` | `src/physical/lefdef.rs` (still public as `topstitch::lefdef`) |
+| `src/mod_def/{def_parse,lef_parse,pins,tracks,placement,shape,edges}.rs` | `src/physical/` |
+| `src/validate.rs` + `src/validate/` | `src/physical/validate.rs` + `src/physical/validate/` |
+
+`src/lib.rs`, `src/util.rs` and `src/diagnostic/` keep their paths. The public
+API (`topstitch::*`, `topstitch::lefdef`, `topstitch::diagnostic`) is
+unchanged; `src/lib.rs` re-exports it. `git log --follow` traces a file
+across the move.
 
 ## Divergences from upstream
 
@@ -30,7 +59,9 @@ Sandstitch is a hard fork of Topstitch.
 - Clippy lint fixes (behavior-preserving: redundant borrows and useless
   `format!` removed) in `src/mod_def/emit.rs`, `src/mod_def/placement.rs`,
   `src/mod_def/lefdef.rs`, `src/mod_def/hierarchy.rs` and
-  `tests/syntax/params.rs`.
+  `tests/syntax/params.rs` (upstream paths; see Layout for the current ones).
+- `src/` reorganised by concern (see Layout); the moves changed only module,
+  `use` and macro paths.
 - `Cargo.toml`: `slang-rs = "=0.22.0"` and `xlsynth-vast = "=0.65.0"` are
   pinned exactly (upstream used caret requirements).
 
