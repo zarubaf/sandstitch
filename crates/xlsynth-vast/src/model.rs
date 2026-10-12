@@ -196,6 +196,10 @@ pub(crate) struct Ast {
     pub(crate) defs: Vec<DefData>,
     pub(crate) artifacts: Vec<Artifact>,
     pub(crate) assignments: Vec<AssignmentData>,
+    /// Declared `[msb:lsb]` ranges of packed arrays made with
+    /// `make_packed_array_type_ranges`, by data type index; other packed
+    /// arrays are emitted `[n-1:0]`.
+    pub(crate) packed_ranges: std::collections::HashMap<usize, Vec<(i64, i64)>>,
 }
 
 #[derive(Clone, Debug)]

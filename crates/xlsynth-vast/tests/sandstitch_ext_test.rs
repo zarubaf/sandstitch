@@ -124,3 +124,35 @@ fn name_ref_rejects_scoped_names() {
     let mut file = VastFile::new(VastFileType::SystemVerilog);
     file.make_name_ref("pkg::X");
 }
+
+#[test]
+fn packed_array_with_declared_ranges() {
+    let mut file = VastFile::new(VastFileType::SystemVerilog);
+    let module = file.add_module("top");
+    let flit = file.make_extern_package_type("cfg_pkg", "flit_t");
+    let array = file.make_packed_array_type_ranges(flit, &[(0, 2), (5, 4)]);
+    let p = file.add_output(module, "p", &array);
+    let bits = file.make_bit_vector_type(8, false);
+    let vector = file.make_packed_array_type_ranges(bits, &[(3, 1)]);
+    // Sizes follow the ranges.
+    assert_eq!(file.type_flat_bit_count_as_int64(vector).unwrap(), 24);
+    file.add_wire(module, "v", &vector);
+    // Indices are the declared ones.
+    let element = file.make_index(&p.to_indexable_expr(), 5);
+    let data = file.make_member_select(&element.to_expr(), "data");
+    let w = file.add_wire(module, "w", &bits);
+    let assignment = file.make_continuous_assignment(&w.to_expr(), &data);
+    file.add_member_continuous_assignment(module, assignment);
+    assert_eq!(
+        file.emit(),
+        "module top(\n  output cfg_pkg::flit_t [0:2][5:4] p\n);\n  wire [3:1][7:0] v;\n  wire [7:0] w;\n  assign w = p[5].data;\nendmodule\n"
+    );
+}
+
+#[test]
+#[should_panic(expected = "packed-array range bounds must not be negative")]
+fn packed_array_ranges_reject_negative_bounds() {
+    let mut file = VastFile::new(VastFileType::SystemVerilog);
+    let bits = file.make_bit_vector_type(8, false);
+    file.make_packed_array_type_ranges(bits, &[(1, -1)]);
+}

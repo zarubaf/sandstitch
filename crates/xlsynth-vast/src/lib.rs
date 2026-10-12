@@ -710,6 +710,34 @@ impl VastFile {
         })
     }
 
+    /// Creates a packed multidimensional array with explicit `[msb:lsb]`
+    /// ranges, ordered from outermost to innermost. Ranges may ascend
+    /// (`[0:2]`) or start above zero (`[5:4]`); indices into the array are
+    /// then the declared ones.
+    ///
+    /// # Panics
+    ///
+    /// As [`VastFile::make_packed_array_type`], and when a bound is negative.
+    pub fn make_packed_array_type_ranges(
+        &mut self,
+        element: VastDataType,
+        ranges: &[(i64, i64)],
+    ) -> VastDataType {
+        assert!(
+            ranges.iter().all(|&(msb, lsb)| msb >= 0 && lsb >= 0),
+            "packed-array range bounds must not be negative"
+        );
+        let sizes: Vec<i64> = ranges
+            .iter()
+            .map(|&(msb, lsb)| (msb - lsb).abs() + 1)
+            .collect();
+        let array = self.make_packed_array_type(element, &sizes);
+        self.ast
+            .packed_ranges
+            .insert(array.0.index, ranges.to_vec());
+        array
+    }
+
     /// Creates an unpacked multidimensional array around its element type.
     ///
     /// Dimensions are ordered from outermost to innermost. Nesting unpacked

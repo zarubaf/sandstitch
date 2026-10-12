@@ -285,7 +285,14 @@ fn emit_packed_array_type(file: &VastFile, data_type: VastDataType) -> String {
         dimensions,
     } = &file.ast.data_types[element.0.index]
     {
-        dimension_text.push_str(&packed_dimensions(dimensions));
+        match file.ast.packed_ranges.get(&element.0.index) {
+            Some(ranges) => {
+                for (msb, lsb) in ranges {
+                    write!(dimension_text, "[{msb}:{lsb}]").expect("writing to String cannot fail");
+                }
+            }
+            None => dimension_text.push_str(&packed_dimensions(dimensions)),
+        }
         element = *nested_element;
     }
 
