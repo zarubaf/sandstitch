@@ -687,3 +687,24 @@ endmodule
     let e = run_slang_keep_ast(&cfg).unwrap_err().to_string();
     assert!(e.starts_with("slang command failed"), "{e}");
 }
+
+#[test]
+fn check_slang_reports_exit_status() {
+    let parse_only = |sv: &str| {
+        let file = str2tmpfile(sv).unwrap();
+        let paths = [file.path().to_str().unwrap()];
+        check_slang(&SlangConfig {
+            sources: &paths,
+            capture_stdio: true,
+            extra_arguments: &["--parse-only"],
+            ..Default::default()
+        })
+    };
+    // Parses, although it does not elaborate.
+    parse_only("module m #(parameter type T = logic) (input T x);\n  wire y = x.v;\nendmodule\n")
+        .unwrap();
+    let e = parse_only("module m #(parameter int N = 1; parameter int M = 2) ();\nendmodule\n")
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("expected ')'"), "{e}");
+}

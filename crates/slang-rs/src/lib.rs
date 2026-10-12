@@ -112,35 +112,38 @@ pub fn slang_version() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 pub fn run_slang(cfg: &SlangConfig) -> Result<Value, Box<dyn std::error::Error>> {
-    let run = run(cfg)?;
-    match run.failure {
-        Some(failure) => Err(failure.into()),
-        None => run.ast,
-    }
+    run(cfg, Ast::Required).map(|(value, _)| value)
 }
 
 /// Like [`run_slang`], but a run that fails still returns the AST Slang
-/// dumped: `Ok((ast, succeeded))`. Slang dumps the AST of a design that
-/// parsed but did not elaborate cleanly; members it could not resolve are
-/// `Invalid` nodes, while declarations such as parameters and ports are kept.
-/// Returns the failure if Slang dumped no readable AST.
+/// dumped: `Ok((ast, succeeded))`. Slang dumps the AST of a design that did
+/// not elaborate cleanly; members it could not resolve are `Invalid` nodes,
+/// while declarations such as parameters and ports are kept. After a syntax
+/// error the AST is Slang's recovery and may not match the source. Returns
+/// the failure if Slang dumped no readable AST.
 pub fn run_slang_keep_ast(cfg: &SlangConfig) -> Result<(Value, bool), Box<dyn std::error::Error>> {
-    let run = run(cfg)?;
-    match (run.ast, run.failure) {
-        (Ok(ast), failure) => Ok((ast, failure.is_none())),
-        (Err(_), Some(failure)) => Err(failure.into()),
-        (Err(e), None) => Err(e),
-    }
+    run(cfg, Ast::KeepFailed)
 }
 
-/// A Slang run: the AST it dumped, and the failure message if it exited with
-/// an error.
-struct Run {
-    ast: Result<Value, Box<dyn std::error::Error>>,
-    failure: Option<String>,
+/// Runs Slang like [`run_slang`] for its exit status only, without reading
+/// an AST; for example with `--parse-only` in `extra_arguments`, which dumps
+/// none. Returns the failure as [`run_slang`] does.
+pub fn check_slang(cfg: &SlangConfig) -> Result<(), Box<dyn std::error::Error>> {
+    run(cfg, Ast::Skip).map(|_| ())
 }
 
-fn run(cfg: &SlangConfig) -> Result<Run, Box<dyn std::error::Error>> {
+/// Which AST a run returns.
+#[derive(PartialEq)]
+enum Ast {
+    /// Slang's AST; a failed run is an error.
+    Required,
+    /// Slang's AST, also from a failed run.
+    KeepFailed,
+    /// None (`Value::Null`); a failed run is an error.
+    Skip,
+}
+
+fn run(cfg: &SlangConfig, ast: Ast) -> Result<(Value, bool), Box<dyn std::error::Error>> {
     // Run the slang binary, dumping JSON to tmp_json.
 
     let slang_path = std::env::var("SLANG_PATH").unwrap_or_else(|_| {
@@ -245,19 +248,28 @@ fn run(cfg: &SlangConfig) -> Result<Run, Box<dyn std::error::Error>> {
 
     let output = cmd.output()?;
 
-    let failure = (!output.status.success()).then(|| {
+    if !output.status.success() {
         let stderr = if cfg.capture_stdio {
             String::from_utf8_lossy(&output.stderr).to_string()
         } else {
             "Not Captured".to_string()
         };
-        format!(
+        let failure = format!(
             "slang command failed with exit code: {}, stderr: {stderr}",
             output.status,
-        )
-    });
-    let ast = read_ast(tmp_json.path(), &working_dir);
-    Ok(Run { ast, failure })
+        );
+        if ast != Ast::KeepFailed {
+            return Err(failure.into());
+        }
+        return read_ast(tmp_json.path(), &working_dir)
+            .map(|value| (value, false))
+            .map_err(|_| failure.into());
+    }
+
+    if ast == Ast::Skip {
+        return Ok((Value::Null, true));
+    }
+    read_ast(tmp_json.path(), &working_dir).map(|value| (value, true))
 }
 
 /// Reads the AST Slang dumped to `path`.
