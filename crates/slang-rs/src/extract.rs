@@ -739,13 +739,24 @@ impl<'a> TypeResolver<'a> {
             // with the package-qualified name from this use site. Dimensions
             // after the target's internal name belong to the typedef itself and
             // must precede dimensions applied at this particular use site.
+            //
+            // The name names the element type, never the dimensions: when
+            // the typedef adds dimensions (`typedef flit_t [1:0] pair_t`),
+            // the alias name denotes the array, so the target's own (element)
+            // name is kept.
             let close = target.rfind('}')?;
             let target_suffix = &target[close + 1..];
-            let target_dimensions = dimension_start(target_suffix)
-                .map(|index| &target_suffix[index..])
-                .unwrap_or("");
+            let (target_name, target_dimensions) = match dimension_start(target_suffix) {
+                Some(index) => target_suffix.split_at(index),
+                None => (target_suffix, ""),
+            };
+            let name = if target_dimensions.is_empty() {
+                display_name
+            } else {
+                target_name
+            };
             Some(format!(
-                "{}{display_name}{}",
+                "{}{name}{}",
                 &target[..=close],
                 merge_dimensions(target_dimensions, display_dimensions)
             ))
@@ -958,9 +969,11 @@ mod resolver_tests {
             resolver.resolve("200 outer_t"),
             "struct packed{struct packed{logic[7:0] data;}inner_t value;}outer_t"
         );
+        // An array typedef keeps its element's name: `outer_array_t` names
+        // `inner_t [3:0]`, not the element.
         assert_eq!(
             resolver.resolve("300 outer_array_t[1:0]"),
-            "struct packed{logic[7:0] data;}outer_array_t[3:0][1:0]"
+            "struct packed{logic[7:0] data;}inner_t[3:0][1:0]"
         );
         assert_eq!(resolver.resolve("400 unpacked_t$[1:0]"), "logic$[3:0][1:0]");
         assert!(parse_type_definition(&resolver.resolve("400 unpacked_t$[1:0]")).is_ok());

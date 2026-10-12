@@ -128,6 +128,51 @@ endmodule
     }
 }
 
+#[test]
+fn array_typedef_names_its_element() {
+    let pkg = "
+package arr_pkg;
+  typedef struct packed { logic [3:0] a; } s_t;
+  typedef s_t [1:0] pair_t;
+  typedef pair_t [2:0] trio_t;
+  typedef s_t same_t;
+  typedef struct packed { logic b; } [1:0] anon_arr_t;
+endpackage
+";
+    let module = "
+module arr import arr_pkg::*; (input pair_t p, input pair_t [4:0] q, input trio_t t,
+  input same_t s, input anon_arr_t n);
+endmodule
+";
+    let value = elaborate(&[pkg, module], &["arr"], &[]);
+    let ports = extract_ports_from_value(&value, false);
+    let named = |i: usize| match &ports["arr"][i].ty {
+        Type::Struct {
+            name,
+            packed_dimensions,
+            ..
+        } => (
+            name.clone(),
+            packed_dimensions
+                .iter()
+                .map(|r| (r.msb, r.lsb))
+                .collect::<Vec<_>>(),
+        ),
+        other => panic!("expected a struct, got {other:?}"),
+    };
+    // The name is the element's; the typedef's dimensions are kept, outer
+    // use-site dimensions first.
+    assert_eq!(named(0), ("arr_pkg::s_t".to_string(), vec![(1, 0)]));
+    assert_eq!(named(1), ("arr_pkg::s_t".to_string(), vec![(4, 0), (1, 0)]));
+    assert_eq!(named(2), ("arr_pkg::s_t".to_string(), vec![(2, 0), (1, 0)]));
+    // A plain alias names itself.
+    assert_eq!(named(3), ("arr_pkg::same_t".to_string(), vec![]));
+    // An anonymous element keeps a generated name, never the alias's.
+    let (name, dims) = named(4);
+    assert_ne!(name, "arr_pkg::anon_arr_t");
+    assert_eq!(dims, vec![(1, 0)]);
+}
+
 fn check_child_locations(path: &str) {
     let cfg = SlangConfig {
         sources: &[path],
