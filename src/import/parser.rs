@@ -22,9 +22,10 @@ fn interface_port_error_of_definition(module: &str, cfg: &ParserConfig) -> Optio
 }
 
 /// The parser configuration a module was imported with, kept to rebuild a
-/// configuration for later elaborations (parameterization). `tops`,
-/// `parameters` and `include_hierarchy` are not kept: they are chosen per
-/// elaboration.
+/// configuration for later elaborations (parameterization). `tops` and
+/// `include_hierarchy` are not kept: they are chosen per elaboration.
+/// `parameters` (Slang `-G`) are kept and applied as overrides of every
+/// specialization, not as `-G`.
 #[derive(Clone)]
 pub(crate) struct VerilogImport {
     /// Absolute source paths with `.` and `..` folded, in compile order.
@@ -39,6 +40,9 @@ pub(crate) struct VerilogImport {
     pub(crate) timescale: Option<String>,
     pub(crate) skip_unsupported: bool,
     pub(crate) extra_arguments: Vec<String>,
+    /// `ParserConfig::parameters`: base overrides of every specialization,
+    /// which explicit overrides replace.
+    pub(crate) parameters: Vec<(String, String)>,
     /// Set on a specialization ([`ModDef::try_parameterize`]): the identity of
     /// the module and overrides it was elaborated with.
     pub(crate) specialization: Option<SpecializationKey>,
@@ -113,6 +117,11 @@ impl VerilogImport {
             timescale: cfg.timescale.map(str::to_string),
             skip_unsupported: cfg.skip_unsupported,
             extra_arguments: strings(cfg.extra_arguments),
+            parameters: cfg
+                .parameters
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             specialization: None,
             inline: false,
         }

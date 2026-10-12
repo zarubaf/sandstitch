@@ -5,6 +5,8 @@ use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use num_bigint::BigInt;
+
 use crate::diagnostic::codes;
 use crate::import::parser::VerilogImport;
 use crate::import::specialize::{self, SpecializationKey};
@@ -47,6 +49,11 @@ impl ModDef {
     /// the result is cached by its [`SpecializationKey`]
     /// ([`ModDef::specialization_key`]). Ports keep their resolved types.
     ///
+    /// The `parameters` (Slang `-G`) of the configuration the module was
+    /// imported with are base overrides of every specialization, so that
+    /// they are not lost; explicit overrides replace them. A `-G` value must
+    /// be a decimal integer, a string literal or a name.
+    ///
     /// Errors (Rust spans point at the caller):
     /// - S0101 for an override of a parameter the module does not declare
     ///   (or a localparam).
@@ -56,7 +63,8 @@ impl ModDef {
     ///   [`ModDef::try_from_verilog_with_config`].
     /// - S0104 if the module has interface ports.
     /// - S0105 for an unsupported override value: types and constants must
-    ///   be `ident` or `pkg::ident`; strings as above; integers non-negative.
+    ///   be `ident` or `pkg::ident`; strings as above; integers non-negative;
+    ///   `-G` values as above.
     ///
     /// Panics if this module definition was not imported from Verilog.
     #[track_caller]
@@ -103,9 +111,11 @@ impl ModDef {
     /// `cfg.include_hierarchy` are not used: the module is elaborated under a
     /// generated top and the result has no instances.
     ///
+    /// `cfg.parameters` (Slang `-G`) are base overrides, as in
+    /// [`ModDef::try_parameterize`]; `overrides` replace them.
+    ///
     /// Errors (Rust spans point at the caller) are those of
-    /// [`ModDef::try_parameterize`], and S0105 if `cfg.parameters` is not
-    /// empty (pass those overrides in `overrides`).
+    /// [`ModDef::try_parameterize`].
     #[track_caller]
     pub fn try_from_verilog_parameterized<T: Into<ParameterValue> + Clone>(
         name: &str,
@@ -116,21 +126,6 @@ impl ModDef {
         if overrides.is_empty() {
             return Self::try_from_verilog_with_config(name, cfg);
         }
-        if !cfg.parameters.is_empty() {
-            let mut d = crate::import::typed::error(
-                codes::S0105,
-                format!("unsupported overrides of the parameters of `{name}`"),
-                Label {
-                    span: caller,
-                    text: "`ParserConfig::parameters` is not empty".to_string(),
-                },
-            );
-            d.helps
-                .push("pass these overrides in `overrides` instead".to_string());
-            return Err(ImportError {
-                diagnostics: Diagnostics(vec![d]),
-            });
-        }
         let overrides: IndexMap<String, ParameterValue> = overrides
             .iter()
             .map(|(name, value)| (name.to_string(), value.clone().into()))
@@ -138,14 +133,17 @@ impl ModDef {
         Self::specialized(name, &VerilogImport::new(cfg), overrides, &caller)
     }
 
-    /// Elaborates `name` from `verilog_import` with `overrides`, the
-    /// complete set of overrides of the specialization.
+    /// Elaborates `name` from `verilog_import` with the import's Slang `-G`
+    /// parameters, replaced by `overrides`.
     fn specialized(
         name: &str,
         verilog_import: &VerilogImport,
         overrides: IndexMap<String, ParameterValue>,
         caller: &Span,
     ) -> Result<ModDef, ImportError> {
+        let mut merged = slang_parameter_overrides(name, verilog_import, &overrides, caller)?;
+        merged.extend(overrides);
+        let overrides = merged;
         specialize::validate(name, &overrides, caller)?;
         let specialized = specialize::specialize(name, verilog_import, &overrides, caller)?;
 
@@ -217,5 +215,64 @@ impl ModDef {
             .as_ref()?
             .specialization
             .clone()
+    }
+}
+
+/// The import's Slang `-G` parameters not replaced by `explicit` as
+/// overrides: a decimal integer, a string literal, or a name (`ident` or
+/// `pkg::ident`, a named constant). S0105 for any other value.
+fn slang_parameter_overrides(
+    module: &str,
+    import: &VerilogImport,
+    explicit: &IndexMap<String, ParameterValue>,
+    caller: &Span,
+) -> Result<IndexMap<String, ParameterValue>, ImportError> {
+    let mut overrides = IndexMap::new();
+    let mut diagnostics = Vec::new();
+    for (name, text) in &import.parameters {
+        if explicit.contains_key(name) {
+            continue;
+        }
+        let text = text.trim();
+        let value = if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
+            Some(ParameterValue::Integer(
+                text.parse::<BigInt>().expect("decimal digits"),
+            ))
+        } else if text.len() >= 2 && text.starts_with('"') && text.ends_with('"') {
+            Some(ParameterValue::String(text[1..text.len() - 1].to_string()))
+        } else if specialize::NAME.is_match(text) {
+            Some(ParameterValue::Expr(text.to_string()))
+        } else {
+            None
+        };
+        match value {
+            Some(value) => {
+                overrides.insert(name.clone(), value);
+            }
+            None => {
+                let mut d = crate::import::typed::error(
+                    codes::S0105,
+                    format!("unsupported `-G` override for parameter `{name}` of `{module}`"),
+                    Label {
+                        span: caller.clone(),
+                        text: format!(
+                            "`ParserConfig::parameters` sets `{name}={text}`, which is not a \
+                             decimal integer, string literal or name"
+                        ),
+                    },
+                );
+                d.helps.push(format!(
+                    "override `{name}` explicitly; an explicit override replaces the `-G` value"
+                ));
+                diagnostics.push(d);
+            }
+        }
+    }
+    if diagnostics.is_empty() {
+        Ok(overrides)
+    } else {
+        Err(ImportError {
+            diagnostics: Diagnostics(diagnostics),
+        })
     }
 }

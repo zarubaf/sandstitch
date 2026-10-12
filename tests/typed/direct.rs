@@ -30,6 +30,7 @@ endmodule
 const CHILD: &str = "
 package cfg_pkg;
   typedef struct packed { logic [3:0] dst_id; logic [7:0] len; } hdr_t;
+  localparam int Depth = 5;
 endpackage
 module child #(parameter type T = logic, parameter int N = 2) (
   input T [N-1:0] in_i,
@@ -336,20 +337,78 @@ endmodule
 }
 
 #[test]
-fn slang_parameters_are_rejected() {
+fn slang_parameters_are_kept_by_specializations() {
     let sources = Sources::new(&[CHILD]);
     let paths = sources.paths();
     let cfg = ParserConfig {
         parameters: &[("N", "4")],
         ..config(&paths)
     };
-    let overrides = [("T", ty("cfg_pkg::hdr_t"))];
+    // The plain import elaborates with `-G N=4`.
+    let base = ModDef::try_from_verilog_with_config("child", &cfg).unwrap();
+    assert_eq!(base.get_port("in_i").port_type(), Some(logic(&[(3, 0)])));
+
+    // Specializing keeps N = 4 and emits it.
+    let hdr = [("T", ty("cfg_pkg::hdr_t"))];
+    let stepwise = base.try_parameterize(&hdr).unwrap();
+    assert_eq!(stepwise.get_port("in_i").io().width(), 48);
+    let emitted = wrap_in_top(&stepwise).emit(EmitOptions::default());
+    assert!(
+        emitted.contains("  child #(\n    .N(32'h0000_0004),\n    .T(cfg_pkg::hdr_t)\n  ) u ("),
+        "{emitted}"
+    );
+
+    // Directly: the same specialization.
+    let direct = ModDef::try_from_verilog_parameterized("child", &cfg, &hdr).unwrap();
+    assert_eq!(direct.specialization_key(), stepwise.specialization_key());
+    assert_eq!(direct.get_port("in_i").io().width(), 48);
+
+    // Explicit overrides win, in both flows.
+    let overrides: [(&str, ParameterValue); 2] = [("T", ty("cfg_pkg::hdr_t")), ("N", 2.into())];
+    let explicit = ModDef::try_from_verilog_parameterized("child", &cfg, &overrides).unwrap();
+    assert_eq!(explicit.get_port("in_i").io().width(), 24);
+    let replaced = stepwise.try_parameterize(&[("N", 2)]).unwrap();
+    assert_eq!(replaced.specialization_key(), explicit.specialization_key());
+
+    // A name is a named constant.
+    let cfg = ParserConfig {
+        parameters: &[("N", "cfg_pkg::Depth")],
+        ..config(&paths)
+    };
+    let depth = ModDef::try_from_verilog_parameterized("child", &cfg, &hdr).unwrap();
+    assert_eq!(depth.get_port("in_i").io().width(), 60);
+}
+
+#[test]
+fn unsupported_slang_parameter_reports_s0105() {
+    let sources = Sources::new(&[CHILD]);
+    let paths = sources.paths();
+    let cfg = ParserConfig {
+        parameters: &[("N", "1+1")],
+        ..config(&paths)
+    };
+    let hdr = [("T", ty("cfg_pkg::hdr_t"))];
     let (result, line) = (
-        ModDef::try_from_verilog_parameterized("child", &cfg, &overrides),
+        ModDef::try_from_verilog_parameterized("child", &cfg, &hdr),
         line!(),
     );
     let e = result.err().unwrap();
     assert_eq!(e.diagnostics.0.len(), 1, "{e}");
-    assert_eq!(e.diagnostics.0[0].code, codes::S0105, "{e}");
+    let d = &e.diagnostics.0[0];
+    assert_eq!(d.code, codes::S0105, "{e}");
+    assert_eq!(
+        d.message,
+        "unsupported `-G` override for parameter `N` of `child`"
+    );
     assert_eq!(primary_line(&e), (file!().to_string(), line - 1));
+
+    // Also when specializing a plain import.
+    let base = ModDef::try_from_verilog_with_config("child", &cfg).unwrap();
+    let e = base.try_parameterize(&hdr).err().unwrap();
+    assert_eq!(e.diagnostics.0[0].code, codes::S0105, "{e}");
+
+    // An explicit override replaces the `-G` value.
+    let overrides: [(&str, ParameterValue); 2] = [("T", ty("cfg_pkg::hdr_t")), ("N", 2.into())];
+    let m = base.try_parameterize(&overrides).unwrap();
+    assert_eq!(m.get_port("in_i").io().width(), 24);
 }

@@ -93,6 +93,8 @@ impl KeyHasher {
             timescale,
             skip_unsupported,
             extra_arguments,
+            // Applied as overrides, which are hashed.
+            parameters: _,
             // Derived from the other fields.
             specialization: _,
             // Provenance only; the sources themselves are hashed.
@@ -319,7 +321,8 @@ pub(crate) fn elaborations() -> usize {
 
 static IDENTIFIER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_$]*$").unwrap());
-static NAME: LazyLock<Regex> =
+/// `ident` or `pkg::ident`.
+pub(crate) static NAME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_$]*(::[A-Za-z_][A-Za-z0-9_$]*)?$").unwrap());
 
 fn error_at(code: crate::Code, message: String, span: &Span, text: &str) -> crate::Diagnostic {
