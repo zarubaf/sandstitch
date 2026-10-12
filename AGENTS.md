@@ -15,16 +15,7 @@ Sandstitch is an executable hardware specification library. `doc/product.md` is 
 - One authoritative model: the forked composition model owns structure; the resolved snapshot is read-only and shared by RTL emission, the explorer and documentation. Do not add a second mutable graph or hand-duplicate the snapshot schema.
 - Keep changes small and coherent. Refactor the affected area first, with behavior-preserving tests, when structure blocks a change. No unrelated cleanup.
 - Fail explicitly: unsupported SystemVerilog constructs produce diagnostics; never silently drop ports.
-- Run these checks on changed areas (from the repository root; `slang` comes from the pinned v11.0 release):
-  ```sh
-  d=$HOME/.cache/sandstitch/slang-v11.0 && mkdir -p "$d"
-  curl --fail --location -o "$d/slang.tar.gz" https://github.com/MikePopoloski/slang/releases/download/v11.0/slang-linux-x86_64.tar.gz
-  echo "951a170e10e25e54c91565030acfdfc11c3226714ebf225a18ad4166a898d8a4  $d/slang.tar.gz" | sha256sum -c -
-  tar -xzf "$d/slang.tar.gz" -C "$d" slang
-  SLANG_PATH=$d/slang cargo test --locked
-  cargo clippy --all-targets --locked -- -D warnings   # must stay warning-free
-  SKIP=no-commit-to-branch pre-commit run --all-files
-  ```
+- Run `cargo xtask ci` from the repository root before finishing (fmt, clippy `-D warnings`, hygiene, library boundary, tests). It fetches the pinned Slang v11.0 into `~/.cache/sandstitch/slang-v11.0/` on first use; `cargo xtask slang` prints that path. `cargo xtask explain <CODE>` shows a diagnostic's documentation.
 - Ask before adding new tooling or CI.
 
 ## Commits
