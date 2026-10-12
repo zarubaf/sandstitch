@@ -1238,6 +1238,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "sha2",
  "slang-rs",
  "tempfile",
  "xlsynth-vast",

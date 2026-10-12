@@ -347,6 +347,23 @@ impl ModDef {
                         crate::model::parameter::ParameterSpec::String(value) => {
                             file.make_string_literal(value)
                         }
+                        // Names were validated as `ident` or `pkg::ident` when
+                        // the module was specialized.
+                        crate::model::parameter::ParameterSpec::Type(name) => {
+                            let ty = match name.split_once("::") {
+                                Some((package, name)) => {
+                                    file.make_extern_package_type(package, name)
+                                }
+                                None => file.make_extern_type(name),
+                            };
+                            file.make_type_expr(&ty)
+                        }
+                        crate::model::parameter::ParameterSpec::Expr(name) => {
+                            match name.split_once("::") {
+                                Some((package, name)) => file.make_package_ref(package, name),
+                                None => file.make_name_ref(name),
+                            }
+                        }
                     };
                     parameter_expr_vals.push(expr);
                 }

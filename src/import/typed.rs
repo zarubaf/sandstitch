@@ -204,7 +204,7 @@ pub(crate) fn sv_span(loc: Option<&slang_rs::SourceLoc>, name: &str) -> Span {
     }
 }
 
-fn error(code: crate::Code, message: String, primary: Label) -> Diagnostic {
+pub(crate) fn error(code: crate::Code, message: String, primary: Label) -> Diagnostic {
     Diagnostic {
         code,
         severity: Severity::Error,
@@ -315,11 +315,22 @@ pub(crate) fn import_top_ports(
     module: &str,
     skip_unsupported: bool,
 ) -> Option<Result<Vec<ImportedPort>, ImportError>> {
-    let interface_ports = slang_rs::extract_instance_interface_ports_from_value(value, module)?;
+    import_instance_ports(value, module, module, skip_unsupported)
+}
+
+/// Like [`import_top_ports`], for the instance of `module` at the
+/// hierarchical `path` (e.g. `"top.u_child"`).
+pub(crate) fn import_instance_ports(
+    value: &serde_json::Value,
+    path: &str,
+    module: &str,
+    skip_unsupported: bool,
+) -> Option<Result<Vec<ImportedPort>, ImportError>> {
+    let interface_ports = slang_rs::extract_instance_interface_ports_from_value(value, path)?;
     if !interface_ports.is_empty() && !skip_unsupported {
         return Some(Err(interface_port_error(module, &interface_ports)));
     }
-    let ports = slang_rs::extract_instance_ports_checked_from_value(value, module)?;
+    let ports = slang_rs::extract_instance_ports_checked_from_value(value, path)?;
     Some(import_ports(module, &ports, skip_unsupported))
 }
 
@@ -361,19 +372,62 @@ pub(crate) fn interface_ports_of_definition(
     module: &str,
     cfg: &ParserConfig,
 ) -> Option<Vec<slang_rs::InterfacePort>> {
+    let value = elaborate_definition(module, cfg)?;
+    slang_rs::extract_interface_ports_from_value(&value).remove(module)
+}
+
+/// Elaborates the definition of `module` as the only top, with
+/// `--allow-toplevel-iface-ports` so that interface ports do not prevent
+/// elaboration. Returns `None` if Slang fails.
+pub(crate) fn elaborate_definition(module: &str, cfg: &ParserConfig) -> Option<serde_json::Value> {
+    const FLAG: &str = "--allow-toplevel-iface-ports";
     let mut extra_arguments = cfg.extra_arguments.to_vec();
-    extra_arguments.push("--allow-toplevel-iface-ports");
+    // Slang rejects the flag given twice.
+    if !extra_arguments.contains(&FLAG) {
+        extra_arguments.push(FLAG);
+    }
     let cfg = ParserConfig {
         tops: &[module],
         extra_arguments: &extra_arguments,
         ..*cfg
     };
-    let value = slang_rs::run_slang(&cfg.to_slang_config()).ok()?;
-    slang_rs::extract_interface_ports_from_value(&value).remove(module)
+    slang_rs::run_slang(&cfg.to_slang_config()).ok()
 }
 
 static SLANG_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^(.+?):(\d+):(\d+): error: (.*)$").unwrap());
+
+/// A located error in Slang's output.
+pub(crate) struct SlangError {
+    /// Absolute path of the file.
+    pub(crate) file: String,
+    pub(crate) line: u32,
+    pub(crate) column: u32,
+    pub(crate) message: String,
+}
+
+/// The text Slang printed for a failed run (`run_slang` reports "slang
+/// command failed ..., stderr: <stderr>").
+pub(crate) fn slang_output(err: &dyn std::error::Error) -> String {
+    let text = err.to_string();
+    match text.split_once("stderr: ") {
+        Some((_, stderr)) => stderr.to_string(),
+        None => text,
+    }
+}
+
+/// The located errors in Slang's output, in order.
+pub(crate) fn slang_errors(text: &str) -> Vec<SlangError> {
+    SLANG_ERROR
+        .captures_iter(text)
+        .map(|c| SlangError {
+            file: absolute(&c[1]),
+            line: c[2].parse().unwrap_or(0),
+            column: c[3].parse().unwrap_or(0),
+            message: c[4].to_string(),
+        })
+        .collect()
+}
 
 /// Makes a path from Slang's output absolute (Slang reports paths relative to
 /// the directory it ran in, which is this process's working directory).
@@ -388,20 +442,15 @@ fn absolute(path: &str) -> String {
 /// error Slang printed is the primary label and the others are secondary
 /// labels. Without a located error, Slang's output is the note.
 pub(crate) fn slang_failure(module: &str, err: &dyn std::error::Error) -> ImportError {
-    let text = err.to_string();
-    // `run_slang` reports "slang command failed ..., stderr: <stderr>".
-    let text = match text.split_once("stderr: ") {
-        Some((_, stderr)) => stderr.to_string(),
-        None => text,
-    };
-    let mut labels = SLANG_ERROR.captures_iter(&text).map(|c| Label {
+    let text = slang_output(err);
+    let mut labels = slang_errors(&text).into_iter().map(|e| Label {
         span: Span::Sv {
-            file: absolute(&c[1]),
-            line: c[2].parse().unwrap_or(0),
-            column: c[3].parse().unwrap_or(0),
+            file: e.file,
+            line: e.line,
+            column: e.column,
             len: 0,
         },
-        text: c[4].to_string(),
+        text: e.message,
     });
     let primary = labels.next().unwrap_or(Label {
         span: Span::None,

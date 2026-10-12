@@ -27,8 +27,15 @@ impl ParameterType {
 
 #[derive(Clone, Debug)]
 pub enum ParameterSpec {
-    Integer { value: BigInt, ty: ParameterType },
+    Integer {
+        value: BigInt,
+        ty: ParameterType,
+    },
     String(String),
+    /// A type parameter override naming a type: `ident` or `pkg::ident`.
+    Type(String),
+    /// A value parameter override naming a constant: `ident` or `pkg::ident`.
+    Expr(String),
 }
 
 impl ParameterSpec {
@@ -36,17 +43,28 @@ impl ParameterSpec {
         match self {
             Self::Integer { value, .. } => ParameterValue::Integer(value.clone()),
             Self::String(value) => ParameterValue::String(value.clone()),
+            Self::Type(name) => ParameterValue::Type(name.clone()),
+            Self::Expr(name) => ParameterValue::Expr(name.clone()),
         }
     }
 }
 
-/// An integer or string value supplied to [`ModDef::parameterize`](crate::ModDef::parameterize).
+/// A parameter override supplied to
+/// [`ModDef::parameterize`](crate::ModDef::parameterize) or
+/// [`ModDef::try_parameterize`](crate::ModDef::try_parameterize).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParameterValue {
     /// An arbitrary-precision integer parameter value.
     Integer(BigInt),
     /// A printable-ASCII string parameter value without quotes or backslashes.
     String(String),
+    /// A type for a `parameter type`, named `ident` or `pkg::ident` (for
+    /// example `cfg_pkg::flit_t`). The type is resolved by Slang, so its
+    /// package must be among the module's sources.
+    Type(String),
+    /// A named constant for a value parameter, `ident` or `pkg::ident` (for
+    /// example `cfg_pkg::Depth`), resolved by Slang like [`Self::Type`].
+    Expr(String),
 }
 
 macro_rules! impl_parameter_value {

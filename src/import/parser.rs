@@ -8,6 +8,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use crate::import::parser_cfg::ParserConfig;
+use crate::import::specialize::SpecializationKey;
 use crate::import::typed::{self, ImportedPort};
 use crate::model::parameter::ParameterType;
 use crate::{ImportError, ModDef, ModDefCore, Usage};
@@ -37,9 +38,52 @@ pub(crate) struct VerilogImport {
     pub(crate) timescale: Option<String>,
     pub(crate) skip_unsupported: bool,
     pub(crate) extra_arguments: Vec<String>,
+    /// Set on a specialization ([`ModDef::try_parameterize`]): the identity of
+    /// the module and overrides it was elaborated with.
+    pub(crate) specialization: Option<SpecializationKey>,
 }
 
 impl VerilogImport {
+    /// Calls `f` with a parser configuration for these sources, the given
+    /// `tops`, `extra_sources` appended to the sources and `extra_arguments`
+    /// appended to the extra arguments.
+    pub(crate) fn with_config<R>(
+        &self,
+        tops: &[&str],
+        extra_sources: &[&str],
+        extra_arguments: &[&str],
+        f: impl FnOnce(&ParserConfig) -> R,
+    ) -> R {
+        fn strs(items: &[String]) -> Vec<&str> {
+            items.iter().map(String::as_str).collect()
+        }
+        let mut sources = strs(&self.sources);
+        sources.extend_from_slice(extra_sources);
+        let mut arguments = strs(&self.extra_arguments);
+        arguments.extend_from_slice(extra_arguments);
+        let defines: Vec<(&str, &str)> = self
+            .defines
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        f(&ParserConfig {
+            sources: &sources,
+            tops,
+            incdirs: &strs(&self.incdirs),
+            defines: &defines,
+            parameters: &[],
+            libfiles: &strs(&self.libfiles),
+            libdirs: &strs(&self.libdirs),
+            libexts: &strs(&self.libexts),
+            ignore_unknown_modules: self.ignore_unknown_modules,
+            ignore_protected: self.ignore_protected,
+            timescale: self.timescale.as_deref(),
+            skip_unsupported: self.skip_unsupported,
+            include_hierarchy: false,
+            extra_arguments: &arguments,
+        })
+    }
+
     fn new(cfg: &ParserConfig) -> Self {
         let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect();
         VerilogImport {
@@ -58,6 +102,7 @@ impl VerilogImport {
             timescale: cfg.timescale.map(str::to_string),
             skip_unsupported: cfg.skip_unsupported,
             extra_arguments: strings(cfg.extra_arguments),
+            specialization: None,
         }
     }
 }

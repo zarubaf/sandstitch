@@ -1,214 +1,107 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use indexmap::IndexMap;
-use num_bigint::Sign;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
-use crate::import::parser::parser_param_to_param;
-use crate::import::parser_cfg::ParserConfigOwnedKey;
-use crate::import::typed::{self, ImportedPort};
-use crate::model::parameter::{ParameterSpec, ParameterType, ParameterValue};
-use crate::{ModDef, ModDefCore, ParserConfig, Usage};
-
-#[derive(Clone, Debug)]
-struct ParameterizeCacheEntry {
-    ports: Vec<ImportedPort>,
-    parameter_types: IndexMap<String, ParameterType>,
-}
-
-static PARAMETERIZE_CACHE: LazyLock<RwLock<HashMap<ParserConfigOwnedKey, ParameterizeCacheEntry>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+use crate::import::specialize::{self, SpecializationKey};
+use crate::model::parameter::{ParameterSpec, ParameterValue};
+use crate::{ImportError, ModDef, ModDefCore, Span, Usage};
 
 impl ModDef {
     /// Returns a new module definition that is a variant of this module
     /// definition, where the given parameters have been overridden from their
     /// default values. For example, if the module definition has a parameter
     /// `WIDTH` with a default value of `32`, calling `parameterize(&[("WIDTH",
-    /// 64)])` will return a new module definition with the same ports and
-    /// instances, but with the parameter `WIDTH` set to `64`. This is
-    /// implemented by creating a wrapper module that instantiates the original
-    /// module with the given parameters. The name of the wrapper module
-    /// defaults to
-    /// `<original_mod_def_name>_<param_name_0>_<param_value_0>_<param_name_1>_<param_value_1>_.
-    /// ..`; this can be overridden via the optional `def_name` argument. The
-    /// instance name of the original module within the wrapper is
-    /// `<original_mod_def_name>_i`; this can be overridden via the optional
-    /// `inst_name` argument.
+    /// 64)])` will return a new module definition with the same name, whose
+    /// ports are those of the module with `WIDTH` set to `64`. Instances of it
+    /// are emitted as instances of the original module with a `#(...)`
+    /// override; [`ModDef::wrap`] puts one in a wrapper module.
     ///
-    /// Parameter values can be integers or strings. String values must contain
-    /// only printable ASCII characters, including spaces, and cannot contain
-    /// single quotes, double quotes, or backslashes. Mixed-type overrides can
-    /// be supplied together as [`ParameterValue`], for example
+    /// Parameter values can be integers, strings, types
+    /// ([`ParameterValue::Type`]) or named constants
+    /// ([`ParameterValue::Expr`]). String values must contain only printable
+    /// ASCII characters, including spaces, and cannot contain single quotes,
+    /// double quotes, or backslashes. Mixed-type overrides can be supplied
+    /// together as [`ParameterValue`], for example
     /// `parameterize::<ParameterValue>(&[("WIDTH", 32.into()),
     /// ("MODE", "FAST".into())])`.
+    ///
+    /// Overrides are merged with those of this module definition, if it is
+    /// itself parameterized. Panics with the rendered diagnostics on error;
+    /// see [`ModDef::try_parameterize`].
+    #[track_caller]
     pub fn parameterize<T: Into<ParameterValue> + Clone>(
         &self,
         parameters: &[(&str, T)],
     ) -> ModDef {
-        let core = self.core.read();
-        let parameter_values: Vec<(&str, ParameterValue)> = parameters
-            .iter()
-            .map(|(name, val)| (*name, val.clone().into()))
-            .collect();
+        self.try_parameterize(parameters)
+            .unwrap_or_else(|e| panic!("{e}"))
+    }
 
-        if core.verilog_import.is_none() {
+    /// Fallible form of [`ModDef::parameterize`]. The module is elaborated by
+    /// Slang under a generated top that instantiates it with the overrides;
+    /// the result is cached by its [`SpecializationKey`]
+    /// ([`ModDef::specialization_key`]). Ports keep their resolved types.
+    ///
+    /// Errors (Rust spans point at the caller):
+    /// - S0101 for an override of a parameter the module does not declare
+    ///   (or a localparam).
+    /// - S0102 if Slang fails to elaborate the specialization, for example an
+    ///   unknown type; Slang's messages are notes.
+    /// - S0103 for unsupported ports, as in
+    ///   [`ModDef::try_from_verilog_with_config`].
+    /// - S0104 if the module has interface ports.
+    /// - S0105 for an unsupported override value: types and constants must
+    ///   be `ident` or `pkg::ident`; strings as above; integers non-negative.
+    ///
+    /// Panics if this module definition was not imported from Verilog.
+    #[track_caller]
+    pub fn try_parameterize<T: Into<ParameterValue> + Clone>(
+        &self,
+        parameters: &[(&str, T)],
+    ) -> Result<ModDef, ImportError> {
+        let caller = Span::caller();
+        let core = self.core.read();
+        let Some(verilog_import) = core.verilog_import.as_ref() else {
             panic!(
                 "Error parameterizing {}: can only parameterize a module defined in external Verilog sources.",
                 core.name
             );
-        }
+        };
 
-        // Merge parameter overrides with any existing ones
-        let mut merged_parameters: IndexMap<String, ParameterValue> = self
-            .core
-            .read()
+        // Merge parameter overrides with any existing ones.
+        let mut overrides: IndexMap<String, ParameterValue> = core
             .parameters
             .iter()
             .map(|(k, v)| (k.clone(), v.value()))
             .collect();
-        for (k, v) in parameter_values.into_iter() {
-            merged_parameters.insert(k.to_string(), v);
+        for (name, value) in parameters {
+            overrides.insert(name.to_string(), value.clone().into());
         }
 
-        // Convert the merged parameters to their SystemVerilog representation
-        // for the parser configuration.
-        let parameters_with_string_values: Vec<(String, String)> = merged_parameters
-            .iter()
+        specialize::validate(&core.name, &overrides, &caller)?;
+        let specialized = specialize::specialize(&core.name, verilog_import, &overrides, &caller)?;
+
+        let parameters: IndexMap<String, ParameterSpec> = overrides
+            .into_iter()
             .map(|(name, value)| {
-                let str_value = match value {
-                    ParameterValue::Integer(value) => {
-                        // Get the width from the bigint itself, not from the parameter definition.
-                        // TODO(sherbst) 2025-10-29: Support negative parameter values
-                        // Preserve SystemVerilog's minimum 32-bit integer width for untyped
-                        // parameter overrides, including zero, across Slang versions.
-                        let width = value.bits().max(32);
-                        match value.sign() {
-                            Sign::Plus | Sign::NoSign => format!("{width}'d{value}"),
-                            Sign::Minus => panic!("Negative parameter values not yet supported"),
-                        }
-                    }
-                    ParameterValue::String(value) => {
-                        assert!(
-                            value.bytes().all(|byte| {
-                                matches!(byte, b' '..=b'~')
-                                    && !matches!(byte, b'\'' | b'"' | b'\\')
-                            }),
-                            "String parameter values must contain only printable ASCII characters and may not contain single quotes, double quotes, or backslashes: {value:?}"
-                        );
-                        format!("\"{value}\"")
-                    }
+                let spec = match value {
+                    ParameterValue::Integer(value) => ParameterSpec::Integer {
+                        value,
+                        ty: specialized.integer_parameter_types[&name].clone(),
+                    },
+                    ParameterValue::String(value) => ParameterSpec::String(value),
+                    ParameterValue::Type(name) => ParameterSpec::Type(name),
+                    ParameterValue::Expr(name) => ParameterSpec::Expr(name),
                 };
-                (name.clone(), str_value)
+                (name, spec)
             })
             .collect();
 
-        let verilog_import = core.verilog_import.as_ref().unwrap();
-        fn strs(items: &[String]) -> Vec<&str> {
-            items.iter().map(String::as_str).collect()
-        }
-        let sources = strs(&verilog_import.sources);
-        let incdirs = strs(&verilog_import.incdirs);
-        let libfiles = strs(&verilog_import.libfiles);
-        let libdirs = strs(&verilog_import.libdirs);
-        let libexts = strs(&verilog_import.libexts);
-        let extra_arguments = strs(&verilog_import.extra_arguments);
-        let defines: Vec<(&str, &str)> = verilog_import
-            .defines
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-
-        let cfg = ParserConfig {
-            sources: sources.as_slice(),
-            incdirs: incdirs.as_slice(),
-            parameters: &parameters_with_string_values
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect::<Vec<_>>(),
-            tops: &[&core.name],
-            defines: defines.as_slice(),
-            libfiles: libfiles.as_slice(),
-            libdirs: libdirs.as_slice(),
-            libexts: libexts.as_slice(),
-            ignore_unknown_modules: verilog_import.ignore_unknown_modules,
-            ignore_protected: verilog_import.ignore_protected,
-            timescale: verilog_import.timescale.as_deref(),
-            extra_arguments: extra_arguments.as_slice(),
-            ..Default::default()
-        };
-
-        let cache_key = cfg.to_owned_key();
-        let cached_entry = PARAMETERIZE_CACHE.read().get(&cache_key).cloned();
-        let (ports, parameter_types) = if let Some(entry) = cached_entry {
-            (entry.ports, entry.parameter_types)
-        } else {
-            let parser_result = slang_rs::run_slang(&cfg.to_slang_config()).unwrap();
-            let parser_parameters =
-                slang_rs::extract_parameter_defs_from_value(&parser_result, true);
-
-            // Ports of the parameterized interface
-            let ports = typed::import_top_ports(
-                &parser_result,
-                &core.name,
-                verilog_import.skip_unsupported,
-            )
-            .expect("the module is the elaborated top")
-            .unwrap_or_else(|e| panic!("{e}"));
-
-            // Parameter types for building literals during emission
-            let mut parameter_types = IndexMap::new();
-            for parser_param in parser_parameters[&core.name].iter() {
-                match parser_param_to_param(parser_param) {
-                    Ok((name, param_type)) => {
-                        parameter_types.insert(name, param_type);
-                    }
-                    Err(e) => {
-                        if !verilog_import.skip_unsupported {
-                            panic!("{e}");
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            PARAMETERIZE_CACHE.write().insert(
-                cache_key,
-                ParameterizeCacheEntry {
-                    ports: ports.clone(),
-                    parameter_types: parameter_types.clone(),
-                },
-            );
-
-            (ports, parameter_types)
-        };
-
-        // Build final parameter specs combining values and types (types must exist)
-        let mut final_parameter_specs: IndexMap<String, crate::model::parameter::ParameterSpec> =
-            IndexMap::new();
-        for (name, value) in merged_parameters.into_iter() {
-            let spec = match value {
-                ParameterValue::Integer(value) => {
-                    let ty = parameter_types
-                        .get(&name)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "Parameter type for '{}' not found when parameterizing module '{}'.",
-                                name, core.name
-                            )
-                        })
-                        .clone();
-                    ParameterSpec::Integer { value, ty }
-                }
-                ParameterValue::String(value) => {
-                    // TODO: Validate that the parameter exists and is untyped or string.
-                    ParameterSpec::String(value)
-                }
-            };
-            final_parameter_specs.insert(name, spec);
-        }
+        let mut verilog_import = verilog_import.clone();
+        verilog_import.specialization = Some(specialized.key.clone());
 
         let mod_def = ModDef {
             core: Arc::new(RwLock::new(ModDefCore {
@@ -220,8 +113,8 @@ impl ModDef {
                 interfaces: IndexMap::new(),
                 instances: IndexMap::new(),
                 usage: Usage::EmitNothingAndStop,
-                verilog_import: core.verilog_import.clone(),
-                parameters: final_parameter_specs,
+                verilog_import: Some(verilog_import),
+                parameters,
                 mod_inst_connections: IndexMap::new(),
                 mod_def_connections: IndexMap::new(),
                 mod_def_metadata: HashMap::new(),
@@ -243,7 +136,21 @@ impl ModDef {
                 pipeline_counter: 0..,
             })),
         };
-        mod_def.core.write().insert_imported_ports(&ports);
         mod_def
+            .core
+            .write()
+            .insert_imported_ports(&specialized.ports);
+        Ok(mod_def)
+    }
+
+    /// The identity of this specialization, if this module definition was
+    /// returned by [`ModDef::parameterize`] or [`ModDef::try_parameterize`].
+    pub fn specialization_key(&self) -> Option<SpecializationKey> {
+        self.core
+            .read()
+            .verilog_import
+            .as_ref()?
+            .specialization
+            .clone()
     }
 }
