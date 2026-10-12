@@ -94,6 +94,17 @@ fn step(ty: &PortType, select: &Select) -> Result<(PortType, usize), SelectError
                     "connect the whole union, or use `connect_bits` to reinterpret bits".into(),
                 ],
             }),
+            PortType::Struct {
+                is_packed: false, ..
+            } => Err(SelectError {
+                code: codes::S0205,
+                message: format!("cannot select field `{name}` of unpacked struct `{ty}`"),
+                notes: vec![
+                    "an unpacked struct has no bit layout, so a field has no bit range of its own"
+                        .into(),
+                ],
+                helps: vec!["connect the whole struct, or declare it `struct packed`".into()],
+            }),
             PortType::Struct { packed, .. } if !packed.is_empty() => Err(SelectError {
                 code: codes::S0202,
                 message: format!("cannot select field `{name}` of `{ty}`: it is a packed array"),
@@ -360,6 +371,7 @@ mod tests {
                 name: "s_t".into(),
             }),
             signed: false,
+            is_packed: true,
             fields: fields
                 .iter()
                 .map(|(n, t)| PortField {

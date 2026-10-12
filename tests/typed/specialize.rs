@@ -84,6 +84,7 @@ fn hdr(packed: &[(i64, i64)]) -> PortType {
     PortType::Struct {
         name: cfg_pkg("hdr_t"),
         signed: false,
+        is_packed: true,
         fields: vec![
             field("dst_id", logic(&[(3, 0)])),
             field("len", logic(&[(7, 0)])),
@@ -96,6 +97,7 @@ fn flit(packed: &[(i64, i64)]) -> PortType {
     PortType::Struct {
         name: cfg_pkg("flit_t"),
         signed: false,
+        is_packed: true,
         fields: vec![field("hdr", hdr(&[])), field("data", logic(&[(31, 0)]))],
         packed: packed.iter().map(|&(msb, lsb)| Dim { msb, lsb }).collect(),
     }

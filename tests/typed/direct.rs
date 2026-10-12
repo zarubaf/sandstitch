@@ -119,6 +119,7 @@ fn failing_defaults_import_with_type_override() {
                 name: "t".to_string(),
             }),
             signed: false,
+            is_packed: true,
             fields: vec![field("v", logic(&[])), field("d", logic(&[(3, 0)]))],
             packed: vec![],
         })

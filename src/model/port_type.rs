@@ -69,6 +69,9 @@ pub enum PortType {
         name: Option<QualifiedName>,
         /// `struct packed signed`: the whole struct reads as a signed vector.
         signed: bool,
+        /// Declared `packed`. An unpacked struct has no bit layout of its
+        /// own: its fields cannot be selected as bit ranges.
+        is_packed: bool,
         fields: Vec<PortField>,
         packed: Vec<Dim>,
     },
@@ -76,6 +79,8 @@ pub enum PortType {
         name: Option<QualifiedName>,
         /// `union packed signed`.
         signed: bool,
+        /// Declared `packed`.
+        is_packed: bool,
         fields: Vec<PortField>,
         packed: Vec<Dim>,
     },
@@ -151,12 +156,14 @@ impl fmt::Display for PortType {
             PortType::Struct {
                 name,
                 signed,
+                is_packed,
                 fields,
                 packed,
             }
             | PortType::Union {
                 name,
                 signed,
+                is_packed,
                 fields,
                 packed,
             } => {
@@ -168,7 +175,10 @@ impl fmt::Display for PortType {
                         } else {
                             "union"
                         };
-                        write!(f, "{keyword} packed ")?;
+                        write!(f, "{keyword} ")?;
+                        if *is_packed {
+                            f.write_str("packed ")?;
+                        }
                         if *signed {
                             f.write_str("signed ")?;
                         }
@@ -217,7 +227,8 @@ impl PortType {
         }
     }
 
-    /// Checks structural equivalence: same kind, signedness (of logic vectors,
+    /// Checks structural equivalence: same kind, packedness of structs and
+    /// unions, signedness (of logic vectors,
     /// structs, unions and enum bases) and packed dimensions; struct and union members with the same names in the same
     /// order and equivalent types; enums with equivalent base types and the
     /// same variant names and values. Type names are not compared.
@@ -245,6 +256,27 @@ impl PortType {
         }
     }
 
+    /// The display, with `(packed)`/`(unpacked)` after a named struct or
+    /// union (an anonymous one shows its `packed` keyword already).
+    fn with_packing(&self) -> String {
+        match self {
+            PortType::Struct {
+                name: Some(_),
+                is_packed,
+                ..
+            }
+            | PortType::Union {
+                name: Some(_),
+                is_packed,
+                ..
+            } => format!(
+                "{self} ({})",
+                if *is_packed { "packed" } else { "unpacked" }
+            ),
+            _ => self.to_string(),
+        }
+    }
+
     fn equivalent_at(&self, path: &str, other: &PortType) -> Result<(), TypeDifference> {
         let differ = || TypeDifference {
             path: path.to_string(),
@@ -267,12 +299,14 @@ impl PortType {
             (
                 PortType::Struct {
                     signed,
+                    is_packed,
                     fields,
                     packed,
                     ..
                 },
                 PortType::Struct {
                     signed: other_signed,
+                    is_packed: other_is_packed,
                     fields: other_fields,
                     packed: other_packed,
                     ..
@@ -281,17 +315,26 @@ impl PortType {
             | (
                 PortType::Union {
                     signed,
+                    is_packed,
                     fields,
                     packed,
                     ..
                 },
                 PortType::Union {
                     signed: other_signed,
+                    is_packed: other_is_packed,
                     fields: other_fields,
                     packed: other_packed,
                     ..
                 },
             ) => {
+                if is_packed != other_is_packed {
+                    return Err(TypeDifference {
+                        path: path.to_string(),
+                        left: self.with_packing(),
+                        right: other.with_packing(),
+                    });
+                }
                 if signed != other_signed {
                     return Err(TypeDifference {
                         path: path.to_string(),
@@ -403,6 +446,7 @@ mod tests {
         PortType::Struct {
             name,
             signed: false,
+            is_packed: true,
             fields,
             packed: vec![],
         }
@@ -452,6 +496,7 @@ mod tests {
         let union = PortType::Union {
             name: None,
             signed: false,
+            is_packed: true,
             fields: vec![
                 field("a", logic(false, &[(3, 0)])),
                 field("b", logic(false, &[(5, 0)])),
@@ -681,6 +726,7 @@ mod tests {
     fn struct_signing_differs() {
         let fields = vec![field("a", logic(false, &[(3, 0)]))];
         let signing = |signed, name: Option<QualifiedName>| PortType::Struct {
+            is_packed: true,
             name,
             signed,
             fields: fields.clone(),
@@ -710,6 +756,7 @@ mod tests {
         let outer = |inner| PortType::Struct {
             name: None,
             signed: false,
+            is_packed: true,
             fields: vec![field("inner", inner)],
             packed: vec![],
         };
@@ -727,6 +774,7 @@ mod tests {
     #[test]
     fn union_signing_differs() {
         let union = |signed| PortType::Union {
+            is_packed: true,
             name: None,
             signed,
             fields: vec![
@@ -753,6 +801,7 @@ mod tests {
         let u = PortType::Union {
             name: None,
             signed: false,
+            is_packed: true,
             fields,
             packed: vec![],
         };
@@ -778,6 +827,7 @@ mod tests {
             unreachable!()
         };
         let array = |msb| PortType::Struct {
+            is_packed: true,
             name: name.clone(),
             signed,
             fields: fields.clone(),

@@ -97,12 +97,14 @@ fn flit(packed: &[(i64, i64)]) -> PortType {
     PortType::Struct {
         name: cfg_pkg("flit_t"),
         signed: false,
+        is_packed: true,
         fields: vec![
             field(
                 "hdr",
                 PortType::Struct {
                     name: cfg_pkg("hdr_t"),
                     signed: false,
+                    is_packed: true,
                     fields: vec![
                         field("dst_id", logic(false, &[(3, 0)])),
                         field("len", logic(false, &[(7, 0)])),
@@ -153,6 +155,7 @@ fn struct_port_keeps_fields_and_qualified_name() {
         Some(PortType::Struct {
             name: None,
             signed: false,
+            is_packed: true,
             fields: vec![
                 field("a", logic(false, &[])),
                 field("b", logic(false, &[(2, 0)])),
@@ -499,6 +502,7 @@ endmodule
                 name: "s_t".into(),
             }),
             signed: true,
+            is_packed: true,
             fields: vec![
                 field("a", logic(true, &[(7, 0)])),
                 field("b", logic(true, &[(31, 0)])),

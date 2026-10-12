@@ -386,6 +386,15 @@ fn s0204() {
 }
 
 #[test]
+fn s0205() {
+    sel_panic(diagnostic::codes::S0205, |entry, sel| {
+        documented! { entry;
+            sel.get_port("hdr_i").field("len");
+        }
+    });
+}
+
+#[test]
 fn s0301() {
     let entry = Entry::load(diagnostic::codes::S0301);
     let paths = entry.paths();

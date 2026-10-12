@@ -39,6 +39,8 @@ codes! {
     S0203;
     /// Field access through union.
     S0204;
+    /// Field access on an unpacked struct.
+    S0205;
     /// Module defined both by emitted RTL and by a manifest source.
     S0301;
     /// Macro defined differently by two imports in the build.

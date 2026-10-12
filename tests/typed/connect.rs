@@ -2,7 +2,7 @@
 
 //! Typed connections: field and index selections, type checks of
 //! connections (S0201), `connect_bits`, and the selection errors
-//! (S0202, S0203, S0204).
+//! (S0202, S0203, S0204, S0205).
 
 use indexmap::IndexMap;
 use slang_rs::str2tmpfile;
@@ -546,6 +546,102 @@ fn index_out_of_range_panics_with_s0203() {
         "{message}"
     );
     assert!(!message.contains("use `bit` or `slice`"), "{message}");
+}
+
+const UNPACKED: &str = "
+package up_pkg;
+  typedef struct { logic [3:0] dst_id; logic [7:0] len; } hdr_t;
+  typedef struct packed { logic [3:0] dst_id; logic [7:0] len; } hdr_p_t;
+endpackage
+module up_src (output up_pkg::hdr_t o, output up_pkg::hdr_p_t p);
+endmodule
+module up_dst (input up_pkg::hdr_t i, input up_pkg::hdr_p_t q);
+endmodule
+";
+
+#[test]
+fn unpacked_struct_imports_as_unpacked() {
+    let sources = crate::common::slang::Sources::new(&[UNPACKED]);
+    let src = sources.import("up_src");
+    let Some(PortType::Struct {
+        is_packed, fields, ..
+    }) = src.get_port("o").port_type()
+    else {
+        panic!("expected a struct");
+    };
+    assert!(!is_packed);
+    assert_eq!(fields.len(), 2);
+    let Some(PortType::Struct { is_packed, .. }) = src.get_port("p").port_type() else {
+        panic!("expected a struct");
+    };
+    assert!(is_packed);
+}
+
+#[test]
+fn whole_unpacked_struct_connects_and_emits() {
+    let sources = crate::common::slang::Sources::new(&[UNPACKED]);
+    let (src, dst) = (sources.import("up_src"), sources.import("up_dst"));
+    let top = ModDef::new("top");
+    let s = top.instantiate(&src, Some("s"), None);
+    let d = top.instantiate(&dst, Some("d"), None);
+    s.get_port("o").connect(&d.get_port("i"));
+    s.get_port("p").connect(&d.get_port("q"));
+    assert!(top.check().0.is_empty(), "{}", top.check().render());
+    // A flat vector cannot connect to an unpacked struct port; the emitted
+    // RTL elaborates, so the net is typed.
+    let emitted = sources.emit_checked(&top);
+    assert!(emitted.contains("  wire up_pkg::hdr_t s_o;\n"), "{emitted}");
+}
+
+#[test]
+fn packed_and_unpacked_structs_are_not_equivalent() {
+    let sources = crate::common::slang::Sources::new(&[UNPACKED]);
+    let src = sources.import("up_src");
+    let (unpacked, packed) = (
+        src.get_port("o").port_type().unwrap(),
+        src.get_port("p").port_type().unwrap(),
+    );
+    assert_eq!(unpacked.width(), packed.width());
+    assert_eq!(
+        unpacked.equivalent(&packed),
+        Err(TypeDifference {
+            path: String::new(),
+            left: "up_pkg::hdr_t (unpacked)".into(),
+            right: "up_pkg::hdr_p_t (packed)".into(),
+        })
+    );
+
+    // Connected, they are reported by `check`.
+    let dst = sources.import("up_dst");
+    let top = ModDef::new("top");
+    let s = top.instantiate(&src, Some("s"), None);
+    let d = top.instantiate(&dst, Some("d"), None);
+    s.get_port("o").connect(&d.get_port("q"));
+    s.get_port("p").connect(&d.get_port("i"));
+    let diagnostics = top.check();
+    assert_eq!(diagnostics.0.len(), 2, "{}", diagnostics.render());
+    assert!(
+        diagnostics.0.iter().all(|d| d.code == codes::S0201),
+        "{}",
+        diagnostics.render()
+    );
+}
+
+#[test]
+fn field_of_unpacked_struct_panics_with_s0205() {
+    let sources = crate::common::slang::Sources::new(&[UNPACKED]);
+    let src = sources.import("up_src");
+    let message = panic_message(|| {
+        src.get_port("o").field("len");
+    });
+    assert!(
+        message.starts_with(
+            "error[S0205]: cannot select field `len` of unpacked struct `up_pkg::hdr_t`"
+        ),
+        "{message}"
+    );
+    // A packed struct of the same members selects fine.
+    assert_eq!(range(&src.get_port("p").field("len")), (7, 0));
 }
 
 #[test]

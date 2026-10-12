@@ -21,5 +21,6 @@ quotes must be in the example (S0301 and S0302: the whole output).
 | [S0202](S0202.md) | no such field |
 | [S0203](S0203.md) | index out of range |
 | [S0204](S0204.md) | field access through union |
+| [S0205](S0205.md) | field access on an unpacked struct |
 | [S0301](S0301.md) | module defined twice in the build |
 | [S0302](S0302.md) | macro defined differently in the build |

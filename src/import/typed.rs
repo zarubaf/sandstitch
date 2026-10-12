@@ -134,24 +134,28 @@ fn convert_at(path: &str, ty: &slang_rs::Type) -> Result<PortType, Unpacked> {
         Type::Struct {
             name,
             signed,
+            packed: is_packed,
             fields: f,
             packed_dimensions,
             ..
         } => PortType::Struct {
             name: qualified_name(name),
             signed: *signed,
+            is_packed: *is_packed,
             fields: fields(path, f)?,
             packed: dims(packed_dimensions),
         },
         Type::Union {
             name,
             signed,
+            packed: is_packed,
             fields: f,
             packed_dimensions,
             ..
         } => PortType::Union {
             name: qualified_name(name),
             signed: *signed,
+            is_packed: *is_packed,
             fields: fields(path, f)?,
             packed: dims(packed_dimensions),
         },
