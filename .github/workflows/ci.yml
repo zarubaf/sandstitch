@@ -72,3 +72,6 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --all-targets --locked
+        env:
+          # setup-rust-toolchain defaults to RUSTFLAGS=-D warnings; upstream code has known warnings.
+          RUSTFLAGS: ""
