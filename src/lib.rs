@@ -14,6 +14,7 @@ pub use port_slice::{ConvertibleToPortSlice, ConvertibleToPortSliceVec, PortSlic
 mod connection;
 mod mod_def;
 use mod_def::ModDefCore;
+mod check;
 mod emit;
 pub use emit::verilog::EmitOptions;
 mod import;

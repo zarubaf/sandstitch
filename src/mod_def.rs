@@ -26,7 +26,6 @@ pub use crate::physical::placement::CalculatedPlacement;
 pub(crate) mod hierarchy;
 mod ports;
 mod stub;
-mod validate;
 mod wrap;
 pub use crate::physical::edges::{
     BOTTOM_EDGE_INDEX, EAST_EDGE_INDEX, LEFT_EDGE_INDEX, NORTH_EDGE_INDEX, RIGHT_EDGE_INDEX,

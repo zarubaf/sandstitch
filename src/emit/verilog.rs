@@ -8,9 +8,9 @@ use indexmap::IndexMap;
 use indexmap::map::Entry;
 use xlsynth_vast::{Expr, LiteralFormat, LogicRef, VastFile, VastFileType, VastModule};
 
+use crate::check::connection::check_for_gaps;
 use crate::connection::connected_item::ConnectedItem;
 use crate::connection::expression_source::merge_expression_sources;
-use crate::connection::validate::check_for_gaps;
 use crate::{IO, ModDef, ModDefCore, Port, PortSlice, Usage};
 
 #[derive(Debug, PartialEq)]
