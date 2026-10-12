@@ -4,6 +4,7 @@ use indexmap::IndexMap;
 use regex::Regex;
 use std::sync::Arc;
 
+use crate::model::intf::IntfMember;
 use crate::{Intf, ModDef};
 
 impl ModDef {
@@ -18,17 +19,26 @@ impl ModDef {
         name: impl AsRef<str>,
         mapping: IndexMap<String, (String, usize, usize)>,
     ) -> Intf {
+        let members = mapping
+            .iter()
+            .map(|(func_name, (port_name, msb, lsb))| {
+                IntfMember::new(
+                    func_name,
+                    &self.get_port(port_name).slice_or_whole(*msb, *lsb),
+                )
+            })
+            .collect();
+        self.define_intf(name.as_ref(), members)
+    }
+
+    pub(crate) fn define_intf(&self, name: &str, members: Vec<IntfMember>) -> Intf {
         let mut core = self.core.write();
-        if core.interfaces.contains_key(name.as_ref()) {
-            panic!(
-                "Interface {} already exists in module {}",
-                name.as_ref(),
-                core.name
-            );
+        if core.interfaces.contains_key(name) {
+            panic!("Interface {} already exists in module {}", name, core.name);
         }
-        core.interfaces.insert(name.as_ref().to_string(), mapping);
+        core.interfaces.insert(name.to_string(), members);
         Intf::ModDef {
-            name: name.as_ref().to_string(),
+            name: name.to_string(),
             mod_def_core: Arc::downgrade(&self.core),
         }
     }
