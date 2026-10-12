@@ -231,7 +231,8 @@ impl ModDef {
     /// Errors:
     /// - S0102 if Slang fails to elaborate the sources, or `name` is not a
     ///   top-level module of the elaborated design.
-    /// - S0103 for ports with unpacked dimensions, unless
+    /// - S0103 for ports with unpacked dimensions or a type that is not
+    ///   integral (`real`, `string`, `event`, ...), unless
     ///   `cfg.skip_unsupported` is set (the ports are then skipped).
     /// - S0104 for interface ports. A module with interface ports does not
     ///   elaborate as a top, so these are found by elaborating the definition
@@ -250,20 +251,12 @@ impl ModDef {
             }
         };
 
-        match slang_rs::extract_instance_interface_ports_from_value(&value, name) {
-            None => {
-                return Err(interface_port_error_of_definition(name, cfg)
-                    .unwrap_or_else(|| typed::module_not_found(name)));
-            }
-            Some(interface_ports) if !interface_ports.is_empty() && !cfg.skip_unsupported => {
-                return Err(typed::interface_port_error(name, &interface_ports));
-            }
-            Some(_) => {}
-        }
-        let parser_ports =
-            slang_rs::extract_instance_ports_from_value(&value, name, cfg.skip_unsupported)
-                .expect("top-level instance found above");
-        let imported_ports = typed::import_ports(name, &parser_ports, cfg.skip_unsupported)?;
+        let Some(imported_ports) = typed::import_top_ports(&value, name, cfg.skip_unsupported)
+        else {
+            return Err(interface_port_error_of_definition(name, cfg)
+                .unwrap_or_else(|| typed::module_not_found(name)));
+        };
+        let imported_ports = imported_ports?;
 
         let mod_def = Self::mod_def_from_imported_ports(name, &imported_ports, cfg);
 
@@ -281,15 +274,20 @@ impl ModDef {
 
     pub fn all_from_verilog_with_config(cfg: &ParserConfig) -> Vec<Self> {
         let value = slang_rs::run_slang(&cfg.to_slang_config()).unwrap();
-        let parser_ports = slang_rs::extract_ports_from_value(&value, cfg.skip_unsupported);
+        // Every top-level module (with or without interface ports), sorted by
+        // name for a deterministic order.
+        let mut top_names: Vec<String> = slang_rs::extract_interface_ports_from_value(&value)
+            .into_keys()
+            .collect();
+        top_names.sort();
 
-        let mod_defs: Vec<ModDef> = parser_ports
-            .keys()
+        let mod_defs: Vec<ModDef> = top_names
+            .into_iter()
             .map(|name| {
-                let imported_ports =
-                    typed::import_ports(name, &parser_ports[name], cfg.skip_unsupported)
-                        .unwrap_or_else(|e| panic!("{e}"));
-                Self::mod_def_from_imported_ports(name, &imported_ports, cfg)
+                let imported_ports = typed::import_top_ports(&value, &name, cfg.skip_unsupported)
+                    .expect("listed as a top-level module")
+                    .unwrap_or_else(|e| panic!("{e}"));
+                Self::mod_def_from_imported_ports(&name, &imported_ports, cfg)
             })
             .collect();
 

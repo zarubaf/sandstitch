@@ -48,7 +48,7 @@ let r5 = router.try_parameterize(&[
 
 ## Typed ports
 
-`PortType` (library-owned, converted at the slang-rs boundary): `Logic { signed, packed }`, `Struct { name: Option<QualifiedName>, fields, packed }`, `Union { … }`, `Enum { name, base, variants, packed }` (`packed` for arrays of enums such as `state_t [3:0]`). Width is derived from the type. Slang's type text carries no enum base type, so the base is `logic [w-1:0]`, signed when a variant value is negative.
+`PortType` (library-owned, converted at the slang-rs boundary): `Logic { signed, packed }`, `Struct { name: Option<QualifiedName>, fields, packed }`, `Union { … }`, `Enum { name, base, variants, packed }` (`packed` for arrays of enums such as `state_t [3:0]`). Width is derived from the type. An enum's base is `logic [w-1:0]` with the width and signedness of its variant literals as Slang reports them (`typedef enum {…}` has a signed 32-bit base).
 
 **Equivalence** is structural: same kind, signedness and packed dimensions; struct/union field names in order with equivalent field types; enum base and variant names/values. Names are not compared.
 

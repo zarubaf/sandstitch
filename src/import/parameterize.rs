@@ -145,16 +145,16 @@ impl ModDef {
             (entry.ports, entry.parameter_types)
         } else {
             let parser_result = slang_rs::run_slang(&cfg.to_slang_config()).unwrap();
-            let parser_ports = slang_rs::extract_ports_from_value(&parser_result, true);
             let parser_parameters =
                 slang_rs::extract_parameter_defs_from_value(&parser_result, true);
 
             // Ports of the parameterized interface
-            let ports = typed::import_ports(
+            let ports = typed::import_top_ports(
+                &parser_result,
                 &core.name,
-                &parser_ports[&core.name],
                 verilog_import.skip_unsupported,
             )
+            .expect("the module is the elaborated top")
             .unwrap_or_else(|e| panic!("{e}"));
 
             // Parameter types for building literals during emission

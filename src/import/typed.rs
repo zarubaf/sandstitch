@@ -4,7 +4,6 @@
 //! import diagnostics for ports that cannot be represented.
 
 use regex::Regex;
-use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
 use crate::diagnostic::codes;
@@ -43,13 +42,9 @@ impl ModDefCore {
     }
 }
 
-/// Why a Slang type cannot be represented as a [`PortType`].
-enum Unsupported {
-    /// Unpacked dimensions, at the given dotted field path ("" for the port).
-    Unpacked(String),
-    /// An enum without variants or with variants of different widths.
-    Enum(String),
-}
+/// A Slang type that cannot be represented as a [`PortType`]: it has
+/// unpacked dimensions at the given dotted field path ("" for the port).
+struct Unpacked(String);
 
 fn join(path: &str, field: &str) -> String {
     if path.is_empty() {
@@ -90,7 +85,7 @@ fn qualified_name(name: &str) -> Option<QualifiedName> {
     })
 }
 
-fn fields(path: &str, fields: &[slang_rs::Field]) -> Result<Vec<PortField>, Unsupported> {
+fn fields(path: &str, fields: &[slang_rs::Field]) -> Result<Vec<PortField>, Unpacked> {
     fields
         .iter()
         .map(|f| {
@@ -104,7 +99,7 @@ fn fields(path: &str, fields: &[slang_rs::Field]) -> Result<Vec<PortField>, Unsu
 
 /// Converts a Slang type. Unpacked dimensions anywhere in the type are
 /// rejected.
-fn convert_at(path: &str, ty: &slang_rs::Type) -> Result<PortType, Unsupported> {
+fn convert_at(path: &str, ty: &slang_rs::Type) -> Result<PortType, Unpacked> {
     use slang_rs::Type;
     let unpacked = match ty {
         Type::Logic {
@@ -125,7 +120,7 @@ fn convert_at(path: &str, ty: &slang_rs::Type) -> Result<PortType, Unsupported> 
         } => unpacked_dimensions,
     };
     if !unpacked.is_empty() {
-        return Err(Unsupported::Unpacked(path.to_string()));
+        return Err(Unpacked(path.to_string()));
     }
     Ok(match ty {
         Type::Logic {
@@ -162,15 +157,12 @@ fn convert_at(path: &str, ty: &slang_rs::Type) -> Result<PortType, Unsupported> 
             packed_dimensions,
             ..
         } => {
-            let width = match variants.first() {
-                Some(first) if variants.iter().all(|v| v.width == first.width) => first.width,
-                _ => return Err(Unsupported::Enum(path.to_string())),
-            };
-            // Slang's enum text carries no base type, only sized variant
-            // values; a base is taken as signed when a value is negative.
-            let signed = variants
-                .iter()
-                .any(|v| v.value.sign() == num_bigint::Sign::Minus);
+            // Slang renders every variant as a literal of the base type: its
+            // width and signedness are the base's.
+            let first = variants
+                .first()
+                .expect("a SystemVerilog enum has at least one variant");
+            let (width, signed) = (first.width, first.signed);
             PortType::Enum {
                 name: qualified_name(name),
                 base: Box::new(PortType::Logic {
@@ -220,22 +212,43 @@ fn error(code: crate::Code, message: String, primary: Label) -> Diagnostic {
     }
 }
 
-/// Converts the ports of module `module`. Ports that cannot be represented
-/// are skipped when `skip_unsupported` is set and reported (S0103) otherwise;
-/// all such ports are reported together.
+/// Converts the ports of module `module`, given in declaration order. Ports
+/// that cannot be represented (unpacked dimensions, or a type that is not
+/// integral) are skipped when `skip_unsupported` is set and reported (S0103)
+/// otherwise; all such ports are reported together, in declaration order.
 pub(crate) fn import_ports(
     module: &str,
-    ports: &[slang_rs::Port],
+    ports: &[Result<slang_rs::Port, slang_rs::UnsupportedPort>],
     skip_unsupported: bool,
 ) -> Result<Vec<ImportedPort>, ImportError> {
     let mut imported = Vec::new();
     let mut diagnostics = Vec::new();
     for port in ports {
+        let port = match port {
+            Ok(port) => port,
+            Err(unsupported) => {
+                let mut d = error(
+                    codes::S0103,
+                    format!(
+                        "port `{}` of `{module}` has unsupported type `{}`",
+                        unsupported.name, unsupported.type_text
+                    ),
+                    Label {
+                        span: sv_span(unsupported.loc.as_ref(), &unsupported.name),
+                        text: "only integral (bit-vector) types are supported".into(),
+                    },
+                );
+                d.helps.push(
+                    "use a packed integral type (logic, bit, int, packed struct, enum)".into(),
+                );
+                diagnostics.push(d);
+                continue;
+            }
+        };
         let span = sv_span(port.loc.as_ref(), &port.name);
         let ty = match convert_at("", &port.ty) {
             Ok(ty) => ty,
-            Err(_) if skip_unsupported => continue,
-            Err(Unsupported::Unpacked(path)) => {
+            Err(Unpacked(path)) => {
                 let mut d = error(
                     codes::S0103,
                     format!("port `{}` of `{module}` has unpacked dimensions", port.name),
@@ -253,25 +266,6 @@ pub(crate) fn import_ports(
                         .into(),
                 );
                 diagnostics.push(d);
-                continue;
-            }
-            Err(Unsupported::Enum(path)) => {
-                let what = if path.is_empty() {
-                    "the port's enum type".to_string()
-                } else {
-                    format!("the enum type of field `{path}`")
-                };
-                diagnostics.push(error(
-                    codes::S0103,
-                    format!(
-                        "port `{}` of `{module}` has an unsupported enum type",
-                        port.name
-                    ),
-                    Label {
-                        span,
-                        text: format!("{what} has no variants or variants of different widths"),
-                    },
-                ));
                 continue;
             }
         };
@@ -299,13 +293,30 @@ pub(crate) fn import_ports(
             enum_name,
         });
     }
-    if diagnostics.is_empty() {
+    if diagnostics.is_empty() || skip_unsupported {
         Ok(imported)
     } else {
         Err(ImportError {
             diagnostics: Diagnostics(diagnostics),
         })
     }
+}
+
+/// Imports the ports of the top-level instance `module` of an elaborated
+/// design: S0104 for interface ports (skipped with `skip_unsupported`), S0103
+/// for ports that cannot be represented (see [`import_ports`]). Returns
+/// `None` if `module` is not a top-level instance.
+pub(crate) fn import_top_ports(
+    value: &serde_json::Value,
+    module: &str,
+    skip_unsupported: bool,
+) -> Option<Result<Vec<ImportedPort>, ImportError>> {
+    let interface_ports = slang_rs::extract_instance_interface_ports_from_value(value, module)?;
+    if !interface_ports.is_empty() && !skip_unsupported {
+        return Some(Err(interface_port_error(module, &interface_ports)));
+    }
+    let ports = slang_rs::extract_instance_ports_checked_from_value(value, module)?;
+    Some(import_ports(module, &ports, skip_unsupported))
 }
 
 /// S0104 for each interface port of `module`.
@@ -363,29 +374,15 @@ static SLANG_ERROR: LazyLock<Regex> =
 /// Makes a path from Slang's output absolute (Slang reports paths relative to
 /// the directory it ran in, which is this process's working directory).
 fn absolute(path: &str) -> String {
-    let path = Path::new(path);
-    if path.is_absolute() {
-        return path.to_string_lossy().into_owned();
+    match std::env::current_dir() {
+        Ok(cwd) => slang_rs::absolute_path(&cwd, path),
+        Err(_) => path.to_string(),
     }
-    let Ok(cwd) = std::env::current_dir() else {
-        return path.to_string_lossy().into_owned();
-    };
-    let mut normalized = PathBuf::new();
-    for component in cwd.join(path).components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other),
-        }
-    }
-    normalized.to_string_lossy().into_owned()
 }
 
-/// S0102 for a failed Slang run while importing `module`: every error Slang
-/// printed becomes a note; the first located one is the primary label and
-/// the others are secondary labels.
+/// S0102 for a failed Slang run while importing `module`: the first located
+/// error Slang printed is the primary label and the others are secondary
+/// labels. Without a located error, Slang's output is the note.
 pub(crate) fn slang_failure(module: &str, err: &dyn std::error::Error) -> ImportError {
     let text = err.to_string();
     // `run_slang` reports "slang command failed ..., stderr: <stderr>".
@@ -407,13 +404,11 @@ pub(crate) fn slang_failure(module: &str, err: &dyn std::error::Error) -> Import
         text: "Slang reported an error".into(),
     });
     let secondary: Vec<Label> = labels.collect();
-    let mut notes: Vec<String> = SLANG_ERROR
-        .captures_iter(&text)
-        .map(|c| format!("slang: {}", &c[4]))
-        .collect();
-    if notes.is_empty() {
-        notes.push(text.trim().to_string());
-    }
+    let notes = if primary.span == Span::None {
+        vec![text.trim().to_string()]
+    } else {
+        vec![]
+    };
     ImportError {
         diagnostics: Diagnostics(vec![Diagnostic {
             code: codes::S0102,
