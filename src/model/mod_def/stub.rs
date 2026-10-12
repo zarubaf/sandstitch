@@ -19,6 +19,8 @@ impl ModDef {
             core: Arc::new(RwLock::new(ModDefCore {
                 name: name.as_ref().to_string(),
                 ports: core.ports.clone(),
+                port_types: core.port_types.clone(),
+                port_spans: core.port_spans.clone(),
                 // TODO(sherbst): 12/08/2024 should enum_ports be copied when stubbing?
                 // The implication is that modules that instantiate this stub will
                 // use casting to connect to enum input ports, even though they appear

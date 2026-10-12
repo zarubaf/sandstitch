@@ -12,7 +12,7 @@ use crate::physical::geometry::PhysicalPin;
 use crate::physical::tracks::{TrackDefinitions, TrackOccupancies};
 
 use crate::model::connection::PortSliceConnections;
-use crate::{IO, Metadata, Usage};
+use crate::{IO, Metadata, PortType, Span, Usage};
 
 type PhysicalPinMap = IndexMap<String, Vec<Option<PhysicalPin>>>;
 type MaxDistanceMap = IndexMap<String, Vec<Option<i64>>>;
@@ -25,6 +25,12 @@ type MaxDistanceMap = IndexMap<String, Vec<Option<i64>>>;
 pub struct ModDefCore {
     pub(crate) name: String,
     pub(crate) ports: IndexMap<String, IO>,
+    /// Resolved types of imported ports, keyed like `ports`. Written only by
+    /// [`ModDefCore::insert_typed_port`], which keeps the `ports` width equal
+    /// to the type's width. Ports added without a type have no entry.
+    pub(crate) port_types: IndexMap<String, PortType>,
+    /// SystemVerilog declaration spans of imported ports, keyed like `ports`.
+    pub(crate) port_spans: IndexMap<String, Span>,
     pub(crate) interfaces: IndexMap<String, IndexMap<String, (String, usize, usize)>>,
     pub(crate) instances: IndexMap<String, Arc<RwLock<ModDefCore>>>,
     pub(crate) usage: Usage,
@@ -59,6 +65,33 @@ pub struct ModDefCore {
 }
 
 impl ModDefCore {
+    /// Inserts (or replaces) a typed port: `ports[name]` gets direction `io`
+    /// and the type's width, `port_types[name]` the type and `port_spans[name]`
+    /// its declaration span. This is the only writer of `port_types`.
+    pub(crate) fn insert_typed_port(
+        &mut self,
+        name: String,
+        io: fn(usize) -> IO,
+        ty: PortType,
+        span: Span,
+    ) {
+        self.ports.insert(name.clone(), io(ty.width()));
+        self.port_spans.insert(name.clone(), span);
+        self.port_types.insert(name, ty);
+    }
+
+    /// The type of port `name`, if it has one.
+    pub(crate) fn port_type(&self, name: &str) -> Option<&PortType> {
+        let ty = self.port_types.get(name)?;
+        debug_assert_eq!(
+            self.ports.get(name).map(IO::width),
+            Some(ty.width()),
+            "port {}.{name}: IO width and type width disagree",
+            self.name
+        );
+        Some(ty)
+    }
+
     pub fn get_physical_pin(&self, port_name: &str, bit: usize) -> PhysicalPin {
         let pins = self.physical_pins.get(port_name).unwrap_or_else(|| {
             panic!(

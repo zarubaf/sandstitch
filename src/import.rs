@@ -8,3 +8,4 @@ pub(crate) mod package;
 pub(crate) mod parameterize;
 pub(crate) mod parser;
 pub(crate) mod parser_cfg;
+pub(crate) mod typed;

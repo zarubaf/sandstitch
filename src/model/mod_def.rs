@@ -33,6 +33,8 @@ impl ModDef {
             core: Arc::new(RwLock::new(ModDefCore {
                 name: name.as_ref().to_string(),
                 ports: IndexMap::new(),
+                port_types: IndexMap::new(),
+                port_spans: IndexMap::new(),
                 enum_ports: IndexMap::new(),
                 interfaces: IndexMap::new(),
                 instances: IndexMap::new(),

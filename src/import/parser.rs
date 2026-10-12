@@ -8,26 +8,57 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use crate::import::parser_cfg::ParserConfig;
+use crate::import::typed::{self, ImportedPort};
 use crate::model::parameter::ParameterType;
-use crate::{IO, ModDef, ModDefCore, Usage};
+use crate::{ImportError, ModDef, ModDefCore, Usage};
 
+/// S0104 if the definition of `module`, elaborated alone, has interface
+/// ports; `None` if it has none or does not elaborate alone either.
+fn interface_port_error_of_definition(module: &str, cfg: &ParserConfig) -> Option<ImportError> {
+    typed::interface_ports_of_definition(module, cfg)
+        .filter(|ports| !ports.is_empty())
+        .map(|ports| typed::interface_port_error(module, &ports))
+}
+
+/// The parser configuration a module was imported with, kept to rebuild a
+/// configuration for later elaborations (parameterization). `tops`,
+/// `parameters` and `include_hierarchy` are not kept: they are chosen per
+/// elaboration.
 #[derive(Clone)]
 pub(crate) struct VerilogImport {
     pub(crate) sources: Vec<String>,
     pub(crate) incdirs: Vec<String>,
     pub(crate) defines: Vec<(String, String)>,
-    pub(crate) skip_unsupported: bool,
+    pub(crate) libfiles: Vec<String>,
+    pub(crate) libdirs: Vec<String>,
+    pub(crate) libexts: Vec<String>,
     pub(crate) ignore_unknown_modules: bool,
+    pub(crate) ignore_protected: bool,
+    pub(crate) timescale: Option<String>,
+    pub(crate) skip_unsupported: bool,
+    pub(crate) extra_arguments: Vec<String>,
 }
 
-pub(crate) fn parser_port_to_port(parser_port: &slang_rs::Port) -> Result<(String, IO), String> {
-    let size = parser_port.ty.width().unwrap();
-    let port_name = parser_port.name.clone();
-
-    match parser_port.dir {
-        slang_rs::PortDir::Input => Ok((port_name, IO::Input(size))),
-        slang_rs::PortDir::Output => Ok((port_name, IO::Output(size))),
-        slang_rs::PortDir::InOut => Ok((port_name, IO::InOut(size))),
+impl VerilogImport {
+    fn new(cfg: &ParserConfig) -> Self {
+        let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect();
+        VerilogImport {
+            sources: strings(cfg.sources),
+            incdirs: strings(cfg.incdirs),
+            defines: cfg
+                .defines
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            libfiles: strings(cfg.libfiles),
+            libdirs: strings(cfg.libdirs),
+            libexts: strings(cfg.libexts),
+            ignore_unknown_modules: cfg.ignore_unknown_modules,
+            ignore_protected: cfg.ignore_protected,
+            timescale: cfg.timescale.map(str::to_string),
+            skip_unsupported: cfg.skip_unsupported,
+            extra_arguments: strings(cfg.extra_arguments),
+        }
     }
 }
 
@@ -66,62 +97,22 @@ pub(crate) fn parser_param_to_param(
 }
 
 impl ModDef {
-    fn mod_def_from_parser_ports(
+    fn mod_def_from_imported_ports(
         mod_def_name: &str,
-        parser_ports: &[slang_rs::Port],
+        imported_ports: &[ImportedPort],
         cfg: &ParserConfig,
     ) -> ModDef {
-        let mut ports = IndexMap::new();
-        let mut enum_ports = IndexMap::new();
-
-        for parser_port in parser_ports {
-            match parser_port_to_port(parser_port) {
-                Ok((name, io)) => {
-                    ports.insert(name.clone(), io.clone());
-                    // Enum input ports that are not a packed array require special handling
-                    // They need to have casting to be valid Verilog.
-                    if let slang_rs::Type::Enum {
-                        name: enum_name,
-                        packed_dimensions,
-                        unpacked_dimensions,
-                        ..
-                    } = &parser_port.ty
-                        && packed_dimensions.is_empty()
-                        && unpacked_dimensions.is_empty()
-                        && let IO::Input(_) = io
-                    {
-                        enum_ports.insert(name.clone(), enum_name.clone());
-                    }
-                }
-                Err(e) => {
-                    if !cfg.skip_unsupported {
-                        panic!("{e}");
-                    } else {
-                        continue;
-                    }
-                }
-            }
-        }
-
-        ModDef {
+        let mod_def = ModDef {
             core: Arc::new(RwLock::new(ModDefCore {
                 name: mod_def_name.to_string(),
-                ports,
-                enum_ports,
+                ports: IndexMap::new(),
+                port_types: IndexMap::new(),
+                port_spans: IndexMap::new(),
+                enum_ports: IndexMap::new(),
                 interfaces: IndexMap::new(),
                 instances: IndexMap::new(),
                 usage: Usage::EmitNothingAndStop,
-                verilog_import: Some(VerilogImport {
-                    sources: cfg.sources.iter().map(|s| s.to_string()).collect(),
-                    incdirs: cfg.incdirs.iter().map(|s| s.to_string()).collect(),
-                    defines: cfg
-                        .defines
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect(),
-                    skip_unsupported: cfg.skip_unsupported,
-                    ignore_unknown_modules: cfg.ignore_unknown_modules,
-                }),
+                verilog_import: Some(VerilogImport::new(cfg)),
                 parameters: IndexMap::new(),
                 mod_inst_connections: IndexMap::new(),
                 mod_def_connections: IndexMap::new(),
@@ -143,7 +134,9 @@ impl ModDef {
                 specified_net_names: HashSet::new(),
                 pipeline_counter: 0..,
             })),
-        }
+        };
+        mod_def.core.write().insert_imported_ports(imported_ports);
+        mod_def
     }
 
     /// Creates a new module definition from a Verilog file. The `name`
@@ -225,29 +218,64 @@ impl ModDef {
     /// Creates a new module definition from Verilog sources. The `name`
     /// parameter is the name of the module to extract from Verilog code, and
     /// `cfg` is a `ParserConfig` struct specifying source files, include
-    /// directories, etc.
+    /// directories, etc. Panics with the rendered diagnostics if the import
+    /// fails; see [`ModDef::try_from_verilog_with_config`].
     pub fn from_verilog_with_config(name: impl AsRef<str>, cfg: &ParserConfig) -> Self {
-        let value = slang_rs::run_slang(&cfg.to_slang_config()).unwrap();
-        let parser_ports = slang_rs::extract_ports_from_value(&value, cfg.skip_unsupported);
+        Self::try_from_verilog_with_config(name.as_ref(), cfg).unwrap_or_else(|e| panic!("{e}"))
+    }
 
-        let selected_ports = parser_ports.get(name.as_ref()).unwrap_or_else(|| {
-            panic!(
-                "Module definition '{}' not found in Verilog sources.",
-                name.as_ref()
-            )
-        });
+    /// Fallible form of [`ModDef::from_verilog_with_config`]. Ports keep their
+    /// resolved types ([`Port::port_type`](crate::Port::port_type)) and
+    /// declaration spans ([`Port::source_span`](crate::Port::source_span)).
+    ///
+    /// Errors:
+    /// - S0102 if Slang fails to elaborate the sources, or `name` is not a
+    ///   top-level module of the elaborated design.
+    /// - S0103 for ports with unpacked dimensions, unless
+    ///   `cfg.skip_unsupported` is set (the ports are then skipped).
+    /// - S0104 for interface ports. A module with interface ports does not
+    ///   elaborate as a top, so these are found by elaborating the definition
+    ///   alone with `--allow-toplevel-iface-ports`. If the sources elaborate
+    ///   anyway (that flag in `cfg.extra_arguments`) and `cfg.skip_unsupported`
+    ///   is set, the interface ports are skipped.
+    pub fn try_from_verilog_with_config(
+        name: &str,
+        cfg: &ParserConfig,
+    ) -> Result<Self, ImportError> {
+        let value = match slang_rs::run_slang(&cfg.to_slang_config()) {
+            Ok(value) => value,
+            Err(e) => {
+                return Err(interface_port_error_of_definition(name, cfg)
+                    .unwrap_or_else(|| typed::slang_failure(name, e.as_ref())));
+            }
+        };
 
-        let mod_def = Self::mod_def_from_parser_ports(name.as_ref(), selected_ports, cfg);
+        match slang_rs::extract_instance_interface_ports_from_value(&value, name) {
+            None => {
+                return Err(interface_port_error_of_definition(name, cfg)
+                    .unwrap_or_else(|| typed::module_not_found(name)));
+            }
+            Some(interface_ports) if !interface_ports.is_empty() && !cfg.skip_unsupported => {
+                return Err(typed::interface_port_error(name, &interface_ports));
+            }
+            Some(_) => {}
+        }
+        let parser_ports =
+            slang_rs::extract_instance_ports_from_value(&value, name, cfg.skip_unsupported)
+                .expect("top-level instance found above");
+        let imported_ports = typed::import_ports(name, &parser_ports, cfg.skip_unsupported)?;
+
+        let mod_def = Self::mod_def_from_imported_ports(name, &imported_ports, cfg);
 
         if cfg.include_hierarchy {
-            let mod_def_with_hierarchy = mod_def.stub(&name);
+            let mod_def_with_hierarchy = mod_def.stub(name);
             let hierarchy = slang_rs::extract_hierarchy_from_value(&value);
-            if let Some(inst) = hierarchy.get(name.as_ref()) {
+            if let Some(inst) = hierarchy.get(name) {
                 crate::import::hierarchy::populate_hierarchy(&mod_def_with_hierarchy, inst);
             }
-            mod_def_with_hierarchy
+            Ok(mod_def_with_hierarchy)
         } else {
-            mod_def
+            Ok(mod_def)
         }
     }
 
@@ -257,7 +285,12 @@ impl ModDef {
 
         let mod_defs: Vec<ModDef> = parser_ports
             .keys()
-            .map(|name| Self::mod_def_from_parser_ports(name, &parser_ports[name], cfg))
+            .map(|name| {
+                let imported_ports =
+                    typed::import_ports(name, &parser_ports[name], cfg.skip_unsupported)
+                        .unwrap_or_else(|e| panic!("{e}"));
+                Self::mod_def_from_imported_ports(name, &imported_ports, cfg)
+            })
             .collect();
 
         if cfg.include_hierarchy {

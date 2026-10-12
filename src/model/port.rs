@@ -9,6 +9,7 @@ use crate::model::io::IO;
 use crate::model::mod_inst::HierPathElem;
 use crate::{
     ConvertibleToPortSlice, MetadataKey, MetadataValue, ModDef, ModDefCore, ModInst, PortSlice,
+    PortType, Span,
 };
 
 mod connect;
@@ -234,6 +235,29 @@ impl Port {
                 .clone()
             }
         }
+    }
+
+    /// Returns the resolved type of the whole port, for ports imported from
+    /// SystemVerilog; `None` for ports added without a type (`add_port`).
+    /// For an instance port, this is the type in the instantiated module.
+    pub fn port_type(&self) -> Option<PortType> {
+        self.get_mod_def_core_where_declared()
+            .read()
+            .port_type(self.name())
+            .cloned()
+    }
+
+    /// Returns the SystemVerilog declaration span of the port, as reported by
+    /// Slang; [`Span::None`] if unknown (e.g. for ports added with
+    /// `add_port`). For an instance port, this is the declaration in the
+    /// instantiated module.
+    pub fn source_span(&self) -> Span {
+        self.get_mod_def_core_where_declared()
+            .read()
+            .port_spans
+            .get(self.name())
+            .cloned()
+            .unwrap_or(Span::None)
     }
 
     pub(crate) fn assign_to_inst(&self, inst: &ModInst) -> Port {
