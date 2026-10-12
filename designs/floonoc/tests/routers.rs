@@ -99,22 +99,34 @@ fn width(router: &topstitch::ModDef, port: &str) -> usize {
         .width()
 }
 
+/// A directory for the configuration packages, deleted when the test ends.
+fn out_dir() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
+
 #[test]
 fn configurations_are_distinct_specializations() {
-    let small_router = router(&small()).unwrap();
-    let big_router = router(&big()).unwrap();
+    let dir = out_dir();
+    let small_router = router(&small(), dir.path()).unwrap();
+    let big_router = router(&big(), dir.path()).unwrap();
     let small_key = small_router.specialization_key().unwrap();
     let big_key = big_router.specialization_key().unwrap();
     assert_ne!(small_key, big_key);
     assert_eq!(
-        router(&small()).unwrap().specialization_key().unwrap(),
+        router(&small(), dir.path())
+            .unwrap()
+            .specialization_key()
+            .unwrap(),
         small_key,
         "an equal configuration is the same specialization"
     );
     let mut renamed = small();
     renamed.name = "small2".into();
     assert_ne!(
-        router(&renamed).unwrap().specialization_key().unwrap(),
+        router(&renamed, dir.path())
+            .unwrap()
+            .specialization_key()
+            .unwrap(),
         small_key,
         "a different package is a different specialization"
     );
@@ -146,10 +158,18 @@ fn configurations_are_distinct_specializations() {
         |r: &topstitch::ModDef, port: &str| r.get_port(port).port_type().unwrap().to_string();
     assert!(pkg_type(&small_router, "floo_wide_i").contains("small_pkg::floo_wide_t"));
     assert!(pkg_type(&big_router, "floo_wide_i").contains("big_pkg::floo_wide_t"));
+
+    // The package lives in the caller's directory.
+    let pkg = cfg_pkg_file(&small(), dir.path());
+    assert_eq!(pkg.parent(), Some(dir.path()));
+    assert_eq!(std::fs::read_to_string(&pkg).unwrap(), cfg_pkg(&small()));
 }
 
+const ROUTERS: [(u32, u32); 4] = [(0, 0), (0, 1), (1, 0), (1, 1)];
+
 fn check_mesh(cfg: &FlooConfig) -> String {
-    let mesh = mesh_2x2(cfg);
+    let dir = out_dir();
+    let mesh = mesh_2x2(cfg, dir.path());
     let emitted = mesh.emit(EmitOptions::default());
     let manifest = mesh.manifest();
     let top = format!("{}_mesh_2x2", cfg.name);
@@ -159,7 +179,7 @@ fn check_mesh(cfg: &FlooConfig) -> String {
 
     // The configuration package and the router are built from the
     // manifest, and every router is the one specialization.
-    let pkg = cfg_pkg_file(cfg);
+    let pkg = cfg_pkg_file(cfg, dir.path());
     assert!(manifest.sources.contains(&pkg), "{manifest:#?}");
     assert!(
         manifest
@@ -167,7 +187,10 @@ fn check_mesh(cfg: &FlooConfig) -> String {
             .iter()
             .any(|s| s.ends_with("floonoc/hw/floo_nw_router.sv"))
     );
-    let key = router(cfg).unwrap().specialization_key().unwrap();
+    let key = router(cfg, dir.path())
+        .unwrap()
+        .specialization_key()
+        .unwrap();
     let paths: Vec<&str> = manifest
         .specializations
         .iter()
@@ -176,9 +199,9 @@ fn check_mesh(cfg: &FlooConfig) -> String {
             path.as_str()
         })
         .collect();
-    let expected: Vec<String> = ["x0_y0", "x0_y1", "x1_y0", "x1_y1"]
+    let expected: Vec<String> = ROUTERS
         .iter()
-        .map(|xy| format!("{top}.i_router_{xy}"))
+        .map(|(x, y)| format!("{top}.i_router_x{x}_y{y}"))
         .collect();
     assert_eq!(paths, expected);
     let pkg_name = cfg.pkg_name();
@@ -188,6 +211,12 @@ fn check_mesh(cfg: &FlooConfig) -> String {
             .count(),
         4
     );
+    for (x, y) in ROUTERS {
+        assert_eq!(
+            literal(connection(&emitted, &format!("i_router_x{x}_y{y}"), "id_i")),
+            id_value(cfg, x, y)
+        );
+    }
     emitted
 }
 
@@ -212,68 +241,131 @@ fn literal(text: &str) -> (u32, u32) {
 
 #[test]
 fn small_mesh_elaborates() {
-    let cfg = small();
-    let emitted = check_mesh(&cfg);
-    for (x, y) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-        assert_eq!(
-            literal(connection(&emitted, &format!("i_router_x{x}_y{y}"), "id_i")),
-            id_value(&cfg, x, y)
-        );
-    }
+    check_mesh(&small());
 }
 
 #[test]
 fn big_mesh_elaborates() {
     let cfg = big();
-    let emitted = check_mesh(&cfg);
-    for (x, y) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-        assert_eq!(
-            literal(connection(&emitted, &format!("i_router_x{x}_y{y}"), "id_i")),
-            id_value(&cfg, x, y)
-        );
-    }
+    check_mesh(&cfg);
     // x = 1 in the upper two bits, above 2-bit y and the port ID.
     assert_eq!(id_value(&cfg, 1, 0), (5, 0b01000));
 }
 
-/// The emitted links of `small`: element `d` of a `floo_req_i` (most
-/// significant element first in the concatenation) is element `opposite(d)`
-/// of the neighbour's `floo_req_o`, mesh edges are zero and the local port
-/// is the exported top port.
+/// Two local ports per router, both exported.
+#[test]
+fn six_route_mesh_elaborates() {
+    let mut cfg = small();
+    cfg.name = "six".into();
+    cfg.num_routes = 6;
+    let emitted = check_mesh(&cfg);
+    for (x, y) in ROUTERS {
+        for p in [4, 5] {
+            for (dir, ch, suffix) in [("input", "req", "i"), ("output", "wide", "o")] {
+                let decl = format!("{dir} six_pkg::floo_{ch}_t x{x}_y{y}_p{p}_floo_{ch}_{suffix}");
+                assert!(
+                    emitted
+                        .lines()
+                        .any(|l| l.trim().trim_end_matches(',') == decl),
+                    "{decl}"
+                );
+            }
+        }
+    }
+}
+
+/// What feeds one element of a router's link input.
+#[derive(Debug, PartialEq, Eq)]
+enum Source {
+    /// Zero (a mesh edge).
+    Zero,
+    /// Element `index` of another router's link output net.
+    Element { net: String, index: usize },
+    /// A top-level port (a local link).
+    Port(String),
+}
+
+/// Splits the concatenation `{a, b, ...}` driving an input port into one
+/// [`Source`] per element of `elem` bits, element 0 first. Adjacent
+/// elements may share one item (a merged zero literal or a slice of
+/// several elements).
+fn elements(concat: &str, elem: usize) -> Vec<Source> {
+    let items = concat
+        .strip_prefix('{')
+        .and_then(|c| c.strip_suffix('}'))
+        .unwrap_or_else(|| panic!("{concat} is not a concatenation"));
+    let mut out = Vec::new();
+    for item in items.split(", ").collect::<Vec<_>>().into_iter().rev() {
+        if let Some((width, hex)) = item.split_once("'h") {
+            let width: usize = width.parse().unwrap();
+            assert!(hex.chars().all(|c| c == '0' || c == '_'), "{item}");
+            assert_eq!(width % elem, 0, "{item}");
+            out.extend((0..width / elem).map(|_| Source::Zero));
+        } else if let Some((net, range)) = item.split_once('[') {
+            let (msb, lsb) = range.strip_suffix(']').unwrap().split_once(':').unwrap();
+            let (msb, lsb): (usize, usize) = (msb.parse().unwrap(), lsb.parse().unwrap());
+            assert_eq!(lsb % elem, 0, "{item}");
+            assert_eq!((msb + 1) % elem, 0, "{item}");
+            out.extend((lsb / elem..=msb / elem).map(|index| Source::Element {
+                net: net.to_string(),
+                index,
+            }));
+        } else {
+            out.push(Source::Port(item.to_string()));
+        }
+    }
+    out
+}
+
+/// Every link input of every router of `small`, for the request, response
+/// and wide channels: direction `d` comes from the neighbour's output
+/// element `opposite(d)` (North 0, East 1, South 2, West 3), mesh edges
+/// are zero and the local port (4) is the exported top port.
 #[test]
 fn small_mesh_links_follow_xy_coordinates() {
     let cfg = small();
-    let emitted = mesh_2x2(&cfg).emit(EmitOptions::default());
-    let req = width(&router(&cfg).unwrap(), "floo_req_i") / 5;
-    let element = |net: &str, i: usize| format!("{net}[{}:{}]", (i + 1) * req - 1, i * req);
-    let zero = |n: usize| format!("{}'h", n * req);
-    // x0_y0: North (0) from x0_y1's South (2), East (1) from x1_y0's West
-    // (3); West and South at the mesh edge.
-    let x0_y0 = connection(&emitted, "i_router_x0_y0", "floo_req_i");
-    assert!(
-        x0_y0.starts_with(&format!("{{x0_y0_p4_floo_req_i, {}", zero(2))),
-        "{x0_y0}"
-    );
-    assert!(
-        x0_y0.ends_with(&format!(
-            "{}, {}}}",
-            element("i_router_x1_y0_floo_req_o", 3),
-            element("i_router_x0_y1_floo_req_o", 2)
-        )),
-        "{x0_y0}"
-    );
-    // x1_y1: West (3) from x0_y1's East (1), South (2) from x1_y0's North
-    // (0); East and North at the mesh edge.
-    let x1_y1 = connection(&emitted, "i_router_x1_y1", "floo_req_i");
-    assert!(
-        x1_y1.starts_with(&format!(
-            "{{x1_y1_p4_floo_req_i, {}, {}, {}",
-            element("i_router_x0_y1_floo_req_o", 1),
-            element("i_router_x1_y0_floo_req_o", 0),
-            zero(2)
-        )),
-        "{x1_y1}"
-    );
+    let dir = out_dir();
+    let emitted = mesh_2x2(&cfg, dir.path()).emit(EmitOptions::default());
+    let r = router(&cfg, dir.path()).unwrap();
+    for ch in ["req", "rsp", "wide"] {
+        let elem = width(&r, &format!("floo_{ch}_i")) / 5;
+        for (x, y) in ROUTERS {
+            let neighbour = |nx: u32, ny: u32, index: usize| Source::Element {
+                net: format!("i_router_x{nx}_y{ny}_floo_{ch}_o"),
+                index,
+            };
+            let expected = vec![
+                // North: (x, y+1) through its South.
+                if y == 0 {
+                    neighbour(x, 1, 2)
+                } else {
+                    Source::Zero
+                },
+                // East: (x+1, y) through its West.
+                if x == 0 {
+                    neighbour(1, y, 3)
+                } else {
+                    Source::Zero
+                },
+                // South: (x, y-1) through its North.
+                if y == 1 {
+                    neighbour(x, 0, 0)
+                } else {
+                    Source::Zero
+                },
+                // West: (x-1, y) through its East.
+                if x == 1 {
+                    neighbour(0, y, 1)
+                } else {
+                    Source::Zero
+                },
+                Source::Port(format!("x{x}_y{y}_p4_floo_{ch}_i")),
+            ];
+            let inst = format!("i_router_x{x}_y{y}");
+            let concat = connection(&emitted, &inst, &format!("floo_{ch}_i"));
+            assert_eq!(elements(concat, elem), expected, "{inst}.floo_{ch}_i");
+        }
+    }
 }
 
 #[test]
@@ -284,4 +376,18 @@ fn invalid_configuration_is_rejected() {
     let mut cfg = small();
     cfg.wide.data_width = 60;
     assert!(cfg.validate().unwrap_err().contains("multiple of 8"));
+    // A 1-bit port ID addresses two local ports after the four directions.
+    for (routes, ok) in [(4, false), (5, true), (6, true), (7, false)] {
+        let mut cfg = small();
+        cfg.num_routes = routes;
+        assert_eq!(cfg.validate().is_ok(), ok, "num_routes {routes}");
+    }
+}
+
+#[test]
+#[should_panic(expected = "num_routes 7 is outside 5..=6")]
+fn mesh_rejects_unroutable_port_count() {
+    let mut cfg = small();
+    cfg.num_routes = 7;
+    mesh_2x2(&cfg, out_dir().path());
 }

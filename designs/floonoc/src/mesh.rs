@@ -2,6 +2,8 @@
 
 //! A 2x2 mesh of `floo_nw_router` with XY routing.
 
+use std::path::Path;
+
 use topstitch::{IO, ModDef, ModInst};
 
 use crate::{FlooConfig, router};
@@ -50,18 +52,13 @@ fn link(a: &ModInst, dir: Direction, b: &ModInst, opposite: Direction) {
 /// routing table input and the reduction offload interfaces are not used by
 /// XY routing without collectives: inputs tied to zero, outputs unused.
 ///
-/// Panics if the router does not import, or if `cfg` has fewer than five
-/// routes or coordinates narrower than one bit.
+/// The configuration package is written to `out_dir` ([`router`]).
+///
+/// Panics if `cfg` is invalid ([`FlooConfig::validate`]), the package
+/// cannot be written or the router does not import.
 #[track_caller]
-pub fn mesh_2x2(cfg: &FlooConfig) -> ModDef {
-    assert!(
-        cfg.num_routes > Direction::Eject as u32,
-        "{}: a mesh router needs at least {} routes, got {}",
-        cfg.name,
-        Direction::Eject as u32 + 1,
-        cfg.num_routes
-    );
-    let router = router(cfg).unwrap_or_else(|e| panic!("{e}"));
+pub fn mesh_2x2(cfg: &FlooConfig, out_dir: &Path) -> ModDef {
+    let router = router(cfg, out_dir).unwrap_or_else(|e| panic!("{e}"));
     let top = ModDef::new(format!("{}_mesh_2x2", cfg.name));
     let clk = top.add_port("clk_i", IO::Input(1));
     let rst = top.add_port("rst_ni", IO::Input(1));

@@ -62,25 +62,24 @@ const MODULES: &[&str] = &[
 
 const INCDIRS: &[&str] = &["common_cells/include", "axi/include", "floonoc/hw/include"];
 
-/// Writes [`cfg_pkg`] of `cfg` to a file named after the package and the
-/// hash of its text, under `sandstitch-floonoc` in the system temporary
-/// directory, and returns its path. The file is kept: the import, its
-/// specialization key and the build manifest refer to it. Equal
-/// configurations share one file; it is written atomically.
+/// Writes [`cfg_pkg`] of `cfg` to `out_dir`, in a file named after the
+/// package and the hash of its text, and returns its path. The import, its
+/// specialization key and the build manifest refer to the file, so
+/// `out_dir` must outlive every use of the router and of designs built from
+/// it. Equal configurations share one file; it is written atomically.
 ///
 /// Panics if the file cannot be written.
-pub fn cfg_pkg_file(cfg: &FlooConfig) -> PathBuf {
+pub fn cfg_pkg_file(cfg: &FlooConfig, out_dir: &Path) -> PathBuf {
     let text = cfg_pkg(cfg);
     let digest = Sha256::digest(text.as_bytes());
     let hash: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
-    let dir = std::env::temp_dir().join("sandstitch-floonoc");
-    let path = dir.join(format!("{}-{hash}.sv", cfg.pkg_name()));
+    let path = out_dir.join(format!("{}-{hash}.sv", cfg.pkg_name()));
     if std::fs::read_to_string(&path).is_ok_and(|existing| existing == text) {
         return path;
     }
     let write = || -> std::io::Result<()> {
-        std::fs::create_dir_all(&dir)?;
-        let tmp = dir.join(format!(
+        std::fs::create_dir_all(out_dir)?;
+        let tmp = out_dir.join(format!(
             ".{}-{hash}.{}.{:?}.tmp",
             cfg.pkg_name(),
             std::process::id(),
@@ -119,15 +118,16 @@ fn overrides(cfg: &FlooConfig) -> Vec<(&'static str, ParameterValue)> {
 
 /// `floo_nw_router` specialized for `cfg`, imported directly with its
 /// overrides (its defaults do not elaborate). The configuration package
-/// ([`cfg_pkg_file`]) is one of its sources, so it is in the build manifest
-/// of any design that instantiates the router.
+/// is written to `out_dir` ([`cfg_pkg_file`]) and is one of its sources, so
+/// it is in the build manifest of any design that instantiates the router.
 ///
-/// Panics if `cfg` is invalid ([`FlooConfig::validate`]).
+/// Panics if `cfg` is invalid ([`FlooConfig::validate`]) or the package
+/// cannot be written.
 #[track_caller]
-pub fn router(cfg: &FlooConfig) -> Result<ModDef, ImportError> {
+pub fn router(cfg: &FlooConfig, out_dir: &Path) -> Result<ModDef, ImportError> {
     let root = third_party();
     let path = |rel: &str| root.join(rel).to_str().unwrap().to_string();
-    let pkg_file = cfg_pkg_file(cfg);
+    let pkg_file = cfg_pkg_file(cfg, out_dir);
     let sources: Vec<String> = PACKAGES
         .iter()
         .map(|rel| path(rel))
