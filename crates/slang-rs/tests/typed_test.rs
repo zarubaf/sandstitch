@@ -68,6 +68,7 @@ endmodule
         Type::Struct {
             name: "cfg_pkg::flit_t".to_string(),
             signed: false,
+            packed: true,
             fields: flit_fields(),
             packed_dimensions: vec![Range { msb: 2, lsb: 0 }],
             unpacked_dimensions: vec![],
@@ -314,6 +315,7 @@ endmodule
         Type::Struct {
             name: "cfg_pkg::flit_t".to_string(),
             signed: false,
+            packed: true,
             fields: flit_fields(),
             packed_dimensions: vec![Range { msb: 2, lsb: 0 }],
             unpacked_dimensions: vec![],

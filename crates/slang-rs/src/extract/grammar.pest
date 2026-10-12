@@ -28,11 +28,13 @@ unsigned_keyword = { "unsigned" }
 
 signed_modifier = { signed_keyword | unsigned_keyword }
 
+packed_keyword = { "packed" }
+
 logic_type = { ( "logic" | "reg" | "bit" ) ~ signed_modifier? ~ dimensions }
 
-struct_type = { "struct" ~ ("packed" ~ signed_modifier?)? ~ "{" ~ field_list ~ "}" ~ full_identifier ~ dimensions }
+struct_type = { "struct" ~ (packed_keyword ~ signed_modifier?)? ~ "{" ~ field_list ~ "}" ~ full_identifier ~ dimensions }
 
-union_type = { "union" ~ ("packed" ~ signed_modifier?)? ~ "{" ~ field_list ~ "}" ~ full_identifier ~ dimensions }
+union_type = { "union" ~ (packed_keyword ~ signed_modifier?)? ~ "{" ~ field_list ~ "}" ~ full_identifier ~ dimensions }
 
 enum_type = { "enum" ~ "{" ~ variant_list ~ "}" ~ full_identifier ~ dimensions }
 

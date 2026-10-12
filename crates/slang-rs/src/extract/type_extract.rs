@@ -22,6 +22,8 @@ pub enum Type {
         name: String,
         /// `struct packed signed`.
         signed: bool,
+        /// `struct packed`; an unpacked struct has no bit layout of its own.
+        packed: bool,
         fields: Vec<Field>,
         packed_dimensions: Vec<Range>,
         unpacked_dimensions: Vec<Range>,
@@ -30,6 +32,8 @@ pub enum Type {
         name: String,
         /// `union packed signed`.
         signed: bool,
+        /// `union packed`; an unpacked union has no bit layout of its own.
+        packed: bool,
         fields: Vec<Field>,
         packed_dimensions: Vec<Range>,
         unpacked_dimensions: Vec<Range>,
@@ -233,9 +237,11 @@ fn build_struct_or_union_type(pair: pest::iterators::Pair<Rule>, is_union: bool)
     let mut unpacked_dimensions = Vec::new();
     let mut name = String::new();
     let mut signed = false;
+    let mut packed = false;
 
     for inner_pair in inner {
         match inner_pair.as_rule() {
+            Rule::packed_keyword => packed = true,
             Rule::signed_modifier => {
                 signed = inner_pair.into_inner().next().unwrap().as_rule() == Rule::signed_keyword
             }
@@ -278,6 +284,7 @@ fn build_struct_or_union_type(pair: pest::iterators::Pair<Rule>, is_union: bool)
         Type::Union {
             name,
             signed,
+            packed,
             fields,
             packed_dimensions,
             unpacked_dimensions,
@@ -286,6 +293,7 @@ fn build_struct_or_union_type(pair: pest::iterators::Pair<Rule>, is_union: bool)
         Type::Struct {
             name,
             signed,
+            packed,
             fields,
             packed_dimensions,
             unpacked_dimensions,

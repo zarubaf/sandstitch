@@ -240,6 +240,7 @@ mod tests {
                     ty: Type::Union {
                         name: "bus_t".to_string(),
                         signed: false,
+                        packed: false,
                         fields: vec![
                             Field {
                                 name: "data".to_string(),
@@ -311,6 +312,7 @@ mod tests {
                     ty: Type::Struct {
                         name: "bus_t".to_string(),
                         signed: false,
+                        packed: false,
                         fields: vec![
                             Field {
                                 name: "data".to_string(),
@@ -370,6 +372,7 @@ mod tests {
                 ty: Type::Struct {
                     name: "bus_t".to_string(),
                     signed: false,
+                    packed: true,
                     fields: vec![Field {
                         name: "data".to_string(),
                         ty: Type::Logic {
@@ -494,6 +497,7 @@ mod tests {
                     ty: Type::Struct {
                         name: "mypack::bus_t".to_string(),
                         signed: false,
+                        packed: false,
                         fields: vec![
                             Field {
                                 name: "data".to_string(),
