@@ -1068,7 +1068,8 @@ impl VastFile {
     }
 
     /// Creates an expression that spells a data type, for example as a type
-    /// parameter override (`pkg::t` or `logic [7:0]`).
+    /// parameter override (`pkg::t` or `logic [7:0]`). The result is only
+    /// meaningful as a parameter override value.
     pub fn make_type_expr(&mut self, data_type: &VastDataType) -> Expr {
         let type_index = self.check(data_type.0);
         assert!(
@@ -1085,6 +1086,8 @@ impl VastFile {
 
     /// Creates a package-scoped reference such as `pkg::NAME`.
     pub fn make_package_ref(&mut self, package: &str, name: &str) -> Expr {
+        assert_simple_identifier(package, "package name");
+        assert_simple_identifier(name, "package reference name");
         self.add_expression(ExprData::PackageRef {
             package: package.to_owned(),
             name: name.to_owned(),
@@ -1093,7 +1096,18 @@ impl VastFile {
 
     /// Creates a member selection `base.field`; results can be selected again.
     pub fn make_member_select(&mut self, base: &Expr, field: &str) -> Expr {
-        self.check(base.0);
+        let base_index = self.check(base.0);
+        assert!(
+            matches!(
+                self.ast.expressions[base_index],
+                ExprData::Name { .. }
+                    | ExprData::Index { .. }
+                    | ExprData::Slice { .. }
+                    | ExprData::MemberSelect { .. }
+            ),
+            "member selects require a name, bit select, part select or member select base"
+        );
+        assert_simple_identifier(field, "member select field");
         self.add_expression(ExprData::MemberSelect {
             base: *base,
             field: field.to_owned(),
@@ -1908,4 +1922,12 @@ impl VastFile {
     pub fn emit(&self) -> String {
         emit::emit_file(self)
     }
+}
+
+/// Panics unless `text` is a non-empty simple identifier.
+fn assert_simple_identifier(text: &str, what: &str) {
+    let mut characters = text.chars();
+    let valid = matches!(characters.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && characters.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+    assert!(valid, "{what} must be a simple identifier, got {text:?}");
 }

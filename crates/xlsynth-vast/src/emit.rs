@@ -165,6 +165,14 @@ fn emit_width_cast(file: &VastFile, width: Expr, value: Expr) -> String {
     format!("{rendered_width}'({})", emit_expr(file, value))
 }
 
+/// Returns the SystemVerilog keyword spelling an integer type kind.
+fn integer_keyword(kind: IntegerTypeKind) -> &'static str {
+    match kind {
+        IntegerTypeKind::Integer => "integer",
+        IntegerTypeKind::Int => "int",
+    }
+}
+
 /// Emits a data type as a self-contained expression operand, spelling out the
 /// implicit `logic` base that declarations leave off.
 fn emit_type_expr(file: &VastFile, data_type: VastDataType) -> String {
@@ -174,10 +182,7 @@ fn emit_type_expr(file: &VastFile, data_type: VastDataType) -> String {
     }
     match &file.ast.data_types[element.0.index] {
         TypeData::Integer { signed, kind } => {
-            let keyword = match kind {
-                IntegerTypeKind::Integer => "integer",
-                IntegerTypeKind::Int => "int",
-            };
+            let keyword = integer_keyword(*kind);
             if *signed {
                 keyword.to_owned()
             } else {
@@ -213,10 +218,7 @@ fn emit_data_type_cast(file: &VastFile, data_type: VastDataType, value: Expr) ->
             format!("{sign}'({})", emit_width_cast(file, *width, value))
         }
         TypeData::Integer { signed, kind } => {
-            let keyword = match kind {
-                IntegerTypeKind::Integer => "integer",
-                IntegerTypeKind::Int => "int",
-            };
+            let keyword = integer_keyword(*kind);
             let cast = format!("{keyword}'({})", emit_expr(file, value));
             if *signed {
                 cast
