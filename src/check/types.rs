@@ -21,9 +21,9 @@ impl ModDef {
     /// (structs, unions or enums, as whole typed ports, fields or elements)
     /// whose types are not equivalent. Connections with a logic vector or a
     /// plain bit slice on either end, or made with `connect_bits`, are
-    /// checked for width only, when they are made. Instantiated definitions
-    /// whose internals are not emitted (`EmitNothingAndStop`,
-    /// `EmitDefinitionAndStop`) are not descended into.
+    /// checked for width only, when they are made. Only instantiated
+    /// definitions whose internals are emitted (`EmitDefinitionAndDescend`)
+    /// are descended into.
     pub fn check(&self) -> Diagnostics {
         let mut diagnostics = Vec::new();
         let mut visited = HashSet::new();
@@ -49,12 +49,7 @@ impl ModDef {
                     .instances
                     .values()
                     .rev()
-                    .filter(|inst| {
-                        !matches!(
-                            inst.read().usage,
-                            Usage::EmitNothingAndStop | Usage::EmitDefinitionAndStop
-                        )
-                    })
+                    .filter(|inst| inst.read().usage == Usage::EmitDefinitionAndDescend)
                     .cloned()
                     .collect();
                 (records, instances)

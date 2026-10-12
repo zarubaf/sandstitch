@@ -155,6 +155,16 @@ impl Intf {
             return;
         }
 
+        // The ends are connected through feedthroughs only; record each
+        // end-to-end pair so that their types are still checked.
+        let location = std::panic::Location::caller();
+        let other_ports = other.get_port_slices();
+        for (func_name, self_port) in self.get_port_slices() {
+            if let Some(other_port) = other_ports.get(&func_name) {
+                self_port.store_record(other_port, location, false);
+            }
+        }
+
         let flipped = format!("{}_flipped_{}", prefix.as_ref(), self.get_intf_name());
         let original = format!("{}_original_{}", prefix.as_ref(), self.get_intf_name());
 

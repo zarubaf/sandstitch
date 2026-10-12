@@ -54,10 +54,12 @@ let r5 = router.try_parameterize(&[
 
 | Ends | Rule |
 | --- | --- |
-| typed ↔ typed (port or field) | must be equivalent; diagnostic names both types and the first difference |
+| aggregate ↔ aggregate (port or field) | must be equivalent; diagnostic names both types and the first difference |
 | either end a logic vector (`PortType::Logic` at the selected level) | widths match (upstream rule: `[8:1]`/`[7:0]`, signedness and dimension shape are not compared) |
 | either end a bit slice | widths match |
 | `connect_bits(a, b)` | widths match; recorded as intentional reinterpretation |
+
+Logic vectors nested inside aggregates are compared structurally; only a `Logic` end at the selected level makes a connection width-only.
 
 **Access**: `port.field("hdr.dst_id")` (or chained `field`) and `port.index(i)` return typed slices with bit ranges from SV packed layout (first field most significant). They stay compact references.
 

@@ -261,7 +261,12 @@ impl PortSlice {
 
     /// Records a connection between typed ends that are connected
     /// indirectly (through a pipeline or feedthroughs).
-    fn store_record(&self, other: &PortSlice, location: &'static Location<'static>, bits: bool) {
+    pub(crate) fn store_record(
+        &self,
+        other: &PortSlice,
+        location: &'static Location<'static>,
+        bits: bool,
+    ) {
         if let Some(record) = self.typed_record(other, location, bits) {
             self.port
                 .get_port_connections_define_if_missing()

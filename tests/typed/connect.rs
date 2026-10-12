@@ -665,6 +665,17 @@ fn intf_connection_of_whole_ports_is_type_checked() {
     let line = line!() + 1;
     s.get_intf("bus").connect(&d.get_intf("bus"), false);
     assert_one_s0201_at(&top, line);
+
+    // Through one feedthrough hop, the end-to-end pair is checked.
+    let top = ModDef::new("top2");
+    let s = top.instantiate(&src, Some("s"), None);
+    let d = top.instantiate(&dst, Some("d"), None);
+    let thru = ModDef::new("thru");
+    let t = top.instantiate(&thru, Some("t"), None);
+    let (sb, db) = (s.get_intf("bus"), d.get_intf("bus"));
+    let line = line!() + 1;
+    sb.connect_through(&db, &[&t], "x", false);
+    assert_one_s0201_at(&top, line);
 }
 
 #[test]
@@ -705,7 +716,11 @@ fn check_skips_definitions_that_are_not_emitted() {
     d.get_port("i1").connect(&s.get_port("f"));
     let top = ModDef::new("top");
     top.instantiate(&mid, Some("m"), None);
-    for usage in [Usage::EmitNothingAndStop, Usage::EmitDefinitionAndStop] {
+    for usage in [
+        Usage::EmitNothingAndStop,
+        Usage::EmitDefinitionAndStop,
+        Usage::EmitStubAndStop,
+    ] {
         mid.set_usage(usage);
         assert_eq!(top.check(), Diagnostics(vec![]));
         // Checked directly, `mid` still reports.
