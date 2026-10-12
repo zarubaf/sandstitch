@@ -69,3 +69,6 @@ jobs:
 
       - name: Run tests
         run: SLANG_PATH="$RUNNER_TEMP/slang" cargo test --locked
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --locked
