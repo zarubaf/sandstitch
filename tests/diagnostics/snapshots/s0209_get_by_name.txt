@@ -1,7 +1,7 @@
 error[S0209]: interface `node.link` has member `req` in both directions
-  --> tests/diagnostics/intf.rs:70:14
+  --> tests/diagnostics/intf.rs:92:14
    |
-70 |         link.get("req");
+92 |         link.get("req");
    |              ^^^ used here
    |
    = note: a name present in both directions does not identify one member

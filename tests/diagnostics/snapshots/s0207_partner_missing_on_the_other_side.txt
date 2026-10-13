@@ -1,0 +1,8 @@
+error[S0207]: member `rsp` of `top.b.link` has no partner in `top.a.half`
+  --> tests/diagnostics/intf.rs:69:28
+   |
+69 |         a.get_intf("half").connect(&b.get_intf("link"), false);
+   |                            ^^^^^^^ interfaces connected here
+   |
+   = note: `top.b.rsp_o[0]` (output) needs a member `rsp` driven the other way
+   = help: pass `allow_mismatch = true` to leave unpaired members unconnected
