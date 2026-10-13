@@ -490,13 +490,15 @@ fn binary_only_extra_arguments_are_rejected() {
         assert_eq!(d.code, codes::S0102, "{extra:?}");
         assert_eq!(primary_line(&e), rust_span(line));
         let option = extra[0].split('=').next().unwrap();
+        let reason = if option == "--Mall" {
+            "which would write a dependency file; Sandstitch never writes dependency files"
+        } else {
+            "which specialization passes to Slang itself or which only the slang binary \
+             understands"
+        };
         assert_eq!(
             d.notes[0],
-            format!(
-                "the import configuration's extra arguments contain `{option}`, which \
-                 specialization passes to Slang itself or which only the slang binary \
-                 understands"
-            ),
+            format!("the import configuration's extra arguments contain `{option}`, {reason}"),
             "{extra:?}"
         );
         assert_eq!(
