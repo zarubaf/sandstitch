@@ -160,7 +160,7 @@ endmodule
     }
 
     #[test]
-    #[should_panic(expected = "slang command failed")]
+    #[should_panic(expected = "error: ")]
     fn test_extract_hierarchy_error() {
         let verilog = str2tmpfile(
             "

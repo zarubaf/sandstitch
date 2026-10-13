@@ -2,9 +2,14 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use std::fs::{self, write};
-use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use slang_sys::{AstJson, Request, Response, Stage};
+use std::fmt;
+use std::fs::write;
+use std::path::{Path, PathBuf};
+
+/// Slang itself, for tests and tools. Topstitch's `src/` must not use it.
+pub use slang_sys as sys;
+pub use slang_sys::{Diag, Severity};
 
 mod extract;
 pub use extract::{
@@ -38,7 +43,6 @@ pub struct SlangConfig<'a> {
     pub libexts: &'a [&'a str],
     pub ignore_unknown_modules: bool,
     pub ignore_protected: bool,
-    pub capture_stdio: bool,
     pub timescale: Option<&'a str>,
     pub extra_arguments: &'a [&'a str],
 }
@@ -56,22 +60,14 @@ impl<'a> Default for SlangConfig<'a> {
             libexts: &[],
             ignore_unknown_modules: true,
             ignore_protected: true,
-            capture_stdio: true,
             timescale: None,
             extra_arguments: &[],
         }
     }
 }
 
-/// Searches the PATH to try and locate the slang binary.
-fn find_slang() -> Option<String> {
-    which::which("slang")
-        .ok()
-        .map(|p| p.to_string_lossy().to_string())
-}
-
 /// Adds options needed to make slang ignore protected envelopes.
-fn push_options_to_ignore_protected(args: &mut Vec<&str>) {
+fn push_options_to_ignore_protected(args: &mut Vec<String>) {
     let options = vec![
         "--enable-legacy-protect",
         "-Wno-protected-envelope",
@@ -92,191 +88,247 @@ fn push_options_to_ignore_protected(args: &mut Vec<&str>) {
     ];
 
     for option in options {
-        args.push(option);
+        args.push(option.to_string());
     }
 }
 
-/// The output of `slang --version` for the binary [`run_slang`] uses
-/// (`SLANG_PATH`, else `slang` on the PATH), for example
-/// `slang version 11.0.0+7ddf4059f`.
-pub fn slang_version() -> Result<String, Box<dyn std::error::Error>> {
-    let slang_path = std::env::var("SLANG_PATH")
-        .ok()
-        .or_else(find_slang)
-        .ok_or("slang not found: set SLANG_PATH")?;
-    let output = Command::new(slang_path).arg("--version").output()?;
-    if !output.status.success() {
-        return Err(format!("slang --version failed with exit code: {}", output.status).into());
+/// Options only the `slang` binary understands. [`run_slang`] and friends
+/// set the stage and the AST dump themselves; Slang's library rejects these.
+pub const BINARY_ONLY_OPTIONS: [&str; 5] = [
+    "--ast-json",
+    "--ast-json-source-info",
+    "--parse-only",
+    "--disable-analysis",
+    "-q",
+];
+
+/// Slang's AST as JSON. It dereferences to [`Value`]. Dropping it is
+/// iterative: a plain `Value` frees nested objects recursively, which
+/// overflows the stack of a small thread for a deeply nested design.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Ast(Value);
+
+impl std::ops::Deref for Ast {
+    type Target = Value;
+
+    fn deref(&self) -> &Value {
+        &self.0
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub fn run_slang(cfg: &SlangConfig) -> Result<Value, Box<dyn std::error::Error>> {
-    run(cfg, Ast::Required).map(|(value, _)| value)
+impl Drop for Ast {
+    fn drop(&mut self) {
+        let mut stack = vec![std::mem::take(&mut self.0)];
+        while let Some(value) = stack.pop() {
+            match value {
+                Value::Object(object) => stack.extend(object.into_iter().map(|(_, child)| child)),
+                Value::Array(array) => stack.extend(array),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The result of a Slang run.
+#[derive(Debug)]
+pub struct SlangOutput {
+    /// Slang's AST, with absolute source paths.
+    pub ast: Ast,
+    /// No error or fatal diagnostics.
+    pub ok: bool,
+    /// Every file Slang loaded, headers included; absolute.
+    pub deps: Vec<PathBuf>,
+}
+
+/// A failed Slang run.
+#[derive(Debug)]
+pub struct SlangError {
+    pub diagnostics: Vec<Diag>,
+    /// The diagnostics as Slang's plain text.
+    pub rendered: String,
+    pub deps: Vec<PathBuf>,
+}
+
+impl fmt::Display for SlangError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.rendered.is_empty() {
+            f.write_str(&self.rendered)
+        } else if let Some(first) = self.diagnostics.first() {
+            f.write_str(&first.message)
+        } else {
+            f.write_str("slang failed")
+        }
+    }
+}
+
+impl std::error::Error for SlangError {}
+
+impl SlangError {
+    fn fatal(message: String) -> Self {
+        SlangError {
+            diagnostics: vec![Diag {
+                severity: Severity::Fatal,
+                code: String::new(),
+                message: message.clone(),
+                file: String::new(),
+                line: 0,
+                column: 0,
+            }],
+            rendered: message,
+            deps: Vec::new(),
+        }
+    }
+
+    fn from_response(response: Response) -> Self {
+        SlangError {
+            diagnostics: response.diagnostics,
+            rendered: response.rendered,
+            deps: paths(response.deps),
+        }
+    }
+}
+
+impl From<slang_sys::Error> for SlangError {
+    fn from(error: slang_sys::Error) -> Self {
+        SlangError::fatal(error.0)
+    }
+}
+
+fn paths(deps: Vec<String>) -> Vec<PathBuf> {
+    deps.into_iter().map(PathBuf::from).collect()
+}
+
+/// The Slang library [`run_slang`] calls, for example `slang 11.0`.
+pub fn slang_version() -> String {
+    format!("slang {}", slang_sys::SLANG_VERSION)
+}
+
+/// Runs Slang; an error unless the design elaborated without errors.
+pub fn run_slang(cfg: &SlangConfig) -> Result<SlangOutput, SlangError> {
+    let response = request(cfg, Stage::Elaborate, source_info())?;
+    if !response.ok {
+        return Err(SlangError::from_response(response));
+    }
+    output(response)
 }
 
 /// Like [`run_slang`], but a run that fails still returns the AST Slang
-/// dumped: `Ok((ast, succeeded))`. Slang dumps the AST of a design that did
-/// not elaborate cleanly; members it could not resolve are `Invalid` nodes,
+/// dumped, with `ok` false. Slang dumps the AST of a design that did not
+/// elaborate cleanly; members it could not resolve are `Invalid` nodes,
 /// while declarations such as parameters and ports are kept. After a syntax
 /// error the AST is Slang's recovery and may not match the source. Returns
-/// the failure if Slang dumped no readable AST.
-pub fn run_slang_keep_ast(cfg: &SlangConfig) -> Result<(Value, bool), Box<dyn std::error::Error>> {
-    run(cfg, Ast::KeepFailed)
-}
-
-/// Runs Slang like [`run_slang`] for its exit status only, without reading
-/// an AST; for example with `--parse-only` in `extra_arguments`, which dumps
-/// none. Returns the failure as [`run_slang`] does.
-pub fn check_slang(cfg: &SlangConfig) -> Result<(), Box<dyn std::error::Error>> {
-    run(cfg, Ast::Skip).map(|_| ())
-}
-
-/// Which AST a run returns.
-#[derive(PartialEq)]
-enum Ast {
-    /// Slang's AST; a failed run is an error.
-    Required,
-    /// Slang's AST, also from a failed run.
-    KeepFailed,
-    /// None (`Value::Null`); a failed run is an error.
-    Skip,
-}
-
-fn run(cfg: &SlangConfig, ast: Ast) -> Result<(Value, bool), Box<dyn std::error::Error>> {
-    // Run the slang binary, dumping JSON to tmp_json.
-
-    let slang_path = std::env::var("SLANG_PATH").unwrap_or_else(|_| {
-        // fallback solution: try to find slang on our own
-        match find_slang() {
-            Some(val) => val,
-            None => panic!(
-                "Please set the SLANG_PATH environment variable to the path of the slang binary."
-            ),
-        }
-    });
-
-    if !std::path::Path::new(&slang_path).exists() {
-        return Err(format!("slang binary not found at path: {}", slang_path).into());
+/// the failure only if Slang dumped no AST (a missing source, an unknown
+/// option).
+pub fn run_slang_keep_ast(cfg: &SlangConfig) -> Result<SlangOutput, SlangError> {
+    let response = request(cfg, Stage::Elaborate, source_info())?;
+    if response.ast_json.is_empty() {
+        return Err(SlangError::from_response(response));
     }
+    output(response)
+}
 
-    let tmp_json = tempfile::NamedTempFile::new()?;
-    // Source info adds `source_file`/`source_line`/`source_column` to each
-    // symbol, which is used to fill in declaration locations (e.g. `Port::loc`).
-    let mut args = vec![
-        "--ast-json",
-        tmp_json.path().to_str().unwrap(),
-        "--ast-json-source-info",
-    ];
+/// Runs Slang to parse the sources only, without an AST. Returns the failure
+/// as [`run_slang`] does.
+pub fn check_slang(cfg: &SlangConfig) -> Result<(), SlangError> {
+    let response = request(cfg, Stage::ParseOnly, AstJson::None)?;
+    if response.ok {
+        Ok(())
+    } else {
+        Err(SlangError::from_response(response))
+    }
+}
+
+/// Source info adds `source_file`/`source_line`/`source_column` to each
+/// symbol, which is used to fill in declaration locations (e.g. `Port::loc`).
+fn source_info() -> AstJson {
+    AstJson::Json { source_info: true }
+}
+
+fn request(cfg: &SlangConfig, stage: Stage, ast_json: AstJson) -> Result<Response, SlangError> {
+    Ok(slang_sys::run(&Request {
+        args: arguments(cfg),
+        stage,
+        ast_json,
+    })?)
+}
+
+fn arguments(cfg: &SlangConfig) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
 
     if cfg.ignore_unknown_modules {
-        args.push("--ignore-unknown-modules");
+        args.push("--ignore-unknown-modules".to_string());
     }
 
     if cfg.ignore_protected {
         push_options_to_ignore_protected(&mut args);
     }
 
-    for extra_arg in cfg.extra_arguments.iter() {
-        args.push(extra_arg);
-    }
+    args.extend(cfg.extra_arguments.iter().map(|a| a.to_string()));
 
-    let param_args: Vec<String> = cfg
-        .parameters
-        .iter()
-        .map(|(name, value)| format!("{}={}", name, value))
-        .collect();
-    for param_arg in param_args.iter() {
-        args.push("-G");
-        args.push(param_arg.as_str());
+    for (name, value) in cfg.parameters.iter() {
+        args.push("-G".to_string());
+        args.push(format!("{name}={value}"));
     }
 
     for top in cfg.tops.iter() {
-        args.push("--top");
-        args.push(top);
+        args.push("--top".to_string());
+        args.push(top.to_string());
     }
 
     for incdir in cfg.incdirs.iter() {
-        args.push("-I");
-        args.push(incdir);
+        args.push("-I".to_string());
+        args.push(incdir.to_string());
     }
 
-    let define_args: Vec<String> = cfg
-        .defines
-        .iter()
-        .map(|(name, value)| format!("{}={}", name, value))
-        .collect();
-    for define_arg in define_args.iter() {
-        args.push("-D");
-        args.push(define_arg.as_str());
+    for (name, value) in cfg.defines.iter() {
+        args.push("-D".to_string());
+        args.push(format!("{name}={value}"));
     }
 
     for libfile in cfg.libfiles.iter() {
-        args.push("-v");
-        args.push(libfile);
+        args.push("-v".to_string());
+        args.push(libfile.to_string());
     }
 
     for libdir in cfg.libdirs.iter() {
-        args.push("-y");
-        args.push(libdir);
+        args.push("-y".to_string());
+        args.push(libdir.to_string());
     }
 
     for libext in cfg.libexts.iter() {
-        args.push("-Y");
-        args.push(libext);
+        args.push("-Y".to_string());
+        args.push(libext.to_string());
     }
 
     if let Some(timescale) = cfg.timescale {
-        args.push("--timescale");
-        args.push(timescale);
+        args.push("--timescale".to_string());
+        args.push(timescale.to_string());
     }
 
-    for source in cfg.sources.iter() {
-        args.push(source);
-    }
-
-    // Slang reports source paths relative to its working directory, which is
-    // this process's; capture it so they can be made absolute.
-    let working_dir = std::env::current_dir()?;
-    let mut cmd = Command::new(slang_path);
-
-    cmd.args(args);
-    if !cfg.capture_stdio {
-        cmd.stderr(Stdio::inherit());
-        cmd.stdout(Stdio::inherit());
-    }
-
-    let output = cmd.output()?;
-
-    if !output.status.success() {
-        let stderr = if cfg.capture_stdio {
-            String::from_utf8_lossy(&output.stderr).to_string()
-        } else {
-            "Not Captured".to_string()
-        };
-        let failure = format!(
-            "slang command failed with exit code: {}, stderr: {stderr}",
-            output.status,
-        );
-        if ast != Ast::KeepFailed {
-            return Err(failure.into());
-        }
-        return read_ast(tmp_json.path(), &working_dir)
-            .map(|value| (value, false))
-            .map_err(|_| failure.into());
-    }
-
-    if ast == Ast::Skip {
-        return Ok((Value::Null, true));
-    }
-    read_ast(tmp_json.path(), &working_dir).map(|value| (value, true))
+    args.extend(cfg.sources.iter().map(|s| s.to_string()));
+    args
 }
 
-/// Reads the AST Slang dumped to `path`.
-fn read_ast(path: &Path, working_dir: &Path) -> Result<Value, Box<dyn std::error::Error>> {
-    // Read and parse the JSON output
-    let json_data = fs::read_to_string(path)?;
-    let mut json_deserializer = serde_json::Deserializer::from_str(&json_data);
+/// Turns a response that carries an AST into the output.
+fn output(response: Response) -> Result<SlangOutput, SlangError> {
+    // Slang reports source paths relative to its working directory, which is
+    // this process's; capture it so they can be made absolute.
+    let ast = std::env::current_dir()
+        .map_err(|e| e.to_string())
+        .and_then(|dir| parse_ast(&response.ast_json, &dir).map_err(|e| e.to_string()));
+    match ast {
+        Ok(ast) => Ok(SlangOutput {
+            ast,
+            ok: response.ok,
+            deps: paths(response.deps),
+        }),
+        Err(message) => Err(SlangError::fatal(format!("reading Slang's AST: {message}"))),
+    }
+}
+
+/// Parses the AST Slang serialized.
+fn parse_ast(json: &str, working_dir: &Path) -> Result<Ast, serde_json::Error> {
+    let mut json_deserializer = serde_json::Deserializer::from_str(json);
     // The recursion limit needs to be disabled since slang can produce
     // deeply nested objects.
     // Follows the example code here:
@@ -284,10 +336,10 @@ fn read_ast(path: &Path, working_dir: &Path) -> Result<Value, Box<dyn std::error
     json_deserializer.disable_recursion_limit();
 
     let stacked_deserializer = serde_stacker::Deserializer::new(&mut json_deserializer);
-    let mut json_value = Value::deserialize(stacked_deserializer)?;
-    absolutize_source_files(&mut json_value, working_dir);
+    let mut ast = Ast(Value::deserialize(stacked_deserializer)?);
+    absolutize_source_files(&mut ast.0, working_dir);
 
-    Ok(json_value)
+    Ok(ast)
 }
 
 /// Rewrites the `source_file*` fields added by `--ast-json-source-info`
@@ -320,17 +372,7 @@ fn absolutize_source_files(value: &mut Value, working_dir: &Path) {
 /// Joins `path` onto `working_dir` and normalizes `.` and `..` lexically
 /// (without touching the file system). An absolute `path` is kept as is.
 pub fn absolute_path(working_dir: &Path, path: &str) -> String {
-    let mut normalized = PathBuf::new();
-    for component in working_dir.join(path).components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other),
-        }
-    }
-    normalized.to_string_lossy().into_owned()
+    slang_sys::absolute_path(working_dir, path)
 }
 
 pub fn str2tmpfile(s: &str) -> Result<tempfile::NamedTempFile, Box<dyn std::error::Error>> {

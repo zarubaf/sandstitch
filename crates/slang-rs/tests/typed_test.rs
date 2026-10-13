@@ -19,7 +19,7 @@ module child #(parameter type T = logic, parameter int N = 2) (
 endmodule
 ";
 
-fn elaborate(sources: &[&str], tops: &[&str], extra_arguments: &[&str]) -> serde_json::Value {
+fn elaborate(sources: &[&str], tops: &[&str], extra_arguments: &[&str]) -> Ast {
     let files: Vec<_> = sources.iter().map(|s| str2tmpfile(s).unwrap()).collect();
     let paths: Vec<&str> = files.iter().map(|f| f.path().to_str().unwrap()).collect();
     let cfg = SlangConfig {
@@ -28,7 +28,7 @@ fn elaborate(sources: &[&str], tops: &[&str], extra_arguments: &[&str]) -> serde
         extra_arguments,
         ..Default::default()
     };
-    run_slang(&cfg).unwrap()
+    run_slang(&cfg).unwrap().ast
 }
 
 fn flit_fields() -> Vec<Field> {
@@ -630,7 +630,7 @@ endmodule
 
 #[test]
 fn slang_version_names_slang() {
-    assert!(slang_version().unwrap().starts_with("slang version "));
+    assert_eq!(slang_version(), "slang 11.0");
 }
 
 #[test]
@@ -654,16 +654,20 @@ endmodule
     let cfg = SlangConfig {
         sources: &paths,
         tops: &["m"],
-        capture_stdio: true,
         ..Default::default()
     };
-    let e = run_slang(&cfg).unwrap_err().to_string();
-    assert!(e.contains("invalid member access for type 'T'"), "{e}");
+    let e = run_slang(&cfg).unwrap_err();
+    assert!(
+        e.diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid member access for type 'T'")),
+        "{e}"
+    );
 
-    let (value, succeeded) = run_slang_keep_ast(&cfg).unwrap();
-    assert!(!succeeded);
+    let kept = run_slang_keep_ast(&cfg).unwrap();
+    assert!(!kept.ok);
     assert_eq!(
-        extract_overridable_parameters_from_value(&value)["m"],
+        extract_overridable_parameters_from_value(&kept.ast)["m"],
         vec![
             ("T".to_string(), ParameterKind::Type),
             ("N".to_string(), ParameterKind::Value),
@@ -675,19 +679,49 @@ endmodule
     let paths = [clean.path().to_str().unwrap()];
     let cfg = SlangConfig {
         sources: &paths,
-        capture_stdio: true,
         ..Default::default()
     };
-    assert!(run_slang_keep_ast(&cfg).unwrap().1);
+    assert!(run_slang_keep_ast(&cfg).unwrap().ok);
 
     // No AST at all (a missing source): the failure is returned.
     let cfg = SlangConfig {
         sources: &["/nonexistent/sandstitch.sv"],
-        capture_stdio: true,
         ..Default::default()
     };
-    let e = run_slang_keep_ast(&cfg).unwrap_err().to_string();
-    assert!(e.starts_with("slang command failed"), "{e}");
+    let e = run_slang_keep_ast(&cfg).unwrap_err();
+    assert_eq!(e.diagnostics.len(), 1, "{e}");
+    assert_eq!(e.diagnostics[0].severity, Severity::Fatal, "{e}");
+}
+
+#[test]
+fn deps_are_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let header = dir.path().join("defs.svh");
+    std::fs::write(&header, "`define W 4\n").unwrap();
+    let top = dir.path().join("top.sv");
+    std::fs::write(
+        &top,
+        "`include \"defs.svh\"\nmodule top (input logic [`W-1:0] a);\nendmodule\n",
+    )
+    .unwrap();
+    let paths = [top.to_str().unwrap()];
+    let out = run_slang(&SlangConfig {
+        sources: &paths,
+        incdirs: &[dir.path().to_str().unwrap()],
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(out.deps.iter().all(|d| d.is_absolute()), "{:?}", out.deps);
+    assert!(
+        out.deps.iter().any(|d| d.ends_with("top.sv")),
+        "{:?}",
+        out.deps
+    );
+    assert!(
+        out.deps.iter().any(|d| d.ends_with("defs.svh")),
+        "{:?}",
+        out.deps
+    );
 }
 
 #[test]
@@ -697,8 +731,6 @@ fn check_slang_reports_exit_status() {
         let paths = [file.path().to_str().unwrap()];
         check_slang(&SlangConfig {
             sources: &paths,
-            capture_stdio: true,
-            extra_arguments: &["--parse-only"],
             ..Default::default()
         })
     };
@@ -706,7 +738,11 @@ fn check_slang_reports_exit_status() {
     parse_only("module m #(parameter type T = logic) (input T x);\n  wire y = x.v;\nendmodule\n")
         .unwrap();
     let e = parse_only("module m #(parameter int N = 1; parameter int M = 2) ();\nendmodule\n")
-        .unwrap_err()
-        .to_string();
-    assert!(e.contains("expected ')'"), "{e}");
+        .unwrap_err();
+    assert!(
+        e.diagnostics
+            .iter()
+            .any(|d| d.message.contains("expected ')'")),
+        "{e}"
+    );
 }

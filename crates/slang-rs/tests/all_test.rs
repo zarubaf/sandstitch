@@ -40,7 +40,7 @@ mod tests {
             ..Default::default()
         };
 
-        let value = run_slang(&cfg).unwrap();
+        let value = run_slang(&cfg).unwrap().ast;
 
         // check ports
 

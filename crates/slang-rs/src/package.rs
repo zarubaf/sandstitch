@@ -71,7 +71,7 @@ impl Index<&str> for Package {
 pub fn extract_packages(
     cfg: &crate::SlangConfig,
 ) -> Result<HashMap<String, Package>, Box<dyn Error>> {
-    Ok(extract_packages_from_value(&crate::run_slang(cfg)?))
+    Ok(extract_packages_from_value(&crate::run_slang(cfg)?.ast))
 }
 
 pub fn extract_packages_from_value(value: &Value) -> HashMap<String, Package> {

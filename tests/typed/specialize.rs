@@ -54,6 +54,13 @@ impl Sources {
         ModDef::from_verilog_with_config(name, &cfg)
     }
 
+    fn paths(&self) -> Vec<&str> {
+        self.files
+            .iter()
+            .map(|f| f.path().to_str().unwrap())
+            .collect()
+    }
+
     fn import(&self, name: &str) -> ModDef {
         self.import_with(name, false, &[])
     }
@@ -452,29 +459,97 @@ endmodule
 }
 
 #[test]
-fn user_mall_argument_reports_s0102() {
+fn binary_only_extra_arguments_are_rejected() {
     let deps = tempfile::tempdir().unwrap();
     let list = deps.path().join("deps.txt");
     let list = list.to_str().unwrap();
     let sources = Sources::new(&[PKG, CHILD]);
     let joined = format!("--Mall={list}");
-    for extra in [&["--Mall", list][..], &[joined.as_str()][..]] {
-        let child = sources.import_with("child", false, extra);
-        let (result, line) = (child.try_parameterize(&[("N", 3)]), line!());
+    let mut cases: Vec<Vec<&str>> = slang_rs::BINARY_ONLY_OPTIONS
+        .iter()
+        .map(|option| vec![*option])
+        .collect();
+    cases.push(vec!["--Mall", list]);
+    cases.push(vec![joined.as_str()]);
+    let paths = sources.paths();
+    for extra in &cases {
+        // The arguments are checked before Slang sees them, so the plain
+        // import (which Slang would reject for the binary-only options) is
+        // not needed.
+        let cfg = ParserConfig {
+            sources: &paths,
+            extra_arguments: extra,
+            ..Default::default()
+        };
+        let overrides: [(&str, ParameterValue); 1] = [("N", 3.into())];
+        let result = ModDef::try_from_verilog_parameterized("child", &cfg, &overrides);
+        let line = line!() - 1;
         let e = result.err().unwrap();
         assert_eq!(e.diagnostics.0.len(), 1, "{extra:?}");
         let d = &e.diagnostics.0[0];
         assert_eq!(d.code, codes::S0102, "{extra:?}");
         assert_eq!(primary_line(&e), rust_span(line));
-        assert!(
-            d.notes[0].contains(&format!("contain `{}`", extra[0])),
-            "{d:?}"
+        let option = extra[0].split('=').next().unwrap();
+        assert_eq!(
+            d.notes[0],
+            format!(
+                "the import configuration's extra arguments contain `{option}`, which \
+                 specialization passes to Slang itself or which only the slang binary \
+                 understands"
+            ),
+            "{extra:?}"
         );
         assert_eq!(
             d.helps,
-            vec!["remove `--Mall` from `ParserConfig::extra_arguments`".to_string()]
+            vec![format!(
+                "remove `{option}` from `ParserConfig::extra_arguments`"
+            )],
+            "{extra:?}"
         );
     }
+}
+
+#[test]
+fn unknown_extra_argument_reports_slang_text() {
+    let sources = Sources::new(&[PKG, CHILD]);
+    let paths = sources.paths();
+    let cfg = ParserConfig {
+        sources: &paths,
+        extra_arguments: &["--cst-json", "x"],
+        ..Default::default()
+    };
+    let overrides: [(&str, ParameterValue); 1] = [("N", 3.into())];
+    let e = ModDef::try_from_verilog_parameterized("child", &cfg, &overrides)
+        .err()
+        .unwrap();
+    assert_eq!(e.diagnostics.0.len(), 1, "{e}");
+    let d = &e.diagnostics.0[0];
+    assert_eq!(d.code, codes::S0102, "{e}");
+    assert!(d.notes.iter().any(|n| n.contains("--cst-json")), "{d:?}");
+}
+
+#[test]
+fn import_on_a_small_stack() {
+    // 20_000 terms nest the parse tree far deeper than 2 MiB of stack holds
+    // (parentheses stop at Slang's limit of 1024, which fits); Slang runs on
+    // a thread of its own with a large stack.
+    let terms = vec!["1"; 20_000].join(" + ");
+    let source = format!("module deep; localparam int P = {terms}; endmodule\n");
+    let file = str2tmpfile(&source).unwrap();
+    let path = file.path().to_str().unwrap().to_string();
+    let name = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || {
+            let cfg = ParserConfig {
+                sources: &[path.as_str()],
+                ..Default::default()
+            };
+            ModDef::from_verilog_with_config("deep", &cfg).get_name()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(name, "deep");
 }
 
 #[test]
