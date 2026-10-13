@@ -1,6 +1,6 @@
 # Slang in-process
 
-Status: accepted, 2026-10-13. Tracks #5; step 1 is #17, step 2 is #18.
+Status: accepted, 2026-10-13; step 1 implemented (#17). Tracks #5; step 1 is #17, step 2 is #18.
 
 ## Goal
 

@@ -15,7 +15,7 @@ Sandstitch is an executable hardware specification library. `doc/product.md` is 
 - One authoritative model: the forked composition model owns structure; the resolved snapshot is read-only and shared by RTL emission, the explorer and documentation. Do not add a second mutable graph or hand-duplicate the snapshot schema.
 - Keep changes small and coherent. Refactor the affected area first, with behavior-preserving tests, when structure blocks a change. No unrelated cleanup.
 - Fail explicitly: unsupported SystemVerilog constructs produce diagnostics; never silently drop ports.
-- Run `cargo xtask ci` from the repository root before finishing (fmt, workspace-wide clippy `-D warnings`, hygiene, library boundary, tests). It fetches the pinned Slang v11.0 into `~/.cache/sandstitch/slang-v11.0/` on first use; `cargo xtask slang` prints that path. `cargo xtask explain <CODE>` shows a diagnostic's documentation.
+- Run `cargo xtask ci` from the repository root before finishing (fmt, workspace-wide clippy `-D warnings`, hygiene, library boundary, tests). The first build compiles the vendored Slang (minutes); install ccache to make rebuilds instant. Requires GCC 11+ or Clang 17+, CMake 3.20+ and Python 3. `cargo xtask explain <CODE>` shows a diagnostic's documentation.
 - Ask before adding new tooling or CI.
 
 ## Commits

@@ -21,5 +21,15 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install ccache
+        run: sudo apt-get install -y ccache
+
+      - name: Cache ccache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ hashFiles('crates/slang-sys/vendor/**', 'crates/slang-sys/build.rs', 'crates/slang-sys/build/**') }}
+          restore-keys: ccache-
+
       - name: Run checks
         run: cargo xtask ci

@@ -6,4 +6,8 @@ See [doc/product.md](doc/product.md) for the product plan.
 
 Imported SystemVerilog modules can be specialized with value and type parameters (`try_parameterize`, or `try_from_verilog_parameterized` for IP whose defaults do not elaborate). Ports keep their resolved struct, union and enum types, connections between them are type-checked, and the emitted RTL uses typed nets where the type can be named, plus a build manifest of the sources it needs. See [doc/design/typed-specialization.md](doc/design/typed-specialization.md); [designs/floonoc](designs/floonoc) specializes the FlooNoC router and builds a 2x2 mesh with it. Errors are documented in [doc/errors](doc/errors/README.md).
 
+## Building
+
+Slang is vendored and runs in-process. The first build compiles it (minutes); install ccache to make rebuilds instant. Requires GCC 11+ or Clang 17+, CMake 3.20+ and Python 3. `cargo xtask ci` runs the repository checks.
+
 Forked from [Topstitch](https://github.com/xlsynth/topstitch) v0.100.0 (Apache-2.0), copyright its authors.

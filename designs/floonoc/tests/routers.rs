@@ -5,9 +5,9 @@
 //! elaborates with the build manifest and strict width warnings.
 
 use std::io::Write as _;
-use std::process::Command;
 
 use floonoc::*;
+use slang_rs::sys::{self, AstJson, Request, Severity, Stage};
 use std::path::Path;
 
 use topstitch::{EmitOptions, IO, Manifest, ModDef, ModInst};
@@ -37,44 +37,49 @@ fn big() -> FlooConfig {
 fn elaborate_manifest(manifest: &Manifest, emitted: &str, top: &str) -> Result<(), String> {
     let mut rtl = tempfile::Builder::new().suffix(".sv").tempfile().unwrap();
     rtl.write_all(emitted.as_bytes()).unwrap();
-    let mut cmd = Command::new(std::env::var("SLANG_PATH").unwrap_or_else(|_| "slang".into()));
+    let mut args: Vec<String> = Vec::new();
     for incdir in &manifest.incdirs {
-        cmd.arg("-I").arg(incdir);
+        args.extend(["-I".into(), incdir.to_str().unwrap().into()]);
     }
     for (name, value) in &manifest.defines {
-        cmd.arg("-D").arg(format!("{name}={value}"));
+        args.extend(["-D".into(), format!("{name}={value}")]);
     }
-    for libfile in &manifest.libfiles {
-        cmd.arg("-v").arg(libfile);
-    }
-    for libdir in &manifest.libdirs {
-        cmd.arg("-y").arg(libdir);
+    for (flag, paths) in [("-v", &manifest.libfiles), ("-y", &manifest.libdirs)] {
+        for path in paths {
+            args.extend([flag.into(), path.to_str().unwrap().into()]);
+        }
     }
     for libext in &manifest.libexts {
-        cmd.arg("-Y").arg(libext);
+        args.extend(["-Y".into(), libext.clone()]);
     }
-    let output = cmd
-        .args(&manifest.sources)
-        .arg(rtl.path())
-        .args(["--top", top])
-        .args([
-            "-Wport-width-trunc",
-            "-Wport-width-expand",
-            "-Wwidth-trunc",
-            "-Wwidth-expand",
-            "-Wmultiple-cont-assigns",
-        ])
-        .output()
-        .expect("running Slang");
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if output.status.success() && text.contains("Build succeeded: 0 errors, 0 warnings") {
+    args.extend(manifest.sources.iter().map(|s| s.to_str().unwrap().into()));
+    args.push(rtl.path().to_str().unwrap().into());
+    for arg in [
+        "--top",
+        top,
+        "-Wport-width-trunc",
+        "-Wport-width-expand",
+        "-Wwidth-trunc",
+        "-Wwidth-expand",
+        "-Wmultiple-cont-assigns",
+    ] {
+        args.push(arg.into());
+    }
+    let response = sys::run(&Request {
+        args,
+        stage: Stage::Elaborate,
+        ast_json: AstJson::None,
+    })
+    .unwrap_or_else(|e| panic!("running Slang: {e}"));
+    if response.ok
+        && response
+            .diagnostics
+            .iter()
+            .all(|d| d.severity < Severity::Warning)
+    {
         Ok(())
     } else {
-        Err(text)
+        Err(response.rendered)
     }
 }
 
