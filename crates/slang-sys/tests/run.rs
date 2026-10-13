@@ -201,6 +201,23 @@ fn dependency_file_options_are_fatal() {
 }
 
 #[test]
+fn rejected_option_is_rendered() {
+    let width = fixture("width.sv");
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("deps.txt");
+    let out = out.to_str().unwrap();
+    let r = elaborate_json(&["--Mall", out, &width]);
+    assert!(!r.ok);
+    let fatal = with_severity(&r, Severity::Fatal);
+    assert!(
+        fatal.iter().any(|d| d.message.contains("`--Mall`")),
+        "{:?}",
+        r.diagnostics
+    );
+    assert!(r.rendered.contains("--Mall"), "{}", r.rendered);
+}
+
+#[test]
 fn invalid_utf8_in_a_diagnostic_is_replaced() {
     // `$error` with a Latin-1 byte in its string literal.
     let mut text = b"module m; $error(\"caf".to_vec();

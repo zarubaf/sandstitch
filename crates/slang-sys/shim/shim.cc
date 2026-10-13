@@ -250,6 +250,11 @@ FfiResponse run(const FfiRequest& request) {
             response.deps.push_back(str(name));
     }
 
+    // Rejected options never reach the engine, so their reasons are rendered
+    // here, after the captured text, as the driver would print them.
+    std::string rejected;
+    for (auto& d : unsupported)
+        rejected += "error: " + std::string(d.message.data(), d.message.size()) + "\n";
     auto fromPrinter = printedDiags(printed);
     for (auto& d : unsupported)
         fromPrinter.push_back(std::move(d));
@@ -261,7 +266,7 @@ FfiResponse run(const FfiRequest& request) {
     for (auto& d : recorded)
         response.diagnostics.push_back(std::move(d));
     response.ok = optionsOk && !fatal && driver->diagEngine.getNumErrors() == 0;
-    response.rendered = str(printed + text->getString());
+    response.rendered = str(printed + text->getString() + rejected);
     return response;
 }
 
