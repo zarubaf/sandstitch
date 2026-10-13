@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Resolution of every definition emission plans, in one pass.
+//! Resolution of every definition that emission plans, in one pass.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -77,9 +77,10 @@ fn visit(
     }
 
     if usage == Usage::EmitDefinitionAndDescend {
-        design
+        let previous = design
             .resolutions
             .insert(Arc::as_ptr(core), resolve_def(core));
+        debug_assert!(previous.is_none(), "definition resolved twice");
     }
 }
 

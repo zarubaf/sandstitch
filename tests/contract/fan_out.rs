@@ -2,12 +2,10 @@
 
 //! One driver feeding several sinks keeps each sink's bit range.
 
-use std::path::Path;
-
 use topstitch::*;
 
-use super::LEAVES;
-use crate::common::slang::{Driver, Expect, Sources, check_map};
+use super::{LEAVES, expect, files};
+use crate::common::slang::{Driver, Sources, check_map};
 
 #[test]
 fn one_driver_many_sinks() {
@@ -27,17 +25,11 @@ fn one_driver_many_sinks() {
     top.get_port("y").connect(&a.get_port("o"));
 
     let emitted = sources.emit_checked(&top);
-    let files: Vec<&Path> = sources.files.iter().map(|f| f.path()).collect();
-    let e = |end, msb, lsb, driver| Expect {
-        end,
-        msb,
-        lsb,
-        driver,
-    };
+    let files = files(&sources);
     let map = [
-        e("s1.dst", 7, 0, Driver::End("a.o", 7, 0)),
-        e("s2.d", 3, 0, Driver::End("a.o", 5, 2)),
-        e("y", 7, 0, Driver::End("a.o", 7, 0)),
+        expect("s1.dst", 7, 0, Driver::End("a.o", 7, 0)),
+        expect("s2.d", 3, 0, Driver::End("a.o", 5, 2)),
+        expect("y", 7, 0, Driver::End("a.o", 7, 0)),
     ];
     let ends = [("a.o", 8), ("s1.dst", 8), ("s2.d", 4), ("y", 8)];
     check_map(&files, &emitted, "t", &ends, &map).unwrap_or_else(|e| panic!("{emitted}\n{e}"));

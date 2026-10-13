@@ -15,7 +15,7 @@ use crate::{IO, ModDefCore};
 
 type Connections = Arc<RwLock<PortSliceConnections>>;
 
-/// One port to resolve: its name, width and connections (`None` if it has
+/// One port to resolve: its name, direction and width (`io`) and connections (`None` if it has
 /// none recorded).
 struct PortJob {
     name: String,
@@ -167,6 +167,7 @@ mod tests {
             panic!("expected a port source, got {:?}", hi.source);
         };
         assert_eq!(s.get_inst_name().as_deref(), Some("a"));
+        assert_eq!(s.port.get_port_name(), "o");
         assert_eq!((s.msb, s.lsb), (3, 0));
         let Source::Net(NetSlice::Port(s)) = &lo.source else {
             panic!("expected a port source, got {:?}", lo.source);
@@ -194,6 +195,8 @@ mod tests {
         let Source::Net(NetSlice::Port(s)) = &seg.source else {
             panic!("expected a port source, got {:?}", seg.source);
         };
+        assert_eq!(s.get_inst_name().as_deref(), Some("a"));
+        assert_eq!(s.port.get_port_name(), "o");
         assert_eq!((s.msb, s.lsb), (7, 0));
     }
 
@@ -214,6 +217,9 @@ mod tests {
         };
         assert_eq!(t.value, 5.into());
         assert_eq!(t.width, 4);
+        assert_eq!(dst.segments.len(), 2);
+        let this = &dst.segments[0].this;
+        assert_eq!((this.msb, this.lsb), (7, 4));
 
         let b_o = &resolution.instances[1][0];
         assert_eq!(b_o.segments.len(), 1);

@@ -361,8 +361,8 @@ impl ModDef {
 
         let stub = core.usage == Usage::EmitStubAndStop;
 
-        // Resolve the connections of every instance port and ModDef port,
-        // and decide from them which nets are typed.
+        // Look up this definition's resolution and decide from it which nets
+        // are typed.
 
         let mut types = NetTypes::default();
         let resolved = if stub {

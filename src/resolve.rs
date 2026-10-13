@@ -15,14 +15,14 @@ use crate::model::connection::connected_item::{ConnectedItem, Tieoff, Unused, Wi
 
 /// The slice of a net a segment reads: a port slice (with its typed
 /// selection) or a range of a named wire.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) enum NetSlice {
     Port(PortSlice),
     Wire(Wire),
 }
 
 /// What supplies the bits of a segment.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) enum Source {
     Net(NetSlice),
     Constant(Tieoff),
@@ -41,21 +41,21 @@ impl From<&Source> for ConnectedItem {
 }
 
 /// Bits `this` of an end come from `source` (same width).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct Segment {
     pub(crate) this: PortSlice,
     pub(crate) source: Source,
 }
 
 /// An end's segments, MSB first, merged where contiguous.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct EndResolution {
     pub(crate) name: String,
     pub(crate) segments: Vec<Segment>,
 }
 
 /// The resolved ends of one definition.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct Resolution {
     /// Per instance in declaration order, its ports in declaration order.
     pub(crate) instances: Vec<Vec<EndResolution>>,
