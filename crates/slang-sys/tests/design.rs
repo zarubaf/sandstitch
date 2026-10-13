@@ -848,6 +848,32 @@ fn signals_with_type_and_width() {
 }
 
 #[test]
+fn signals_of_structs_with_anonymous_enums() {
+    let text = "module m;\n\
+                  struct packed { enum logic {A} e; } v;\n\
+                  struct { enum logic {B} e; } u;\n\
+                endmodule\n";
+    let design = design_with(text, "m", &[], DesignQuery::WithSignals);
+    let signals = design.signals("m").unwrap();
+    assert_eq!(signals.len(), 2);
+    assert_eq!(signals[0].name, "v");
+    assert_eq!(signals[0].width, 1);
+    assert!(signals[0].type_text.starts_with("struct"), "{signals:?}");
+    assert_eq!(signals[1].name, "u");
+    assert!(signals[1].type_text.starts_with("struct"), "{signals:?}");
+}
+
+#[test]
+fn unsupported_port_of_struct_with_anonymous_enum() {
+    let ports = ports(
+        "module top (input struct { enum {A} e; real r; } x); endmodule\n",
+        "top",
+    );
+    let x = unsupported(&ports, "x");
+    assert!(x.type_text.starts_with("struct"), "{x:?}");
+}
+
+#[test]
 fn signals_of_child_and_generate_blocks() {
     let text = "module c(output logic o); logic t; endmodule\n\
                 module m; logic x; c u(); if (1) begin : g logic y; end endmodule\n";

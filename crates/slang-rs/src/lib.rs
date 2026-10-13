@@ -83,7 +83,7 @@ fn push_options_to_ignore_protected(args: &mut Vec<String>) {
 }
 
 /// Options only the `slang` binary understands. [`run_slang`] and friends
-/// set the stage and the AST dump themselves; Slang's library rejects these.
+/// set the stage and the design query themselves; Slang's library rejects these.
 pub const BINARY_ONLY_OPTIONS: [&str; 5] = [
     "--ast-json",
     "--ast-json-source-info",

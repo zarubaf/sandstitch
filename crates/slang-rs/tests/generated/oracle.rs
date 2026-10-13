@@ -40,7 +40,7 @@ fn package_value(design: &Design, package: usize, param: usize) -> i64 {
 /// What each package must report: its parameters' values (`int` constants
 /// in decimal), and for each typedef its aliased type, named as a port of
 /// that type is. The `value` text of an alias is Slang's printing and is
-/// checked against the JSON path by the differential comparison, not here.
+/// not checked here.
 pub struct ExpectedPackage {
     pub values: HashMap<String, String>,
     pub aliases: HashMap<String, Type>,

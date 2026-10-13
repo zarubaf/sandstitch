@@ -129,7 +129,8 @@ std::string rangeText(const ConstantRange& range) {
     return "[" + std::to_string(range.left) + ":" + std::to_string(range.right) + "]";
 }
 
-/// Slang's display of `type` (`Type::toString`), with the aliases of type
+/// Slang's display of `type` (`Type::toString`; a struct or union its printer
+/// cannot print is shown as `struct{...}` or `union{...}`), with the aliases of type
 /// parameters seen through: `real` for a port of type `T = real`, also
 /// inside arrays (`real$[0:1]`). Other aliases print as their names.
 std::string typeText(const Type& type) {
@@ -178,6 +179,15 @@ std::string typeText(const Type& type) {
             }
         }
         return text;
+    }
+    if (!printable(type)) {
+        // Slang's printer would assert on the members: name the type.
+        if (type.kind == SymbolKind::TypeAlias)
+            return scopePrefix(type.getParentScope()) + std::string(type.name);
+        auto& canonical = type.getCanonicalType();
+        bool isUnion = canonical.kind == SymbolKind::PackedUnionType ||
+                       canonical.kind == SymbolKind::UnpackedUnionType;
+        return isUnion ? "union{...}" : "struct{...}";
     }
     return type.toString();
 }
