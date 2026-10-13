@@ -60,7 +60,7 @@ A component with more than one of these is S0401, including two constants (tieof
 | --- | --- |
 | S0401 | Component bits with more than one driver: two definition inputs or instance outputs, one of each, a constant and a port, or two constants |
 | S0402 | Bits of an end that are not connected, tied off or marked unused; names the exact range |
-| S0403 | Component bits with no driver (for example a definition output connected only to instance inputs) |
+| S0403 | Component bits with no driver (for example a net named with `specify_net_name` on an instance input that nothing drives) |
 | S0404 | Conflicting intent on the same bits: unused and connected, tied off or wired; unused twice; the same end tied off twice; wired twice; tied off and wired; a wire on a net driven by a definition input |
 | S0405 | Tieoff or unused on an end whose direction does not allow it |
 | S0406 | Inout conflict: several definition inouts on one net, or a definition inout with a definition input or output |

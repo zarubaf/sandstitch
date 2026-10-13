@@ -19,7 +19,12 @@ impl PortSlice {
         self.port
             .get_port_connections_define_if_missing()
             .write()
-            .add_user(self.to_port_slice(), Tieoff::new(value, self.width()), site);
+            .add_user(
+                self.to_port_slice(),
+                Tieoff::new(value, self.width()),
+                site,
+                true,
+            );
     }
 
     /// Marks this port slice as unused, meaning that if it is an module
@@ -35,7 +40,7 @@ impl PortSlice {
         self.port
             .get_port_connections_define_if_missing()
             .write()
-            .add_user(self.to_port_slice(), Unused::new(), site);
+            .add_user(self.to_port_slice(), Unused::new(), site, true);
     }
 
     /// Marks this PortSlice as unused or ties it off to the given value,

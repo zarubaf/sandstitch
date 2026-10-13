@@ -511,6 +511,142 @@ fn s0302() {
     entry.assert_output(&message);
 }
 
+/// Asserts that `diagnostics` is one diagnostic of the entry's code about
+/// `object` (definition, end, msb, lsb), and that the entry shows it.
+fn assert_connection_error(
+    entry: &Entry,
+    diagnostics: &Diagnostics,
+    (definition, end, msb, lsb): (&str, &str, usize, usize),
+) {
+    assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
+    let d = &diagnostics.0[0];
+    assert_eq!(d.code, entry.code, "{}", diagnostics.render());
+    let object = ObjectRef {
+        definition: definition.into(),
+        end: end.into(),
+        msb,
+        lsb,
+    };
+    assert_eq!(d.object, Some(object));
+    entry.assert_summary(&diagnostics.render());
+}
+
+#[test]
+fn s0401() {
+    let entry = Entry::load(diagnostic::codes::S0401);
+    let paths = entry.paths();
+    let cfg = config(&paths);
+    documented! { entry;
+        let src = ModDef::from_verilog_with_config("src", &cfg);
+        let snk = ModDef::from_verilog_with_config("snk", &cfg);
+        let top = ModDef::new("top");
+        let u = top.instantiate(&snk, Some("u"), None);
+        let a = top.instantiate(&src, Some("a"), None);
+        let b = top.instantiate(&src, Some("b"), None);
+        a.get_port("o").connect(&u.get_port("i"));
+        b.get_port("o").connect(&u.get_port("i"));
+        let diagnostics = top.check();
+    }
+    entry.finish();
+    assert_connection_error(&entry, &diagnostics, ("top", "u.i", 7, 0));
+}
+
+#[test]
+fn s0402() {
+    let entry = Entry::load(diagnostic::codes::S0402);
+    let paths = entry.paths();
+    let cfg = config(&paths);
+    documented! { entry;
+        let snk = ModDef::from_verilog_with_config("snk", &cfg);
+        let top = ModDef::new("top");
+        let u = top.instantiate(&snk, Some("u"), None);
+        u.get_port("i").slice(7, 4).tieoff(0);
+        let diagnostics = top.check();
+    }
+    entry.finish();
+    assert_connection_error(&entry, &diagnostics, ("top", "u.i", 3, 0));
+}
+
+#[test]
+fn s0403() {
+    let entry = Entry::load(diagnostic::codes::S0403);
+    let paths = entry.paths();
+    let cfg = config(&paths);
+    documented! { entry;
+        let snk = ModDef::from_verilog_with_config("snk", &cfg);
+        let top = ModDef::new("top");
+        let u = top.instantiate(&snk, Some("u"), None);
+        u.get_port("i").specify_net_name("data");
+        let diagnostics = top.check();
+    }
+    entry.finish();
+    assert_connection_error(&entry, &diagnostics, ("top", "u.i", 7, 0));
+}
+
+#[test]
+fn s0404() {
+    let entry = Entry::load(diagnostic::codes::S0404);
+    let paths = entry.paths();
+    let cfg = config(&paths);
+    documented! { entry;
+        let src = ModDef::from_verilog_with_config("src", &cfg);
+        let snk = ModDef::from_verilog_with_config("snk", &cfg);
+        let top = ModDef::new("top");
+        let a = top.instantiate(&src, Some("a"), None);
+        let u = top.instantiate(&snk, Some("u"), None);
+        a.get_port("o").connect(&u.get_port("i"));
+        a.get_port("o").slice(3, 0).unused();
+        let diagnostics = top.check();
+    }
+    entry.finish();
+    assert_connection_error(&entry, &diagnostics, ("top", "a.o", 3, 0));
+}
+
+#[test]
+fn s0405() {
+    let entry = Entry::load(diagnostic::codes::S0405);
+    let paths = entry.paths();
+    let cfg = config(&paths);
+    documented! { entry;
+        let src = ModDef::from_verilog_with_config("src", &cfg);
+        let top = ModDef::new("top");
+        let a = top.instantiate(&src, Some("a"), None);
+        a.get_port("o").tieoff(0);
+        let diagnostics = top.check();
+    }
+    entry.finish();
+    assert_connection_error(&entry, &diagnostics, ("top", "a.o", 7, 0));
+}
+
+#[test]
+fn s0406() {
+    let entry = Entry::load(diagnostic::codes::S0406);
+    documented! { entry;
+        let top = ModDef::new("top");
+        let p = top.add_port("p", IO::InOut(8));
+        let q = top.add_port("q", IO::InOut(8));
+        p.connect(&q);
+        let diagnostics = top.check();
+    }
+    entry.finish();
+    assert_connection_error(&entry, &diagnostics, ("top", "p", 7, 0));
+}
+
+#[test]
+fn s0409() {
+    let entry = Entry::load(diagnostic::codes::S0409);
+    documented! { entry;
+        let top = ModDef::new("top");
+        let i = top.add_port("i", IO::Input(8));
+        let o = top.add_port("o", IO::Output(8));
+        o.connect(&i);
+        o.slice(3, 0).connect(&i.slice(3, 0));
+        let diagnostics = top.check();
+    }
+    entry.finish();
+    assert_connection_error(&entry, &diagnostics, ("top", "i", 3, 0));
+}
+
 #[test]
 fn every_code_has_an_example_test() {
     let source = include_str!("examples.rs");

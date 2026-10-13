@@ -12,7 +12,7 @@ use xlsynth_vast::{
 
 use super::net_types::{End, NetTypes, declarable, typed_path};
 use crate::model::connection::connected_item::ConnectedItem;
-use crate::resolve::design::{DesignResolution, resolve_design};
+use crate::resolve::design::DesignResolution;
 use crate::resolve::{EndResolution, Resolution, Segment, Source};
 use crate::{Dim, IO, ModDef, ModDefCore, Port, PortSlice, PortType, Select, Usage};
 
@@ -296,14 +296,13 @@ impl ModDef {
     /// Panics with the rendered diagnostics if [`ModDef::check`] reports
     /// errors.
     pub fn emit(&self, options: EmitOptions) -> String {
-        let diagnostics = self.check();
+        let (diagnostics, design) = self.check_design();
         if diagnostics.has_errors() {
             panic!("{}", diagnostics.render());
         }
         if options.validate {
             self.validate();
         }
-        let design = resolve_design(self);
         let mut emitted_module_names = IndexMap::new();
         let mut file = VastFile::new(VastFileType::SystemVerilog);
         self.emit_recursive(&design, &mut emitted_module_names, &mut file, &options);

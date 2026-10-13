@@ -634,6 +634,8 @@ endpackage
     let w = top.instantiate(&wrapper, Some("w"), None);
     let o = top.instantiate(&other, Some("o"), None);
     w.get_port("out_o").connect(&o.get_port("in_i"));
+    w.get_port("in_i").tieoff(0);
+    o.get_port("out_o").unused();
     let diagnostics = top.check();
     assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
     assert_eq!(diagnostics.0[0].code, codes::S0201);

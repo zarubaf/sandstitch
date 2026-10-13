@@ -17,6 +17,9 @@ pub struct PortSliceConnection {
     pub(crate) other: ConnectedItem,
     /// Where the user made the connection. Not part of equality.
     pub(crate) site: CallSite,
+    /// Whether the call was made on the end of `this` (`self` of `connect`,
+    /// or the slice tied off, marked unused or named). Not part of equality.
+    pub(crate) called_on: bool,
 }
 
 impl PartialEq for PortSliceConnection {
@@ -29,7 +32,6 @@ impl PartialEq for PortSliceConnection {
 #[derive(Clone, Debug)]
 pub(crate) struct CallSite {
     pub(crate) span: Span,
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by the component pass"))]
     pub(crate) seq: u64,
 }
 
@@ -125,20 +127,27 @@ impl PortSliceConnections {
 
     /// Adds a new connection between `this` and `other`.
     pub(crate) fn add(&mut self, this: PortSlice, other: impl Into<ConnectedItem>, site: CallSite) {
+        self.push(this, other.into(), site, false);
+    }
+
+    fn push(&mut self, this: PortSlice, other: ConnectedItem, site: CallSite, called_on: bool) {
         self.connections.push(PortSliceConnection {
             this,
-            other: other.into(),
+            other,
             site,
+            called_on,
         });
     }
 
     /// Adds a connection the user made, unless an identical one (same
-    /// `this` and `other`) is already stored.
+    /// `this` and `other`) is already stored; `called_on` says whether the
+    /// call was made on the end of `this`.
     pub(crate) fn add_user(
         &mut self,
         this: PortSlice,
         other: impl Into<ConnectedItem>,
         site: CallSite,
+        called_on: bool,
     ) {
         let other = other.into();
         if !self
@@ -146,7 +155,7 @@ impl PortSliceConnections {
             .iter()
             .any(|c| c.this == this && c.other == other)
         {
-            self.add(this, other, site);
+            self.push(this, other, site, called_on);
         }
     }
 
@@ -178,7 +187,12 @@ impl PortSliceConnections {
                 this_lsb_clipped - connection.this.lsb,
                 this_msb_clipped - this_lsb_clipped + 1,
             );
-            result.add(this_slice, other_sliced, connection.site.clone());
+            result.push(
+                this_slice,
+                other_sliced,
+                connection.site.clone(),
+                connection.called_on,
+            );
         }
 
         result
@@ -326,6 +340,7 @@ impl PortSliceConnection {
 mod tests {
     use crate::{
         Dim, Funnel, IO, ModDef, PipelineConfig, Port, PortField, PortType, QualifiedName, Span,
+        diagnostic::codes,
         model::connection::connected_item::{ConnectedItem, Tieoff, Unused, Wire},
         model::connection::port_slice::{CallSite, PortSliceConnections},
     };
@@ -720,18 +735,24 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_unused_not_allowed_on_output_to_resolve() {
         let m = ModDef::new("M");
         let q = m.add_port("q", IO::Output(4));
         q.unused();
-        let segments = q
-            .get_port_connections()
-            .unwrap()
-            .read()
-            .make_non_overlapping();
-        // resolve should panic for Output with Unused
-        let _ = segments[0].to_expression_source();
+        let diagnostics = m.check();
+        let found: Vec<_> = diagnostics
+            .0
+            .iter()
+            .map(|d| {
+                let o = d.object.as_ref().unwrap();
+                (d.code, o.definition.as_str(), o.end.as_str(), o.msb, o.lsb)
+            })
+            .collect();
+        assert_eq!(found, [(codes::S0405, "M", "q", 3, 0)]);
+        assert_eq!(
+            diagnostics.0[0].message,
+            "`M.q` cannot be marked unused: it is a definition output"
+        );
     }
 
     #[test]

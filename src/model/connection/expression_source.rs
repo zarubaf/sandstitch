@@ -62,6 +62,7 @@ impl PortSliceConnections {
                     this,
                     other: Unused::new().into(),
                     site,
+                    called_on: false,
                 });
             }
             _ => {
@@ -90,6 +91,7 @@ impl PortSliceConnections {
                             this,
                             other: ConnectedItem::Tieoff(tieoffs[0].clone()),
                             site,
+                            called_on: false,
                         });
                     }
                     _ => {
@@ -241,6 +243,7 @@ impl PortSliceConnections {
                 this,
                 other: ConnectedItem::PortSlice(prevailing_port_slice),
                 site,
+                called_on: false,
             }),
             1 => {
                 let io = prevailing_port_slice.port.io();
@@ -255,6 +258,7 @@ impl PortSliceConnections {
                     this,
                     other: ConnectedItem::Wire(wires[0].clone()),
                     site,
+                    called_on: false,
                 })
             }
             _ => {
@@ -281,6 +285,7 @@ pub(crate) fn merge_expression_sources(
                         this: this_merged,
                         other: other_merged,
                         site: current.site.clone(),
+                        called_on: current.called_on,
                     },
                 );
             } else {

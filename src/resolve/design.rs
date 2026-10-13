@@ -11,11 +11,13 @@ use parking_lot::RwLock;
 
 use super::Resolution;
 use super::def::resolve_def;
-use crate::{ModDef, ModDefCore, Usage};
+use crate::{Diagnostic, ModDef, ModDefCore, Usage};
 
-/// The resolutions of a design's definitions, keyed by core identity.
+/// The resolutions of a design's definitions, keyed by core identity, and
+/// the diagnostics of all of them, in resolution order.
 pub(crate) struct DesignResolution {
     resolutions: HashMap<*const RwLock<ModDefCore>, Resolution>,
+    pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
 impl DesignResolution {
@@ -36,6 +38,7 @@ impl DesignResolution {
 pub(crate) fn resolve_design(top: &ModDef) -> DesignResolution {
     let mut design = DesignResolution {
         resolutions: HashMap::new(),
+        diagnostics: Vec::new(),
     };
     let mut registered = IndexMap::new();
     visit(&top.core, &mut registered, &mut design);
@@ -77,9 +80,9 @@ fn visit(
     }
 
     if usage == Usage::EmitDefinitionAndDescend {
-        let previous = design
-            .resolutions
-            .insert(Arc::as_ptr(core), resolve_def(core));
+        let (resolution, diagnostics) = resolve_def(core);
+        design.diagnostics.extend(diagnostics);
+        let previous = design.resolutions.insert(Arc::as_ptr(core), resolution);
         debug_assert!(previous.is_none(), "definition resolved twice");
     }
 }
@@ -87,6 +90,7 @@ fn visit(
 #[cfg(test)]
 mod tests {
     use super::resolve_design;
+    use crate::diagnostic::codes;
     use crate::{IO, ModDef, Usage};
 
     fn opaque(name: &str, port: &str, io: IO) -> ModDef {
@@ -121,7 +125,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "child.l.i is unconnected")]
     fn children_resolve_before_parents() {
         let leaf = opaque("leaf", "i", IO::Input(1));
         let child = ModDef::new("child");
@@ -129,7 +132,22 @@ mod tests {
         let top = ModDef::new("top");
         top.add_port("o", IO::Output(1));
         top.instantiate(&child, Some("c"), None);
-        resolve_design(&top);
+        let design = resolve_design(&top);
+        let found: Vec<_> = design
+            .diagnostics
+            .iter()
+            .map(|d| {
+                let o = d.object.as_ref().unwrap();
+                (d.code, o.definition.as_str(), o.end.as_str(), o.msb, o.lsb)
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (codes::S0402, "child", "l.i", 0, 0),
+                (codes::S0402, "top", "o", 0, 0)
+            ]
+        );
     }
 
     #[test]

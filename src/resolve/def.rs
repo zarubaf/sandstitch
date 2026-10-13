@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
+use super::component::components;
 use super::{EndResolution, NetSlice, Resolution, Segment, Source};
 use crate::check::connection::check_for_gaps;
 use crate::model::connection::connected_item::ConnectedItem;
 use crate::model::connection::expression_source::merge_expression_sources;
 use crate::model::connection::port_slice::PortSliceConnections;
-use crate::{IO, ModDefCore};
+use crate::{Diagnostic, IO, ModDefCore};
 
 type Connections = Arc<RwLock<PortSliceConnections>>;
 
@@ -23,12 +24,22 @@ struct PortJob {
     connections: Option<Connections>,
 }
 
-/// Resolves every port of every instance of `core`, then every port of `core`
-/// itself.
+/// Resolves the components of `core` and reports its connection errors; when
+/// there are none, resolves every port of every instance of `core`, then
+/// every port of `core` itself, into segments.
 ///
 /// Tracing locks the cores of the ports it visits, including `core`, so no
 /// guard on `core` is held while resolving.
-pub(crate) fn resolve_def(core: &Arc<RwLock<ModDefCore>>) -> Resolution {
+pub(crate) fn resolve_def(core: &Arc<RwLock<ModDefCore>>) -> (Resolution, Vec<Diagnostic>) {
+    let (components, diagnostics) = components(core);
+    if !diagnostics.is_empty() {
+        let resolution = Resolution {
+            instances: Vec::new(),
+            ports: Vec::new(),
+            components,
+        };
+        return (resolution, diagnostics);
+    }
     let (def_name, instance_jobs, port_jobs) = {
         let core = core.read();
         let instance_jobs: Vec<(String, Vec<PortJob>)> = core
@@ -79,7 +90,12 @@ pub(crate) fn resolve_def(core: &Arc<RwLock<ModDefCore>>) -> Resolution {
             resolve_end(job, &debug)
         })
         .collect();
-    Resolution { instances, ports }
+    let resolution = Resolution {
+        instances,
+        ports,
+        components,
+    };
+    (resolution, diagnostics)
 }
 
 /// The segments of one end; `debug` names it in panic messages.
@@ -124,6 +140,7 @@ fn resolve_end(job: PortJob, debug: &str) -> EndResolution {
 mod tests {
     use super::super::{NetSlice, Source};
     use super::resolve_def;
+    use crate::diagnostic::codes;
     use crate::{IO, ModDef, ModInst, Usage};
 
     fn leaf(name: &str, port: &str, io: IO) -> ModDef {
@@ -156,7 +173,7 @@ mod tests {
         a.get_port("o").slice(7, 4).unused();
         b.get_port("o").slice(3, 0).unused();
 
-        let resolution = resolve_def(&top.core);
+        let (resolution, _) = resolve_def(&top.core);
         let dst = &resolution.instances[2][0];
         assert_eq!(dst.name, "dst");
         assert_eq!(dst.segments.len(), 2);
@@ -187,7 +204,7 @@ mod tests {
             .connect(&a.get_port("o").slice(3, 0));
         b.get_port("o").unused();
 
-        let resolution = resolve_def(&top.core);
+        let (resolution, _) = resolve_def(&top.core);
         let dst = &resolution.instances[2][0];
         assert_eq!(dst.segments.len(), 1);
         let seg = &dst.segments[0];
@@ -210,7 +227,7 @@ mod tests {
         a.get_port("o").slice(7, 4).unused();
         b.get_port("o").unused();
 
-        let resolution = resolve_def(&top.core);
+        let (resolution, _) = resolve_def(&top.core);
         let dst = &resolution.instances[2][0];
         let Source::Constant(t) = &dst.segments[0].source else {
             panic!("expected a constant, got {:?}", dst.segments[0].source);
@@ -227,12 +244,26 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "t.u.dst is unconnected")]
     fn instance_ports_resolve_before_definition_ports() {
         let snk8 = leaf("snk8", "dst", IO::Input(8));
         let top = ModDef::new("t");
         top.add_port("out", IO::Output(8));
         top.instantiate(&snk8, Some("u"), None);
-        resolve_def(&top.core);
+        let (resolution, diagnostics) = resolve_def(&top.core);
+        let found: Vec<_> = diagnostics
+            .iter()
+            .map(|d| {
+                let o = d.object.as_ref().unwrap();
+                (d.code, o.definition.as_str(), o.end.as_str(), o.msb, o.lsb)
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (codes::S0402, "t", "u.dst", 7, 0),
+                (codes::S0402, "t", "out", 7, 0)
+            ]
+        );
+        assert!(resolution.instances.is_empty() && resolution.ports.is_empty());
     }
 }

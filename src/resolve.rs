@@ -7,6 +7,7 @@
 //! marker supplies the bits of one slice of the end. Segments carry the
 //! original [`PortSlice`], including its typed selection.
 
+pub(crate) mod component;
 pub(crate) mod def;
 pub(crate) mod design;
 
@@ -61,4 +62,7 @@ pub(crate) struct Resolution {
     pub(crate) instances: Vec<Vec<EndResolution>>,
     /// The definition's ports in declaration order.
     pub(crate) ports: Vec<EndResolution>,
+    /// The bits joined by connections and what drives them.
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by the snapshot (#45)"))]
+    pub(crate) components: Vec<component::Component>,
 }
