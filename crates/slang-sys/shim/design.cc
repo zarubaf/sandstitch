@@ -81,6 +81,63 @@ bool isTypeParameterAlias(const TypeAliasType& alias) {
            &symbol->as<TypeParameterSymbol>().getTypeAlias() == &alias;
 }
 
+std::string rangeText(const ConstantRange& range) {
+    return "[" + std::to_string(range.left) + ":" + std::to_string(range.right) + "]";
+}
+
+/// Slang's display of `type` (`Type::toString`), with the aliases of type
+/// parameters seen through: `real` for a port of type `T = real`, also
+/// inside arrays (`real$[0:1]`). Other aliases print as their names.
+std::string typeText(const Type& type) {
+    if (type.kind == SymbolKind::TypeAlias && isTypeParameterAlias(type.as<TypeAliasType>()))
+        return typeText(type.as<TypeAliasType>().targetType.getType());
+    if (type.kind == SymbolKind::PackedArrayType) {
+        // As `TypePrinter`: the innermost element, then every packed
+        // dimension down to it, through aliases.
+        std::string dims;
+        auto curr = &type.as<PackedArrayType>();
+        while (true) {
+            dims += rangeText(curr->range);
+            if (!curr->elementType.isPackedArray())
+                break;
+            curr = &curr->elementType.getCanonicalType().as<PackedArrayType>();
+        }
+        return typeText(curr->elementType) + dims;
+    }
+    if (type.kind != SymbolKind::TypeAlias && type.isUnpackedArray()) {
+        // As `TypePrinter::printUnpackedArray`: the innermost element, `$`,
+        // then the dimensions.
+        auto element = &type;
+        do {
+            element = element->getArrayElementType();
+        } while (element->isUnpackedArray());
+        std::string text = typeText(*element) + "$";
+        for (auto dim = &type; dim->isUnpackedArray();
+             dim = &dim->getArrayElementType()->getCanonicalType()) {
+            switch (dim->kind) {
+                case SymbolKind::FixedSizeUnpackedArrayType:
+                    text += rangeText(dim->as<FixedSizeUnpackedArrayType>().range);
+                    break;
+                case SymbolKind::AssociativeArrayType: {
+                    auto index = dim->as<AssociativeArrayType>().indexType;
+                    text += index ? "[" + typeText(*index) + "]" : "[*]";
+                    break;
+                }
+                case SymbolKind::QueueType: {
+                    auto bound = dim->as<QueueType>().maxBound;
+                    text += bound ? "[$:" + std::to_string(bound) + "]" : "[$]";
+                    break;
+                }
+                default: // dynamic and DPI open arrays
+                    text += "[]";
+                    break;
+            }
+        }
+        return text;
+    }
+    return type.toString();
+}
+
 FfiLoc location(const SourceManager& sourceManager, const Symbol& symbol) {
     FfiLoc loc{};
     if (!symbol.location || symbol.location == SourceLocation::NoLocation)
@@ -148,7 +205,7 @@ private:
                 break;
             case ArgumentDirection::Ref:
                 port.kind = UNSUPPORTED_PORT;
-                port.type_text = str(type.toString());
+                port.type_text = str(typeText(type));
                 port.error = str(REF_ERROR);
                 return port;
         }
@@ -162,7 +219,7 @@ private:
         port.name = str(symbol.name);
         port.loc = location(sourceManager, symbol);
         port.kind = UNSUPPORTED_PORT;
-        port.type_text = str(symbol.getType().toString());
+        port.type_text = str(typeText(symbol.getType()));
         port.error = str(MULTI_PORT_ERROR);
         return port;
     }
@@ -194,7 +251,7 @@ private:
         if (error) {
             entry = FfiType{};
             entry.kind = UNSUPPORTED;
-            entry.type_text = str(type.toString());
+            entry.type_text = str(typeText(type));
             entry.error = str(*error);
             reasons.emplace(index, *error);
         }
