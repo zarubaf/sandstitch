@@ -298,3 +298,13 @@ fn unused_and_tieoff_closes_both_directions() {
     };
     assert_eq!(build(false), build(true));
 }
+
+#[test]
+fn def_intf_resolves_ports_when_used() {
+    // As upstream: a `(port, msb, lsb)` mapping may name a port added later.
+    let m = ModDef::new("w");
+    let mapping = indexmap::IndexMap::from([("a".to_string(), ("a_i".to_string(), 3, 0))]);
+    let intf = m.def_intf("x", mapping);
+    m.add_port("a_i", IO::Input(4));
+    assert_eq!(intf.get("a").unwrap().width(), 4);
+}
