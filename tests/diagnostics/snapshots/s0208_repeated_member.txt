@@ -1,7 +1,7 @@
 error[S0208]: member `req` is an output twice in interface `node.link`
-  --> tests/diagnostics/intf.rs:55:14
+  --> tests/diagnostics/intf.rs:77:14
    |
-55 |         node.def_intf_members(
+77 |         node.def_intf_members(
    |              ^^^^^^^^^^^^^^^^ interface defined here
    |
    = note: `node.req_o[0]` and `node.req_o[1]` are both outputs

@@ -49,6 +49,28 @@ fn s0207_member_without_partner() {
 }
 
 #[test]
+fn s0207_partner_missing_on_the_other_side() {
+    let node = node();
+    link(&node);
+    node.def_intf_members(
+        "half",
+        [
+            ("req", node.get_port("req_o").index(1)),
+            ("req", node.get_port("req_i").index(1)),
+            ("rsp", node.get_port("rsp_o").index(1)),
+        ],
+    );
+    let top = ModDef::new("top");
+    let a = top.instantiate(&node, Some("a"), None);
+    let b = top.instantiate(&node, Some("b"), None);
+    // `half` is the caller: its members all pair, `link`'s `rsp` output
+    // does not.
+    panic_snapshot("s0207_partner_missing_on_the_other_side", || {
+        a.get_intf("half").connect(&b.get_intf("link"), false);
+    });
+}
+
+#[test]
 fn s0208_repeated_member() {
     let node = node();
     panic_snapshot("s0208_repeated_member", || {

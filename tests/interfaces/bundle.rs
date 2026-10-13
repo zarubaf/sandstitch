@@ -19,6 +19,13 @@ endpackage
 ";
 
 const MODS: &str = "
+module duplex import bpkg::*; (
+  input  struct packed { req_t req; rsp_t rsp; } ch_i,
+  output struct packed { req_t req; rsp_t rsp; } ch_o
+);
+endmodule
+module pad (inout wire [3:0] pad_io);
+endmodule
 module node import bpkg::*; (
   input  req_t [1:0] req_i,
   output req_t [1:0] req_o,
@@ -85,17 +92,20 @@ fn members_keep_their_selection() {
     let names: Vec<String> = link.members().into_iter().map(|(n, _)| n).collect();
     assert_eq!(names, ["req", "req", "rsp", "rsp"]);
     for (_, slice) in link.members() {
-        assert_eq!(
-            slice.port_type(),
-            node.get_port(slice.get_port().name()).index(1).port_type()
-        );
-        assert!(slice.port_type().is_some());
+        let element = node.get_port(slice.get_port().name()).index(1);
+        assert!(element.port_type().is_some());
+        assert_eq!(slice.port_type(), element.port_type());
+        assert_eq!(slice, element);
     }
 
+    // On an instance, members are the same elements of the instance ports,
+    // not the whole array ports.
     let top = ModDef::new("top");
     let inst = top.instantiate(&node, Some("n"), None);
     for (_, slice) in inst.get_intf("link0").members() {
-        assert!(slice.port_type().is_some(), "{slice:?} lost its type");
+        let element = inst.get_port(slice.get_port().name()).index(0);
+        assert_eq!(slice.port_type(), element.port_type(), "{slice:?}");
+        assert_eq!(slice, element);
     }
 }
 
@@ -324,4 +334,221 @@ fn export_of_module_interface_names_the_exported_direction() {
     let io = |name: &str| format!("{:?}", m.get_port(name).io());
     assert_eq!(io("e_a_o"), format!("{:?}", IO::Output(9)));
     assert_eq!(io("e_a_i"), format!("{:?}", IO::Input(9)));
+}
+
+#[test]
+fn field_members_connect_like_hand_wiring() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let duplex = sources.import("duplex");
+    let link = duplex.def_intf_members(
+        "link",
+        [
+            ("req", duplex.get_port("ch_o").field("req")),
+            ("req", duplex.get_port("ch_i").field("req")),
+            ("rsp", duplex.get_port("ch_o").field("rsp")),
+            ("rsp", duplex.get_port("ch_i").field("rsp")),
+        ],
+    );
+    for (_, slice) in link.members() {
+        let field = duplex
+            .get_port(slice.get_port().name())
+            .field(if slice.width() == 9 { "req" } else { "rsp" });
+        assert_eq!(slice.port_type(), field.port_type());
+        assert_eq!(slice, field);
+    }
+
+    let build = |by_hand: bool| {
+        let top = ModDef::new("top");
+        let a = top.instantiate(&duplex, Some("a"), None);
+        let b = top.instantiate(&duplex, Some("b"), None);
+        if by_hand {
+            for f in ["req", "rsp"] {
+                a.get_port("ch_o")
+                    .field(f)
+                    .connect(&b.get_port("ch_i").field(f));
+                b.get_port("ch_o")
+                    .field(f)
+                    .connect(&a.get_port("ch_i").field(f));
+            }
+        } else {
+            a.get_intf("link").connect(&b.get_intf("link"), false);
+        }
+        sources.emit_checked(&top)
+    };
+    assert_eq!(build(false), build(true));
+}
+
+#[test]
+fn export_without_repeated_names_adds_no_suffix() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let node = node(&sources);
+    node.def_intf_members(
+        "out",
+        [
+            ("req", node.get_port("req_o").index(0)),
+            ("rsp", node.get_port("rsp_o").index(0)),
+        ],
+    );
+    let top = ModDef::new("top");
+    let n = top.instantiate(&node, Some("n"), None);
+    n.get_intf("out").export_with_prefix("up", "up_");
+    n.get_port("req_i").tieoff(0);
+    n.get_port("rsp_i").tieoff(0);
+    n.get_port("req_o").index(1).unused();
+    n.get_port("rsp_o").index(1).unused();
+
+    let ports: Vec<(String, Option<PortType>)> = top
+        .get_ports(None)
+        .iter()
+        .map(|p| (p.name().to_string(), p.port_type()))
+        .collect();
+    assert_eq!(
+        ports,
+        [
+            ("up_req".into(), node.get_port("req_o").index(0).port_type()),
+            ("up_rsp".into(), node.get_port("rsp_o").index(0).port_type()),
+        ]
+    );
+    sources.emit_checked(&top);
+}
+
+#[test]
+fn typed_parent_ports_drive_child_inputs() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let node = node(&sources);
+
+    let build = |by_hand: bool| {
+        let top = ModDef::new("top");
+        // `n`'s link 1 exported gives the parent typed ports `up_*_i`.
+        let n = top.instantiate(&node, Some("n"), None);
+        let m = top.instantiate(&node, Some("m"), None);
+        let up = n.get_intf("link1").export_with_prefix("up", "up_");
+        if by_hand {
+            for ch in ["req", "rsp"] {
+                top.get_port(format!("up_{ch}_i"))
+                    .connect(&m.get_port(format!("{ch}_i")).index(0));
+            }
+        } else {
+            // The parent's inputs (driving its body) pair with the child's
+            // inputs; the parent's outputs are already driven by `n`.
+            let inputs = up
+                .members()
+                .into_iter()
+                .filter(|(_, s)| matches!(s.get_port().io(), IO::Input(_)));
+            let up_in = top.def_intf_members("up_in", inputs);
+            up_in.connect(&m.get_intf("link0"), true);
+        }
+        for ch in ["req", "rsp"] {
+            m.get_port(format!("{ch}_o")).index(0).unused();
+        }
+        close(&n, 0);
+        close(&m, 1);
+        sources.emit_checked(&top)
+    };
+    let emitted = build(false);
+    assert_eq!(emitted, build(true));
+    assert!(emitted.contains("input bpkg::req_t up_req_i"), "{emitted}");
+}
+
+#[test]
+fn tieoff_and_unused_alone_touch_one_direction() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let node = node(&sources);
+    let build = |by_hand: bool| {
+        let top = ModDef::new("top");
+        let n = top.instantiate(&node, Some("n"), None);
+        if by_hand {
+            for ch in ["req", "rsp"] {
+                n.get_port(format!("{ch}_i")).index(0).tieoff(0);
+            }
+        } else {
+            n.get_intf("link0").tieoff(0);
+        }
+        // Outputs are left alone by `tieoff`; exporting them shows they are
+        // still free.
+        for ch in ["req", "rsp"] {
+            n.get_port(format!("{ch}_o"))
+                .index(0)
+                .export_as(format!("{ch}0"));
+        }
+        if by_hand {
+            for ch in ["req", "rsp"] {
+                n.get_port(format!("{ch}_o")).index(1).unused();
+            }
+        } else {
+            n.get_intf("link1").unused();
+        }
+        for ch in ["req", "rsp"] {
+            n.get_port(format!("{ch}_i")).index(1).tieoff(0);
+        }
+        sources.emit_checked(&top)
+    };
+    assert_eq!(build(false), build(true));
+}
+
+#[test]
+fn export_without_prefix_keeps_both_directions() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let node = node(&sources);
+    let top = ModDef::new("top");
+    let n = top.instantiate(&node, Some("n"), None);
+    let up = n.get_intf("link0").export();
+    close(&n, 1);
+    let members: Vec<(String, String, String)> = up
+        .members()
+        .into_iter()
+        .map(|(m, s)| {
+            (
+                m,
+                s.get_port().name().to_string(),
+                format!("{:?}", s.get_port().io()),
+            )
+        })
+        .collect();
+    let w = |p: &str| node.get_port(p).index(0).width();
+    assert_eq!(
+        members,
+        [
+            (
+                "req".into(),
+                "req_o".into(),
+                format!("{:?}", IO::Output(w("req_o")))
+            ),
+            (
+                "req".into(),
+                "req_i".into(),
+                format!("{:?}", IO::Input(w("req_i")))
+            ),
+            (
+                "rsp".into(),
+                "rsp_o".into(),
+                format!("{:?}", IO::Output(w("rsp_o")))
+            ),
+            (
+                "rsp".into(),
+                "rsp_i".into(),
+                format!("{:?}", IO::Input(w("rsp_i")))
+            ),
+        ]
+    );
+    sources.emit_checked(&top);
+}
+
+#[test]
+fn inout_members_pair_with_inouts() {
+    let sources = Sources::new(&[PKG, MODS]);
+    let pad = sources.import("pad");
+    pad.def_intf_members("bus", [("pad", pad.get_port("pad_io").to_port_slice())]);
+    let build = |by_hand: bool| {
+        let top = ModDef::new("top");
+        let a = top.instantiate(&pad, Some("a"), None);
+        let b = top.instantiate(&pad, Some("b"), None);
+        if by_hand {
+            a.get_port("pad_io").connect(&b.get_port("pad_io"));
+        } else {
+            a.get_intf("bus").connect(&b.get_intf("bus"), false);
+        }
+        top.emit(EmitOptions::default())
+    };
+    assert_eq!(build(false), build(true));
 }
