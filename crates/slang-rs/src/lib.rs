@@ -164,8 +164,8 @@ fn paths(deps: Vec<String>) -> Vec<PathBuf> {
 }
 
 /// The Slang library [`run_slang`] calls, for example `slang 11.0`.
-pub fn slang_version() -> String {
-    format!("slang {}", slang_sys::SLANG_VERSION)
+pub const fn slang_version() -> &'static str {
+    slang_sys::SLANG_VERSION_LABEL
 }
 
 /// Runs Slang; an error unless the design elaborated without errors.

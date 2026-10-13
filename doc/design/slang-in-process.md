@@ -95,7 +95,7 @@ pub fn run_slang_keep_design(cfg: &SlangConfig) -> Result<SlangOutput, SlangErro
 pub fn check_slang(cfg: &SlangConfig) -> Result<(), SlangError>;                 // Stage::ParseOnly
 ```
 
-Dependencies are collected from the shim's `deps`. The S0102 check rejects `--Mall` and the binary-only options listed above in user arguments. A `slang_sys::Error` becomes a `SlangError` with one `Fatal` diagnostic carrying the exception text, `rendered` set to that text, and empty `deps`. `slang_version()` returns `SLANG_VERSION`, so specialization cache keys include the version. `Diag` is re-exported from `slang-sys`. Slang runs in-process; no `slang` executable or `SLANG_PATH` is involved. Types, ports, parameters, the hierarchy and packages come from the snapshot (step 2). `str2tmpfile` is used by the parser and tests.
+Dependencies are collected from the shim's `deps`. The S0102 check rejects `--Mall` and the binary-only options listed above in user arguments. A `slang_sys::Error` becomes a `SlangError` with one `Fatal` diagnostic carrying the exception text, `rendered` set to that text, and empty `deps`. `slang_version()` is the constant `slang <SLANG_VERSION>`, so specialization cache keys include the version. `Diag` is re-exported from `slang-sys`. Slang runs in-process; no `slang` executable or `SLANG_PATH` is involved. Types, ports, parameters, the hierarchy and packages come from the snapshot (step 2). `str2tmpfile` is used by the parser and tests.
 
 ### Sandstitch
 

@@ -93,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "error: ")]
+    #[should_panic(expected = "error: expected ';'")]
     fn test_extract_packages_error() {
         let verilog = str2tmpfile(
             "
