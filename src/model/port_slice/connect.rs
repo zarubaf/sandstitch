@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::model::connection::port_slice::ConnectionRecord;
+use crate::model::connection::port_slice::{CallSite, ConnectionRecord};
 use crate::model::port::PortDirectionality;
 use crate::{
     ConvertibleToPortSlice, ConvertibleToPortSliceVec, IO, ModInst, PipelineConfig, Port,
     PortSlice, Span,
 };
-use std::panic::Location;
 use std::sync::Arc;
 
 impl PortSlice {
     /// Specifies the net name to be used for this port slice.
+    #[track_caller]
     pub fn specify_net_name(&self, net: &str) {
         if let Port::ModInst { .. } = &self.port {
             // Record and enforce uniqueness of explicitly specified net names
@@ -37,7 +37,7 @@ impl PortSlice {
             self.port
                 .get_port_connections_define_if_missing()
                 .write()
-                .add(this, other);
+                .add_user(this, other, CallSite::here());
         } else {
             panic!(
                 "{} only works on ports (or slices of ports) on module instances",
@@ -63,7 +63,7 @@ impl PortSlice {
     /// deliberately; the connection is recorded as such.
     #[track_caller]
     pub fn connect_bits(&self, other: &impl ConvertibleToPortSlice) {
-        self.connect_with(other, None, true, Location::caller());
+        self.connect_with(other, None, true, CallSite::here());
     }
 
     #[track_caller]
@@ -81,6 +81,7 @@ impl PortSlice {
         Self::todo_jam_connect_port_slices(&left, &right);
     }
 
+    #[track_caller]
     pub(crate) fn todo_jam_connect_port_slices(left: &[PortSlice], right: &[PortSlice]) {
         let mut left_idx = 0usize;
         let mut right_idx = 0usize;
@@ -136,7 +137,7 @@ impl PortSlice {
         other: &T,
         pipeline: Option<PipelineConfig>,
     ) {
-        self.connect_with(other, pipeline, false, Location::caller());
+        self.connect_with(other, pipeline, false, CallSite::here());
     }
 
     fn connect_with<T: ConvertibleToPortSlice + ?Sized>(
@@ -144,7 +145,7 @@ impl PortSlice {
         other: &T,
         pipeline: Option<PipelineConfig>,
         bits: bool,
-        location: &'static Location<'static>,
+        site: CallSite,
     ) {
         let other_as_slice = other.to_port_slice();
 
@@ -215,19 +216,38 @@ impl PortSlice {
             } else {
                 mod_def.add_port(&pipeline.clk, IO::Input(1))
             };
-            repeater_instance.get_port("clk").connect(&mod_def_clk);
-            repeater_instance.get_port("in").connect(driver);
-            repeater_instance.get_port("out").connect(receiver);
-            repeater_instance.get_port("out_stages").unused();
+            let user_connect = |port: Port, other: &PortSlice| {
+                port.to_port_slice()
+                    .connect_with(other, None, false, site.clone());
+            };
+            user_connect(
+                repeater_instance.get_port("clk"),
+                &mod_def_clk.to_port_slice(),
+            );
+            user_connect(repeater_instance.get_port("in"), driver);
+            user_connect(repeater_instance.get_port("out"), receiver);
+            repeater_instance
+                .get_port("out_stages")
+                .to_port_slice()
+                .unused_at(site.clone());
             // The ends are not connected directly, but their types must
             // still agree.
-            self.store_record(&other_as_slice, location, bits);
+            self.store_record(&other_as_slice, site.span.clone(), bits);
         } else {
-            let record = self.typed_record(&other_as_slice, location, bits);
+            // `a.connect(&b)` followed by `b.connect(&a)` is one connection:
+            // the other end already holds its record.
+            let record = self
+                .typed_record(&other_as_slice, site.span.clone(), bits)
+                .filter(|record| {
+                    other_as_slice
+                        .port
+                        .get_port_connections()
+                        .is_none_or(|c| !c.read().has_swapped_record(record))
+                });
             {
                 let connections = self.port.get_port_connections_define_if_missing();
                 let mut connections = connections.write();
-                connections.add(self.clone(), other_as_slice.clone());
+                connections.add_user(self.clone(), other_as_slice.clone(), site.clone());
                 if let Some(record) = record {
                     connections.add_record(record);
                 }
@@ -236,39 +256,25 @@ impl PortSlice {
                 .port
                 .get_port_connections_define_if_missing()
                 .write()
-                .add(other_as_slice.clone(), self.clone());
+                .add_user(other_as_slice.clone(), self.clone(), site);
         }
     }
 
     /// A record of a connection from `self` to `other`, if both ends are
     /// typed: only those are compared by `check` and named by type.
-    fn typed_record(
-        &self,
-        other: &PortSlice,
-        location: &'static Location<'static>,
-        bits: bool,
-    ) -> Option<ConnectionRecord> {
+    fn typed_record(&self, other: &PortSlice, span: Span, bits: bool) -> Option<ConnectionRecord> {
         (self.port_type().is_some() && other.port_type().is_some()).then(|| ConnectionRecord {
             this: self.clone(),
             other: other.clone(),
-            span: Span::Rust {
-                file: location.file().to_string(),
-                line: location.line(),
-                column: location.column(),
-            },
+            span,
             bits,
         })
     }
 
     /// Records a connection between typed ends that are connected
     /// indirectly (through a pipeline or feedthroughs).
-    pub(crate) fn store_record(
-        &self,
-        other: &PortSlice,
-        location: &'static Location<'static>,
-        bits: bool,
-    ) {
-        if let Some(record) = self.typed_record(other, location, bits) {
+    pub(crate) fn store_record(&self, other: &PortSlice, span: Span, bits: bool) {
+        if let Some(record) = self.typed_record(other, span, bits) {
             self.port
                 .get_port_connections_define_if_missing()
                 .write()
@@ -307,7 +313,7 @@ impl PortSlice {
             return;
         }
 
-        self.store_record(&other.to_port_slice(), Location::caller(), false);
+        self.store_record(&other.to_port_slice(), Span::caller(), false);
 
         let flipped = format!("{}_flipped", prefix.as_ref());
         let original = format!("{}_original", prefix.as_ref());
@@ -338,6 +344,7 @@ impl PortSlice {
     }
 }
 
+#[track_caller]
 fn mark_jam_remainder(port_slices: &[PortSlice], mut idx: usize, lsb: usize) {
     if idx >= port_slices.len() {
         return;

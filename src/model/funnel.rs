@@ -95,6 +95,7 @@ impl Funnel {
         }
     }
 
+    #[track_caller]
     pub fn connect(&mut self, a: &impl ConvertibleToPortSlice, b: &impl ConvertibleToPortSlice) {
         let a = a.to_port_slice();
         let b = b.to_port_slice();
@@ -241,6 +242,7 @@ impl Funnel {
         }
     }
 
+    #[track_caller]
     pub fn tieoff_remaining(&mut self) {
         if let Some((a_in_slice, b_out_slice)) = self.a2b_yield_remaining() {
             a_in_slice.tieoff(0);

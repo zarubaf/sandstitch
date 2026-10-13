@@ -7,17 +7,19 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use regex::Regex;
 
-use crate::{ModDef, ModDefCore, Usage};
+use crate::{ModDef, ModDefCore, Span, Usage};
 
 impl ModDef {
     /// Returns a new module definition with the given name, using the same
     /// ports and interfaces as the original module. The new module has no
     /// instantiations or internal connections.
+    #[track_caller]
     pub fn stub(&self, name: impl AsRef<str>) -> ModDef {
         let core = self.core.read();
         ModDef {
             core: Arc::new(RwLock::new(ModDefCore {
                 name: name.as_ref().to_string(),
+                span: Span::caller(),
                 ports: core.ports.clone(),
                 port_types: core.port_types.clone(),
                 port_spans: core.port_spans.clone(),

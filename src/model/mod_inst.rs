@@ -155,6 +155,7 @@ impl ModInst {
 
     /// Marks all ports on this instance as unused or ties them off to the given
     /// value.
+    #[track_caller]
     pub fn unused_and_tieoff<T: Into<BigInt> + Clone>(&self, value: T) {
         let value_as_big_int = value.into();
 

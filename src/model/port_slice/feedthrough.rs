@@ -5,6 +5,7 @@ use crate::{ConvertibleToModDef, PipelineConfig, Port, PortSlice};
 impl PortSlice {
     /// Punches a feedthrough in the provided module definition for this port
     /// slice.
+    #[track_caller]
     pub fn feedthrough(
         &self,
         mod_def_or_mod_inst: &impl ConvertibleToModDef,
@@ -16,6 +17,7 @@ impl PortSlice {
 
     /// Punches a feedthrough in the provided module definition for this port
     /// slice, with a pipeline.
+    #[track_caller]
     pub fn feedthrough_pipeline(
         &self,
         mod_def_or_mod_inst: &impl ConvertibleToModDef,
@@ -26,6 +28,7 @@ impl PortSlice {
         self.feedthrough_generic(mod_def_or_mod_inst, flipped, original, Some(pipeline))
     }
 
+    #[track_caller]
     pub(crate) fn feedthrough_generic(
         &self,
         mod_def_or_mod_inst: &impl ConvertibleToModDef,

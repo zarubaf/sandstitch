@@ -20,6 +20,7 @@ impl PortSliceConnections {
         }
 
         let this = self[0].this.clone();
+        let site = self[0].site.clone();
         let this_debug_string = this.debug_string();
 
         let unused_count = self.to_unused_count();
@@ -60,6 +61,7 @@ impl PortSliceConnections {
                 return Some(PortSliceConnection {
                     this,
                     other: Unused::new().into(),
+                    site,
                 });
             }
             _ => {
@@ -87,6 +89,7 @@ impl PortSliceConnections {
                         return Some(PortSliceConnection {
                             this,
                             other: ConnectedItem::Tieoff(tieoffs[0].clone()),
+                            site,
                         });
                     }
                     _ => {
@@ -237,6 +240,7 @@ impl PortSliceConnections {
             0 => Some(PortSliceConnection {
                 this,
                 other: ConnectedItem::PortSlice(prevailing_port_slice),
+                site,
             }),
             1 => {
                 let io = prevailing_port_slice.port.io();
@@ -250,6 +254,7 @@ impl PortSliceConnections {
                 Some(PortSliceConnection {
                     this,
                     other: ConnectedItem::Wire(wires[0].clone()),
+                    site,
                 })
             }
             _ => {
@@ -275,6 +280,7 @@ pub(crate) fn merge_expression_sources(
                     PortSliceConnection {
                         this: this_merged,
                         other: other_merged,
+                        site: current.site.clone(),
                     },
                 );
             } else {

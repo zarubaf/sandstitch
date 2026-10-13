@@ -7,6 +7,7 @@ impl ModDef {
     /// input and output names and width. This will create two new ports on the
     /// module definition, `input_name[width-1:0]` and `output_name[width-1:0]`,
     /// and connect them together.
+    #[track_caller]
     pub fn feedthrough(
         &self,
         input_name: impl AsRef<str>,
@@ -16,6 +17,7 @@ impl ModDef {
         self.feedthrough_generic(input_name, output_name, width, None);
     }
 
+    #[track_caller]
     pub fn feedthrough_pipeline(
         &self,
         input_name: impl AsRef<str>,
@@ -26,6 +28,7 @@ impl ModDef {
         self.feedthrough_generic(input_name, output_name, width, Some(pipeline));
     }
 
+    #[track_caller]
     fn feedthrough_generic(
         &self,
         input_name: impl AsRef<str>,

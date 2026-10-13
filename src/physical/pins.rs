@@ -304,6 +304,7 @@ impl ModDef {
 
         let new_core = crate::model::mod_def::ModDefCore {
             name: core.name.clone(),
+            span: core.span.clone(),
             ports: core.ports.clone(),
             port_types: core.port_types.clone(),
             port_spans: core.port_spans.clone(),
