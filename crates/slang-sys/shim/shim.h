@@ -8,7 +8,16 @@
 
 namespace slang_sys {
 
+struct FfiRequest;
+struct FfiResponse;
+
 /// `major.minor.patch` of the linked Slang library.
 rust::String library_version();
+
+/// One Slang run; see `run` in `src/lib.rs`. Throws on internal errors.
+FfiResponse run(const FfiRequest& request);
+
+/// Fails `SLANG_ASSERT(msb >= lsb)` in `SVInt::slice` (SVInt.cpp).
+void trigger_library_assert();
 
 } // namespace slang_sys
