@@ -229,6 +229,18 @@ pub struct UnsupportedPort {
     pub loc: Option<SourceLoc>,
 }
 
+/// A net or variable declared in a module body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Signal {
+    pub name: String,
+    /// Slang's display of the type, with type-parameter aliases seen
+    /// through; typedef names stay as written (`p::s_t`, `logic[3:0]`).
+    pub type_text: String,
+    /// The width in bits (Slang's bitstream width, `$bits`); 0 for a type
+    /// without one.
+    pub width: usize,
+}
+
 /// A parameter declaration with its data type.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParameterDef {

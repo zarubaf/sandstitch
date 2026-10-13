@@ -226,6 +226,28 @@ fn answer_all(design: &Design, path: &str) -> usize {
             "value parameter {name} at {path} is not listed"
         );
     }
+    let signals = design
+        .signals(path)
+        .unwrap_or_else(|| panic!("no signals at {path}"));
+    let mut signal_names = BTreeSet::new();
+    for signal in signals {
+        assert!(
+            signal_names.insert(signal.name.as_str()),
+            "duplicate signal {} at {path}",
+            signal.name
+        );
+    }
+    // A port is also a signal of its own type and width. (A signal can have
+    // width 0 in a degenerate elaboration, such as a union sized by a
+    // parameter left at its default, so only ports are held to their width.)
+    for port in ports.iter().flatten() {
+        let Ok(width) = port.ty.width() else { continue };
+        let signal = signals
+            .iter()
+            .find(|s| s.name == port.name)
+            .unwrap_or_else(|| panic!("port {} is no signal at {path}", port.name));
+        assert_eq!(signal.width, width, "width of port {} at {path}", port.name);
+    }
     let children = design
         .child_instances(path)
         .unwrap_or_else(|| panic!("no children at {path}"));
@@ -349,6 +371,7 @@ fn run_corpus(name: &str, files: &[PathBuf], incdirs: &[PathBuf]) -> RunResult {
         tops: &tops,
         incdirs: &incdirs,
         extra_arguments: &["--allow-toplevel-iface-ports", "--error-limit=0"],
+        signals: true,
         ..Default::default()
     };
     let output = run_slang_keep_design(&cfg).unwrap_or_else(|e| panic!("{name}: {e}"));

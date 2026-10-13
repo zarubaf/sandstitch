@@ -47,6 +47,9 @@ pub struct SlangConfig<'a> {
     pub ignore_protected: bool,
     pub timescale: Option<&'a str>,
     pub extra_arguments: &'a [&'a str],
+    /// Also collect the nets and variables of each module body, which
+    /// [`Design::signals`] returns.
+    pub signals: bool,
 }
 
 impl<'a> Default for SlangConfig<'a> {
@@ -64,6 +67,7 @@ impl<'a> Default for SlangConfig<'a> {
             ignore_protected: true,
             timescale: None,
             extra_arguments: &[],
+            signals: false,
         }
     }
 }
@@ -255,6 +259,7 @@ fn request(cfg: &SlangConfig, stage: Stage, ast_json: AstJson) -> Result<Respons
         stage,
         ast_json,
         design: match stage {
+            Stage::Elaborate if cfg.signals => slang_sys::DesignQuery::WithSignals,
             Stage::Elaborate => slang_sys::DesignQuery::Structure,
             Stage::ParseOnly => slang_sys::DesignQuery::None,
         },

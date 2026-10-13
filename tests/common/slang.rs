@@ -7,8 +7,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
-
 use slang_rs::str2tmpfile;
 use slang_rs::sys::{self, AstJson, Request, Severity, Stage};
 use tempfile::NamedTempFile;
@@ -16,14 +14,14 @@ use topstitch::*;
 
 /// Runs Slang in-process with `args` and `files`; panics if Slang itself
 /// fails (an exception, not a diagnostic).
-fn run_slang(files: &[&Path], args: Vec<String>, ast_json: AstJson) -> sys::Response {
+fn run_slang(files: &[&Path], args: Vec<String>, design: sys::DesignQuery) -> sys::Response {
     let mut all = args;
     all.extend(files.iter().map(|f| f.to_str().unwrap().to_string()));
     sys::run(&Request {
         args: all,
         stage: Stage::Elaborate,
-        ast_json,
-        design: sys::DesignQuery::None,
+        ast_json: AstJson::None,
+        design,
     })
     .unwrap_or_else(|e| panic!("running Slang: {e}"))
 }
@@ -84,7 +82,7 @@ fn elaborate_with(
     }
     let mut sources: Vec<&Path> = files.to_vec();
     sources.push(rtl.path());
-    let response = run_slang(&sources, all, AstJson::None);
+    let response = run_slang(&sources, all, sys::DesignQuery::None);
     let clean = response
         .diagnostics
         .iter()
@@ -96,88 +94,34 @@ fn elaborate_with(
     }
 }
 
-/// Runs Slang on `files` plus `extra` with `args` and returns its AST JSON.
-fn ast_json(files: &[&Path], extra: &[&str], args: &[&str]) -> Result<Value, String> {
-    let extra: Vec<NamedTempFile> = extra.iter().map(|s| str2tmpfile(s).unwrap()).collect();
-    let args = args.iter().map(|a| a.to_string()).collect();
-    let mut files: Vec<&Path> = files.to_vec();
-    files.extend(extra.iter().map(|f| f.path()));
-    let response = run_slang(&files, args, AstJson::Json { source_info: false });
-    if !response.ok {
-        return Err(response.rendered);
-    }
-    Ok(serde_json::from_str(&response.ast_json).unwrap())
-}
-
-/// The members of the body of the top-level instance `top` in Slang's AST
-/// JSON.
-fn top_members<'a>(json: &'a Value, top: &str) -> &'a [Value] {
-    let instance = json["design"]["members"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["kind"] == "Instance" && m["name"] == top)
-        .unwrap_or_else(|| panic!("no top-level instance `{top}` in Slang's AST"));
-    instance["body"]["members"].as_array().unwrap()
-}
-
 /// Every net and variable Slang elaborates in the body of `top` (ports
 /// included, by their internal symbol), as `name -> (type, width)`. The
-/// type is Slang's display of it; the width is `$bits` of the symbol,
-/// evaluated by Slang in a separate probe module.
+/// type is Slang's display of it; the width is its bitstream width (`$bits`).
 pub fn top_nets(
     files: &[&Path],
     emitted: &str,
     top: &str,
 ) -> Result<BTreeMap<String, (String, usize)>, String> {
-    let json = ast_json(files, &[emitted], &["--top", top])?;
-    let mut nets = BTreeMap::new();
-    for member in top_members(&json, top) {
-        if member["kind"] != "Net" && member["kind"] != "Variable" {
-            continue;
-        }
-        let name = member["name"].as_str().unwrap().to_string();
-        // Named types are printed as `<address> <name>`.
-        let ty = member["type"].as_str().unwrap();
-        let ty = match ty.split_once(' ') {
-            Some((addr, rest)) if addr.chars().all(|c| c.is_ascii_digit()) => rest,
-            _ => ty,
-        };
-        nets.insert(name, ty.to_string());
+    let rtl = str2tmpfile(emitted).unwrap();
+    let mut sources: Vec<&Path> = files.to_vec();
+    sources.push(rtl.path());
+    let response = run_slang(
+        &sources,
+        vec!["--top".to_string(), top.to_string()],
+        sys::DesignQuery::WithSignals,
+    );
+    if !response.ok {
+        return Err(response.rendered);
     }
-
-    let mut probe = String::from("module netprobe;\n");
-    for name in nets.keys() {
-        probe += &format!("  localparam int W_{name} = $bits({top}.{name});\n");
-    }
-    probe += "endmodule\n";
-    let args = [
-        "--top",
-        top,
-        "--top",
-        "netprobe",
-        "--allow-hierarchical-const",
-    ];
-    let json = ast_json(files, &[emitted, &probe], &args)?;
-    let widths: BTreeMap<&str, usize> = top_members(&json, "netprobe")
+    let design = response
+        .design
+        .unwrap_or_else(|| panic!("Slang returned no design"));
+    let signals = design
+        .signals(top)
+        .unwrap_or_else(|| panic!("no top-level instance `{top}` in Slang's design"));
+    Ok(signals
         .iter()
-        .filter(|m| m["kind"] == "Parameter")
-        .map(|m| {
-            let name = m["name"].as_str().unwrap().strip_prefix("W_").unwrap();
-            let width = match &m["value"] {
-                Value::Number(n) => n.as_u64().unwrap() as usize,
-                Value::String(s) => s.parse().unwrap(),
-                other => panic!("width of `{name}`: {other}"),
-            };
-            (name, width)
-        })
-        .collect();
-    Ok(nets
-        .into_iter()
-        .map(|(name, ty)| {
-            let width = widths[name.as_str()];
-            (name, (ty, width))
-        })
+        .map(|s| (s.name.clone(), (s.type_text.clone(), s.width)))
         .collect())
 }
 
