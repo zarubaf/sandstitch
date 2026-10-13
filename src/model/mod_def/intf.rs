@@ -100,6 +100,7 @@ impl ModDef {
                         "a name may appear once per direction; give one of them another name"
                             .into(),
                     ],
+                    object: None,
                 }
                 .panic();
             }

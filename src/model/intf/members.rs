@@ -185,6 +185,7 @@ impl Intf {
                  tell the directions apart"
                     .into(),
             ],
+            object: None,
         }
         .panic()
     }

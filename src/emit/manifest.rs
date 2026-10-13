@@ -138,6 +138,7 @@ impl ModDef {
                          (`Usage::EmitNothingAndStop`) and build with its source"
                             .into(),
                     ],
+                    object: None,
                 })
             })
             .collect();
@@ -250,6 +251,7 @@ fn add_define(name: &str, value: &str, module: &str, manifest: &mut Manifest, wa
             "import the modules with the same definition, or rename the macro in one of them"
                 .into(),
         ],
+        object: None,
     });
 }
 

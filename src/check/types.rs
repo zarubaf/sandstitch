@@ -134,6 +134,7 @@ fn check_record(record: &ConnectionRecord) -> Option<Diagnostic> {
             "both ends must use equivalent types".into(),
             "to reinterpret bits deliberately, use `connect_bits`".into(),
         ],
+        object: None,
     })
 }
 

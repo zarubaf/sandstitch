@@ -294,6 +294,7 @@ impl PortSlice {
                 helps: vec![
                     "only whole typed ports and their fields and elements have types".into(),
                 ],
+                object: None,
             }
             .panic();
         };
@@ -327,6 +328,7 @@ impl PortSlice {
                     }],
                     notes,
                     helps: error.helps,
+                    object: None,
                 }
                 .panic()
             }

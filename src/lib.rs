@@ -73,4 +73,6 @@ pub use physical::tracks::{
 };
 
 // Diagnostics.
-pub use diagnostic::{Code, Diagnostic, Diagnostics, ImportError, Label, Severity, Span};
+pub use diagnostic::{
+    Code, Diagnostic, Diagnostics, ImportError, Label, ObjectRef, Severity, Span,
+};
