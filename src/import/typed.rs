@@ -214,6 +214,7 @@ pub(crate) fn error(code: crate::Code, message: String, primary: Label) -> Diagn
         secondary: vec![],
         notes: vec![],
         helps: vec![],
+        object: None,
     }
 }
 
@@ -489,6 +490,7 @@ pub(crate) fn slang_failure(module: &str, err: &slang_rs::SlangError) -> ImportE
             secondary,
             notes,
             helps: vec![],
+            object: None,
         }]),
     }
 }

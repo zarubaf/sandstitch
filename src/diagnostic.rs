@@ -63,6 +63,15 @@ pub struct Label {
     pub text: String,
 }
 
+/// The stable reference of the object a diagnostic is about.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ObjectRef {
+    pub definition: String,
+    pub end: String,
+    pub msb: usize,
+    pub lsb: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
     pub code: Code,
@@ -72,6 +81,8 @@ pub struct Diagnostic {
     pub secondary: Vec<Label>,
     pub notes: Vec<String>,
     pub helps: Vec<String>,
+    /// The object this diagnostic is about, when it has a stable reference.
+    pub object: Option<ObjectRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

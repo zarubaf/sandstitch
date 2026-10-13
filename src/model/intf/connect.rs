@@ -242,6 +242,7 @@ fn panic_s0207(intf: &Intf, name: &str, slice: &PortSlice, other: &Intf) -> ! {
             direction(slice)
         )],
         helps: vec!["pass `allow_mismatch = true` to leave unpaired members unconnected".into()],
+        object: None,
     }
     .panic()
 }

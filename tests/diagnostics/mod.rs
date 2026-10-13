@@ -6,7 +6,7 @@ mod typed;
 
 use std::path::PathBuf;
 use topstitch::diagnostic::codes;
-use topstitch::{Diagnostic, Diagnostics, ImportError, Label, Severity, Span};
+use topstitch::{Diagnostic, Diagnostics, ImportError, Label, ObjectRef, Severity, Span};
 
 const RUST_FILE: &str = "tests/diagnostics/fixtures/caller.rs.txt";
 const SV_FILE: &str = "tests/diagnostics/fixtures/child.sv";
@@ -44,6 +44,7 @@ fn diag(primary: Label, secondary: Vec<Label>) -> Diagnostic {
         secondary,
         notes: vec!["`req_t` and `req2_t` have equal width but different layouts".into()],
         helps: vec!["first differing field is `addr`".into()],
+        object: None,
     }
 }
 
@@ -236,9 +237,26 @@ fn json_shape() {
             {"span": {"kind": "none"}, "text": "no span"}
         ],
         "notes": ["`req_t` and `req2_t` have equal width but different layouts"],
-        "helps": ["first differing field is `addr`"]
+        "helps": ["first differing field is `addr`"],
+        "object": null
     }]);
     assert_eq!(Diagnostics(vec![d]).to_json(), expected);
+}
+
+#[test]
+fn object_reference_in_json() {
+    let mut d = diag(label(rust_span(), "connected here"), vec![]);
+    d.object = Some(ObjectRef {
+        definition: "t".into(),
+        end: "u.dst".into(),
+        msb: 7,
+        lsb: 4,
+    });
+    let json = Diagnostics(vec![d]).to_json();
+    assert_eq!(
+        json[0]["object"],
+        serde_json::json!({"definition": "t", "end": "u.dst", "msb": 7, "lsb": 4})
+    );
 }
 
 #[track_caller]

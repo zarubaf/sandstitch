@@ -152,6 +152,7 @@ pub(super) fn check_connections(
                  or declare the type `packed`"
                     .into(),
             ],
+            object: None,
         });
     }
     diagnostics
