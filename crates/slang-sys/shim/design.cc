@@ -17,6 +17,7 @@
 #include "slang-sys/shim/shim.h"
 #include "slang-sys/src/lib.rs.h"
 #include "slang/ast/Compilation.h"
+#include "slang/ast/symbols/BlockSymbols.h"
 #include "slang/ast/symbols/CompilationUnitSymbols.h"
 #include "slang/ast/symbols/InstanceSymbols.h"
 #include "slang/ast/symbols/MemberSymbols.h"
@@ -150,42 +151,131 @@ FfiLoc location(const SourceManager& sourceManager, const Symbol& symbol) {
 
 class Walker {
 public:
-    Walker(const SourceManager& sourceManager, FfiDesign& out) :
-        sourceManager(sourceManager), out(out) {}
+    Walker(const Compilation& compilation, const SourceManager& sourceManager, FfiDesign& out) :
+        compilation(compilation), sourceManager(sourceManager), out(out) {}
 
     void top(const InstanceSymbol& instance) {
         if (instance.body.flags.has(InstanceFlags::Uninstantiated))
             return;
         FfiTop top{};
         top.name = str(instance.name);
-        top.body = body(instance.body);
+        top.body = bodyOf(instance);
         out.tops.push_back(std::move(top));
     }
 
 private:
-    uint32_t body(const InstanceBodySymbol& symbol) {
+    /// The index of the body of `instance`: the canonical body it shares
+    /// with identical instances when Slang cached it, else its own. Each
+    /// body is walked once, children first, so that a body is numbered after
+    /// every body it refers to.
+    uint32_t bodyOf(const InstanceSymbol& instance) {
+        auto canonical = instance.getCanonicalBody();
+        auto& symbol = canonical && !compilation.hasFlag(CompilationFlags::DisableInstanceCaching)
+                           ? *canonical
+                           : instance.body;
         if (auto it = bodies.find(&symbol); it != bodies.end())
             return it->second;
         FfiBody body{};
-        for (auto& member : symbol.members()) {
-            switch (member.kind) {
+        for (auto member : symbol.getPortList()) {
+            switch (member->kind) {
                 case SymbolKind::Port:
-                    body.ports.push_back(port(member.as<PortSymbol>()));
+                    body.ports.push_back(port(member->as<PortSymbol>()));
                     break;
                 case SymbolKind::MultiPort:
-                    body.ports.push_back(multiPort(member.as<MultiPortSymbol>()));
+                    body.ports.push_back(multiPort(member->as<MultiPortSymbol>()));
                     break;
                 case SymbolKind::InterfacePort:
-                    body.ports.push_back(interfacePort(member.as<InterfacePortSymbol>()));
+                    body.ports.push_back(interfacePort(member->as<InterfacePortSymbol>()));
                     break;
                 default:
                     break;
             }
         }
+        addChildren(symbol, "", body);
         auto index = uint32_t(out.bodies.size());
         out.bodies.push_back(std::move(body));
         bodies.emplace(&symbol, index);
         return index;
+    }
+
+    static std::string join(const std::string& prefix, const std::string& name) {
+        return prefix.empty() ? name : prefix + "." + name;
+    }
+
+    /// Adds the instances of `scope` to `body`: its own and those of its
+    /// instantiated generate blocks, which `prefix` names.
+    void addChildren(const Scope& scope, const std::string& prefix, FfiBody& body) {
+        for (auto& member : scope.members()) {
+            switch (member.kind) {
+                case SymbolKind::Instance:
+                    addChild(member.as<InstanceSymbol>(), std::string(member.name), prefix, body);
+                    break;
+                case SymbolKind::InstanceArray:
+                    addArray(member.as<InstanceArraySymbol>(), std::string(member.name), prefix,
+                             body);
+                    break;
+                case SymbolKind::UninstantiatedDef: {
+                    auto& def = member.as<UninstantiatedDefSymbol>();
+                    FfiChild child{};
+                    child.name = str(def.name);
+                    child.definition = str(def.definitionName);
+                    child.prefix = str(prefix);
+                    body.children.push_back(std::move(child));
+                    break;
+                }
+                case SymbolKind::GenerateBlock: {
+                    auto& block = member.as<GenerateBlockSymbol>();
+                    if (!block.isUninstantiated)
+                        addChildren(block, join(prefix, block.getExternalName()), body);
+                    break;
+                }
+                case SymbolKind::GenerateBlockArray: {
+                    auto& array = member.as<GenerateBlockArraySymbol>();
+                    if (!array.valid)
+                        break;
+                    auto name = array.getExternalName();
+                    for (auto entry : array.entries) {
+                        if (entry->isUninstantiated)
+                            continue;
+                        auto index = entry->getArrayIndex();
+                        auto element = index ? name + "[" + index->toString() + "]" : name;
+                        addChildren(*entry, join(prefix, element), body);
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+
+    /// Adds each element of `array` as a child named `name` and its indices
+    /// as declared. Element 0 is at the range's right bound.
+    void addArray(const InstanceArraySymbol& array, const std::string& name,
+                  const std::string& prefix, FfiBody& body) {
+        int step = array.range.left >= array.range.right ? 1 : -1;
+        for (size_t i = 0; i < array.elements.size(); i++) {
+            auto element =
+                name + "[" + std::to_string(array.range.right + step * int(i)) + "]";
+            auto symbol = array.elements[i];
+            if (symbol->kind == SymbolKind::InstanceArray)
+                addArray(symbol->as<InstanceArraySymbol>(), element, prefix, body);
+            else if (symbol->kind == SymbolKind::Instance)
+                addChild(symbol->as<InstanceSymbol>(), element, prefix, body);
+        }
+    }
+
+    void addChild(const InstanceSymbol& instance, const std::string& name,
+                  const std::string& prefix, FfiBody& body) {
+        if (instance.body.flags.has(InstanceFlags::Uninstantiated))
+            return;
+        FfiChild child{};
+        child.name = str(name);
+        child.definition = str(instance.getDefinition().name);
+        child.prefix = str(prefix);
+        child.has_body = true;
+        child.body = bodyOf(instance);
+        body.children.push_back(std::move(child));
     }
 
     FfiPort port(const PortSymbol& symbol) {
@@ -379,6 +469,7 @@ private:
         return std::nullopt;
     }
 
+    const Compilation& compilation;
     const SourceManager& sourceManager;
     FfiDesign& out;
     std::map<std::pair<const Type*, std::string>, uint32_t> types;
@@ -392,9 +483,9 @@ private:
 
 void walkDesign(Compilation& compilation, const SourceManager& sourceManager, bool signals,
                 FfiDesign& out) {
-    // Bodies carry ports only, whatever `signals` asks.
+    // Bodies carry ports and children only, whatever `signals` asks.
     (void)signals;
-    Walker walker(sourceManager, out);
+    Walker walker(compilation, sourceManager, out);
     for (auto instance : compilation.getRoot().topInstances)
         walker.top(*instance);
 }

@@ -325,6 +325,189 @@ fn nested_packed_array_of_structs() {
     assert_eq!(ty(&ports, "x"), s_t(&[range(1, 0), range(2, 0)]));
 }
 
+/// Elaborates `text` with `extra` options and `top` as the top; the design.
+fn design(text: &str, top: &str, extra: &[&str]) -> slang_sys::Design {
+    let mut file = tempfile::Builder::new().suffix(".sv").tempfile().unwrap();
+    file.write_all(text.as_bytes()).unwrap();
+    let mut args = vec![
+        file.path().to_str().unwrap().to_string(),
+        "--top".to_string(),
+        top.to_string(),
+    ];
+    args.extend(extra.iter().map(|a| a.to_string()));
+    let r = run(&Request {
+        args,
+        stage: Stage::Elaborate,
+        ast_json: AstJson::None,
+        design: DesignQuery::Structure,
+    })
+    .unwrap();
+    assert!(r.ok, "{}", r.rendered);
+    r.design.expect("a design")
+}
+
+fn port_names(design: &slang_sys::Design, path: &str) -> Vec<String> {
+    design
+        .ports(path)
+        .unwrap_or_else(|| panic!("no instance {path}"))
+        .iter()
+        .map(|p| match p {
+            Ok(p) => p.name.clone(),
+            Err(p) => p.name.clone(),
+        })
+        .collect()
+}
+
+#[test]
+fn ports_of_child_paths() {
+    let design = design(
+        "module c(input logic [3:0] a); endmodule\n\
+         module d(input logic b); endmodule\n\
+         module top;\n\
+           c u(.a('0));\n\
+           if (1) begin : g d u(.b('0)); end\n\
+           c arr[1:0] ();\n\
+           c v[1:0][0:1] ();\n\
+           for (genvar i = 0; i < 2; i++) begin : l c w(); end\n\
+         endmodule\n",
+        "top",
+        &[],
+    );
+    assert_eq!(port_names(&design, "top"), Vec::<String>::new());
+    // `top.u` is the instance outside the block; the one in `g` is
+    // reachable by neither path.
+    assert_eq!(port_names(&design, "top.u"), ["a"]);
+    assert!(design.ports("top.g.u").is_none());
+    assert!(design.ports("top.g").is_none());
+    for path in ["top.w", "top.l.w", "top.l[0].w", "top.l[1].w"] {
+        assert!(design.ports(path).is_none(), "{path}");
+    }
+    for path in ["top.arr[1]", "top.arr[0]", "top.v[1][0]", "top.v[0][1]"] {
+        assert_eq!(port_names(&design, path), ["a"], "{path}");
+    }
+    for path in [
+        "top.arr[2]",
+        "top.arr",
+        "top.v[1][2]",
+        "top.v[1]",
+        "top.nope",
+    ] {
+        assert!(design.ports(path).is_none(), "{path}");
+    }
+}
+
+#[test]
+fn overridden_type_parameter() {
+    let text = format!(
+        "{PKG}module c #(parameter type T = logic) (input T x); endmodule\n\
+         module top; c #(.T(p::s_t)) u(.x('0)); endmodule\n"
+    );
+    let design = design(&text, "top", &[]);
+    let ports = design.ports("top.u").unwrap();
+    assert_eq!(ty(ports, "x"), s_t(&[]));
+}
+
+#[test]
+fn shared_body_answers_both_paths() {
+    let design = design(
+        "module leaf(input logic [1:0] a); endmodule\n\
+         module mid; leaf l(.a('0)); endmodule\n\
+         module top; mid m0(); mid m1(); endmodule\n",
+        "top",
+        &[],
+    );
+    let first = design.ports("top.m0.l").expect("m0.l");
+    let second = design.ports("top.m1.l").expect("m1.l");
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 1);
+}
+
+#[test]
+fn unsupported_ports_kept_in_order() {
+    // A `ref` port must be connected, so `m` is a child here.
+    let design = design(
+        "module m(input real r, ref logic rr, input logic ok); endmodule\n\
+         module top; logic s; m u(.r(1.0), .rr(s), .ok(1'b1)); endmodule\n",
+        "top",
+        &[],
+    );
+    let all = design.ports("top.u").expect("top.u");
+    assert_eq!(all.len(), 3);
+    let r = unsupported(all, "r");
+    assert_eq!(r.type_text, "real");
+    assert_eq!(r.error, "only integral (bit-vector) types are supported");
+    let rr = unsupported(all, "rr");
+    assert_eq!(rr.error, "`ref` ports are not supported");
+    assert!(matches!(&all[0], Err(p) if p.name == "r"));
+    assert!(matches!(&all[1], Err(p) if p.name == "rr"));
+    assert!(matches!(&all[2], Ok(p) if p.name == "ok"));
+
+    let multi = ports("module mp(.p({a, b})); input a, b; endmodule\n", "mp");
+    assert_eq!(multi.len(), 1);
+    let p = unsupported(&multi, "p");
+    assert_eq!(
+        p.error,
+        "ports that connect several signals are not supported"
+    );
+}
+
+#[test]
+fn macro_port_location() {
+    let all = ports("`define P input logic x\nmodule m(`P);\nendmodule\n", "m");
+    let Ok(port) = &all[0] else {
+        panic!("{:?}", all[0]);
+    };
+    let loc = port.loc.as_ref().expect("a location");
+    assert_eq!((loc.line, loc.column), (2, None));
+    assert!(
+        std::path::Path::new(&loc.file).is_absolute(),
+        "{}",
+        loc.file
+    );
+}
+
+#[test]
+fn interface_ports() {
+    let design = design(
+        "interface bus; logic x; modport mst(input x); endinterface\n\
+         module m(bus.mst b, interface g); endmodule\n",
+        "m",
+        &["--allow-toplevel-iface-ports"],
+    );
+    let ifaces = design.interface_ports("m").expect("m");
+    let summary: Vec<_> = ifaces
+        .iter()
+        .map(|i| (i.name.as_str(), i.interface.as_str(), i.modport.as_deref()))
+        .collect();
+    assert_eq!(summary, [("b", "bus", Some("mst")), ("g", "", None)]);
+    assert!(design.ports("m").unwrap().is_empty());
+}
+
+#[test]
+fn no_design_without_compilation() {
+    let missing = run(&Request {
+        args: vec!["/nonexistent/sandstitch/missing.sv".to_string()],
+        stage: Stage::Elaborate,
+        ast_json: AstJson::None,
+        design: DesignQuery::Structure,
+    })
+    .unwrap();
+    assert!(!missing.ok);
+    assert!(missing.design.is_none());
+
+    let mut file = tempfile::Builder::new().suffix(".sv").tempfile().unwrap();
+    file.write_all(b"module m; endmodule\n").unwrap();
+    let none = run(&Request {
+        args: vec![file.path().to_str().unwrap().to_string()],
+        stage: Stage::Elaborate,
+        ast_json: AstJson::None,
+        design: DesignQuery::None,
+    })
+    .unwrap();
+    assert!(none.ok);
+    assert!(none.design.is_none());
+}
+
 #[test]
 fn anonymous_enum_name() {
     let ports = ports("module m(input enum logic {A, B} x); endmodule\n", "m");
