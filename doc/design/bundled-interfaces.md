@@ -38,7 +38,7 @@ let link = router.def_intf_members(
 );
 ```
 
-Every slice must belong to a port of that `ModDef`; anything else panics, as `def_intf` does for unknown ports. `def_intf`, `def_intf_from_prefix(es)`, `def_intf_from_name_underscore` and `def_intf_from_regex(es)` keep their signatures and build members from their `(port, msb, lsb)` mappings; a range covering the whole port is a typed whole-port member, any other range a plain bit slice, as today.
+Every slice must belong to a port of that `ModDef`; anything else panics. `def_intf`, `def_intf_from_prefix(es)`, `def_intf_from_name_underscore` and `def_intf_from_regex(es)` keep their signatures and build members from their `(port, msb, lsb)` mappings, resolved when read as upstream (the port may be added later): a range covering the whole port is a typed whole-port member, any other range a plain bit slice, as today.
 
 `Intf::get(name)` and `Intf::remove(name)` return the member of that name; on a name present in both directions they are S0209. `Intf::members()` lists every member as `(name, slice)` in definition order; the slice gives its direction.
 
@@ -60,7 +60,7 @@ So an input port of the parent drives the parent's body, like an output of a chi
 | Call | Effect |
 | --- | --- |
 | `a.connect(&b, allow_mismatch)` | Each member that drives is connected to the same-named member of the other interface that is driven, in both directions. Between instances this pairs an output with an input; between the parent and a child it pairs ports of the same direction (parent input to child input). Every pair is an ordinary typed `connect`. A member without a partner is S0207 unless `allow_mismatch` is `true`; unpaired members are then left alone. |
-| `intf.export_with_prefix(name, prefix)` | Exports each member to the parent as port `<prefix><member>`, with the member's type and direction, and defines interface `name` on the parent with the same members. When a name is present in both directions the ports are `<prefix><member>_i` and `<prefix><member>_o`. `export_with_name_underscore` and `export` follow the same rule. |
+| `intf.export_with_prefix(name, prefix)` | Exports each member to the parent as port `<prefix><member>`, with the member's type and direction, and defines interface `name` on the parent with the same members. When a name is present in both directions the ports are `<prefix><member>_i` and `<prefix><member>_o`, after the exported port's direction (exporting a port of the module itself flips it). `export_with_name_underscore` and `export` follow the same rule. |
 | `intf.unused_and_tieoff(value)` | Ties off every member driven into the instance and marks every member driven out of it unused. `tieoff` and `unused` alone touch only their own direction. |
 
 Interfaces with unique names keep today's results for all three: when neither interface repeats a name, members pair by name alone, as upstream, so a wrong direction is still the connect-time direction error; exported names gain no suffix.
@@ -87,12 +87,12 @@ Nothing new. Interface operations expand into the same typed connections the han
 
 - `router()` defines `link{d}` for every route `d` of the specialized router.
 - `mesh_2x2` uses `link(East).connect(&link(West), false)` (and North/South) for neighbours, `unused_and_tieoff(0)` on mesh-edge links and `export_with_prefix` for local links.
-- Acceptance: the emitted mesh RTL of both configurations is byte-identical to the RTL emitted before the change, or the PR explains every difference. It still elaborates with its manifest, and the small mesh's links still check against XY coordinates.
+- Acceptance: the emitted mesh RTL of every tested configuration is byte-identical to the RTL of the same mesh wired element by element (`link_interfaces_match_hand_wiring` keeps that wiring as its reference). It still elaborates with its manifest, and the small mesh's links still check against XY coordinates.
 
 ## Testing
 
 - Library (`tests/interfaces/`, inline SV fixtures with struct and struct-array ports, no FlooNoC):
-  - Peer connect pairs both directions, and parent ↔ child connect keeps directions. Checked in elaborated RTL with distinct bit patterns per member, so a swapped pair fails.
+  - Peer connect pairs both directions, and parent ↔ child connect keeps directions. Each interface design is compared with the same design wired by hand; the emitted RTL must be identical and elaborate in Slang. Channels have different widths and links different elements, and a test checks that hand wiring of another element emits different RTL, so a swapped pair fails.
   - Members built from `index`/`field` keep their selection; emitted nets stay typed.
   - S0201 through an interface connection.
   - `export_with_prefix` names, types and directions, with and without repeated names.
@@ -100,6 +100,7 @@ Nothing new. Interface operations expand into the same typed connections the han
   - S0207, S0208 and S0209 diagnostic snapshots.
 - Existing interface tests (`tests/interfaces/`) pass unmodified.
 - Design (`designs/floonoc/tests/`): the byte-identical comparison above.
+- `def_intf` with a mapping naming a port added afterwards still works, as upstream.
 
 ## Out of scope
 
