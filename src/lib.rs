@@ -10,6 +10,8 @@
 //!   `slang_rs`), parameterization and package extraction.
 //! - `emit`: SystemVerilog emission.
 //! - `check`: structural validation.
+//! - `resolve`: connection resolution, what drives each bit of each end of a
+//!   definition (crate-internal).
 //! - `physical`: geometry, tracks, pins, placement, LEF/DEF, and the physical
 //!   methods of the model types.
 //! - [`diagnostic`]: structured diagnostics.
@@ -22,6 +24,7 @@ mod emit;
 mod import;
 mod model;
 mod physical;
+mod resolve;
 mod util;
 
 use model::mod_def::ModDefCore;

@@ -11,10 +11,9 @@ use xlsynth_vast::{
 };
 
 use super::net_types::{End, NetTypes, declarable, typed_path};
-use crate::check::connection::check_for_gaps;
 use crate::model::connection::connected_item::ConnectedItem;
-use crate::model::connection::expression_source::merge_expression_sources;
-use crate::model::connection::port_slice::PortSliceConnection;
+use crate::resolve::def::resolve_def;
+use crate::resolve::{EndResolution, Resolution, Segment, Source};
 use crate::{Dim, IO, ModDef, ModDefCore, Port, PortSlice, PortType, Select, Usage};
 
 #[derive(Debug, PartialEq, Clone)]
@@ -278,9 +277,12 @@ fn typed_net_expression(net: LogicRef, path: &[Select], file: &mut VastFile) -> 
     expr.to_expr()
 }
 
-/// The connections of one instance port, ready to emit: `None` when the port
+/// The segments of `end` to connect in an instantiation: `None` when the port
 /// is only marked unused.
-type InstPortPlan = (String, Option<Vec<PortSliceConnection>>);
+fn instance_segments(end: &EndResolution) -> Option<&[Segment]> {
+    let only_unused = end.segments.len() == 1 && matches!(end.segments[0].source, Source::Unused);
+    (!only_unused).then_some(end.segments.as_slice())
+}
 
 impl ModDef {
     /// Writes Verilog code for this module definition to the given file path.
@@ -318,7 +320,7 @@ impl ModDef {
         file: &mut VastFile,
         options: &EmitOptions,
     ) {
-        let core = self.core.read();
+        let mut core = self.core.read();
 
         if core.usage == Usage::EmitNothingAndStop || core.usage == Usage::EmitDefinitionAndStop {
             return;
@@ -356,13 +358,16 @@ impl ModDef {
         // and decide from them which nets are typed.
 
         let mut types = NetTypes::default();
-        let (inst_plans, assignments) = if stub {
-            (Vec::new(), Vec::new())
+        let resolved = if stub {
+            None
         } else {
-            let inst_plans = self.plan_instances(&core);
-            let assignments = self.plan_assignments(&core, options);
-            record_uses(&mut types, &inst_plans, &assignments);
-            (inst_plans, assignments)
+            // Tracing locks this definition's core, so release the guard.
+            drop(core);
+            let resolution = resolve_def(&self.core);
+            core = self.core.read();
+            let assignments = plan_assignments(&resolution, options);
+            record_uses(&mut types, &resolution, &assignments);
+            Some((resolution, assignments))
         };
 
         // Create nets for each module port
@@ -374,37 +379,38 @@ impl ModDef {
             nets.declare_mod_def_port(port_name, io, port_type, file, &mut module);
         }
 
-        if stub {
+        let Some((resolution, assignments)) = resolved else {
             return;
-        }
+        };
 
         // Create module instances
-        for ((inst_name, inst), port_plans) in core.instances.iter().zip(inst_plans) {
+        for ((inst_name, inst), ends) in core.instances.iter().zip(&resolution.instances) {
             let module_name = inst.read().name.clone();
             let mut parameter_port_names: Vec<String> = Vec::new();
             let mut parameter_expr_vals: Vec<Expr> = Vec::new();
             let mut connection_port_names = Vec::new();
             let mut connection_expressions = Vec::new();
 
-            for (port_name, merged) in port_plans {
+            for end in ends {
+                let port_name = &end.name;
                 let enum_t = inst
                     .read()
                     .enum_ports
-                    .get(&port_name)
+                    .get(port_name)
                     .map(|enum_t| file.make_extern_type(enum_t));
-                connection_port_names.push(port_name);
+                connection_port_names.push(port_name.clone());
 
-                let Some(merged) = merged else {
+                let Some(segments) = instance_segments(end) else {
                     connection_expressions.push(None);
                     continue;
                 };
 
-                let mut concat_entries = merged
-                    .into_iter()
+                let mut concat_entries = segments
+                    .iter()
                     .map(|c| {
                         connected_item_to_expression(
                             &c.this,
-                            &c.other,
+                            &ConnectedItem::from(&c.source),
                             file,
                             &mut module,
                             &mut nets,
@@ -510,152 +516,73 @@ impl ModDef {
             file.add_member_continuous_assignment(module, assignment);
         }
     }
+}
 
-    /// The merged connections of each port of each instance, in declaration
-    /// order.
-    fn plan_instances(&self, core: &ModDefCore) -> Vec<Vec<InstPortPlan>> {
-        let empty_connections = IndexMap::new();
-        let mut plans = Vec::new();
-        for (inst_name, inst) in core.instances.iter() {
-            let mod_inst_connections = match core.mod_inst_connections.get(inst_name) {
-                Some(mod_inst_connections) => mod_inst_connections,
-                None => &empty_connections,
-            };
-
-            let mut port_plans = Vec::new();
-            for (port_name, io) in inst.read().ports.iter() {
-                let port_slice_connections = match mod_inst_connections.get(port_name) {
-                    Some(port_slice_connections) => port_slice_connections,
-                    None => {
-                        panic!("{}.{}.{} is unconnected", core.name, inst_name, port_name);
-                    }
-                };
-
-                // break into non-overlapping chunks
-                let mut non_overlapping =
-                    port_slice_connections.read().trace().make_non_overlapping();
-
-                non_overlapping.retain(|c| !c.is_empty());
-                non_overlapping.sort_by_key(|c| -(c[0].this.msb as isize));
-
-                // make sure there aren't gaps between connections for this port
-                check_for_gaps(
-                    &non_overlapping,
-                    io,
-                    &format!("{}.{}.{}", core.name, inst_name, port_name),
-                );
-
-                let expression_sources = non_overlapping
-                    .iter()
-                    .map(|c| c.to_expression_source().unwrap())
-                    .collect::<Vec<_>>();
-
-                let merged = merge_expression_sources(expression_sources);
-
-                let only_unused =
-                    merged.len() == 1 && matches!(merged[0].other, ConnectedItem::Unused(_));
-                port_plans.push((port_name.clone(), (!only_unused).then_some(merged)));
-            }
-            plans.push(port_plans);
-        }
-        plans
-    }
-
-    /// The continuous assignments driving this module's ports, as
-    /// (port slice, source) pairs in emission order.
-    fn plan_assignments(
-        &self,
-        core: &ModDefCore,
-        options: &EmitOptions,
-    ) -> Vec<(PortSlice, ConnectedItem)> {
-        let mut assignments = Vec::new();
-        for port_name in core.ports.keys() {
-            let port_slice_connections = match core.mod_def_connections.get(port_name) {
-                Some(port_slice_connections) => port_slice_connections,
-                None => panic!("{}.{} is unconnected", core.name, port_name),
-            };
-
-            // break into non-overlapping chunks
-            let mut non_overlapping = port_slice_connections.read().trace().make_non_overlapping();
-
-            non_overlapping.retain(|c| !c.is_empty());
-            non_overlapping.sort_by_key(|c| -(c[0].this.msb as isize));
-
-            // make sure there aren't gaps between connections for this port
-            check_for_gaps(
-                &non_overlapping,
-                core.ports.get(port_name).unwrap(),
-                &format!("{}.{}", core.name, port_name),
-            );
-
-            let expression_sources = non_overlapping
-                .iter()
-                .map(|c| c.to_expression_source().unwrap())
-                .collect::<Vec<_>>();
-
-            let merged = merge_expression_sources(expression_sources);
-
-            for expression_source in merged {
-                let other_width = match &expression_source.other {
-                    ConnectedItem::PortSlice(port_slice) => {
-                        if let Port::ModDef {
-                            name: port_slice_port_name,
-                            ..
-                        } = &port_slice.port
-                            && port_slice_port_name == port_name
-                        {
-                            // If the expression source for this port is the
-                            // port itself, skip it.
-                            continue;
-                        }
-                        port_slice.width()
-                    }
-                    ConnectedItem::Tieoff(tieoff) => tieoff.width,
-                    ConnectedItem::Unused(_) => {
+/// The continuous assignments driving this module's ports, as
+/// (port slice, source) pairs in emission order.
+fn plan_assignments(
+    resolution: &Resolution,
+    options: &EmitOptions,
+) -> Vec<(PortSlice, ConnectedItem)> {
+    let mut assignments = Vec::new();
+    for end in &resolution.ports {
+        for segment in &end.segments {
+            let other = ConnectedItem::from(&segment.source);
+            let other_width = match &other {
+                ConnectedItem::PortSlice(port_slice) => {
+                    if let Port::ModDef {
+                        name: port_slice_port_name,
+                        ..
+                    } = &port_slice.port
+                        && port_slice_port_name == &end.name
+                    {
+                        // If the expression source for this port is the
+                        // port itself, skip it.
                         continue;
                     }
-                    ConnectedItem::Wire(wire) => wire.msb - wire.lsb + 1,
-                };
-
-                let width = expression_source.this.width();
-
-                // Connection construction and slicing should have caught any
-                // width mismatch before emission, but double-check here.
-                assert_eq!(
-                    other_width,
-                    width,
-                    "Width mismatch while emitting an assignment to {}",
-                    expression_source.this.debug_string(),
-                );
-
-                // Expand the assignment from MSB to LSB by slicing both sides
-                // at the same relative offset. ConnectedItem slicing keeps
-                // this mapping uniform for ports, wires, and constants.
-                if options.bitblast_assignments {
-                    for offset in (0..width).rev() {
-                        assignments.push((
-                            expression_source
-                                .this
-                                .slice_with_offset_and_width(offset, 1),
-                            expression_source
-                                .other
-                                .slice_with_offset_and_width(offset, 1),
-                        ));
-                    }
-                } else {
-                    assignments.push((expression_source.this, expression_source.other));
+                    port_slice.width()
                 }
+                ConnectedItem::Tieoff(tieoff) => tieoff.width,
+                ConnectedItem::Unused(_) => {
+                    continue;
+                }
+                ConnectedItem::Wire(wire) => wire.msb - wire.lsb + 1,
+            };
+
+            let width = segment.this.width();
+
+            // Connection construction and slicing should have caught any
+            // width mismatch before emission, but double-check here.
+            assert_eq!(
+                other_width,
+                width,
+                "Width mismatch while emitting an assignment to {}",
+                segment.this.debug_string(),
+            );
+
+            // Expand the assignment from MSB to LSB by slicing both sides
+            // at the same relative offset. ConnectedItem slicing keeps
+            // this mapping uniform for ports, wires, and constants.
+            if options.bitblast_assignments {
+                for offset in (0..width).rev() {
+                    assignments.push((
+                        segment.this.slice_with_offset_and_width(offset, 1),
+                        other.slice_with_offset_and_width(offset, 1),
+                    ));
+                }
+            } else {
+                assignments.push((segment.this.clone(), other));
             }
         }
-        assignments
     }
+    assignments
 }
 
 /// Records every use of a net that emission will make, with what each use
 /// is connected to.
 fn record_uses(
     types: &mut NetTypes,
-    inst_plans: &[Vec<InstPortPlan>],
+    resolution: &Resolution,
     assignments: &[(PortSlice, ConnectedItem)],
 ) {
     let record_item = |types: &mut NetTypes, this: &PortSlice, item: &ConnectedItem| match item {
@@ -671,13 +598,14 @@ fn record_uses(
         ),
         ConnectedItem::Tieoff(_) | ConnectedItem::Wire(_) => {}
     };
-    for connection in inst_plans
+    for segment in resolution
+        .instances
         .iter()
         .flatten()
-        .filter_map(|(_, merged)| merged.as_ref())
+        .filter_map(instance_segments)
         .flatten()
     {
-        record_item(types, &connection.this, &connection.other);
+        record_item(types, &segment.this, &ConnectedItem::from(&segment.source));
     }
     for (this, other) in assignments {
         types.record(this.port.get_port_name(), this, End::of(other));
