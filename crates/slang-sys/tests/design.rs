@@ -396,6 +396,91 @@ fn ports_of_child_paths() {
     }
 }
 
+/// The width of port `a` of the instance at `path`.
+fn width_at(design: &slang_sys::Design, path: &str) -> usize {
+    design.ports(path).unwrap_or_else(|| panic!("no {path}"))[0]
+        .as_ref()
+        .unwrap()
+        .ty
+        .width()
+        .unwrap()
+}
+
+/// An element of an instance array is named by its index in the range,
+/// whichever way the range runs: a `defparam` on one element gives it a body
+/// of its own, which shows which name reaches which element.
+#[test]
+fn array_element_names_follow_the_range() {
+    let sub = "module sub #(parameter W = 1) (input logic [W-1:0] a); endmodule\n";
+    for (range, target) in [
+        ("[3:0]", 3),
+        ("[3:0]", 0),
+        ("[0:3]", 3),
+        ("[0:3]", 0),
+        ("[2:3]", 3),
+        ("[3:2]", 2),
+    ] {
+        let design = design(
+            &format!(
+                "{sub}module top; sub u {range} (.a()); defparam u[{target}].W = 8; endmodule\n"
+            ),
+            "top",
+            &[],
+        );
+        let names = design.child_instances("top").unwrap();
+        let (left, right): (i32, i32) = {
+            let (l, r) = range[1..range.len() - 1].split_once(':').unwrap();
+            (l.parse().unwrap(), r.parse().unwrap())
+        };
+        let expected: Vec<String> = if left >= right {
+            (right..=left).rev().collect::<Vec<_>>()
+        } else {
+            (left..=right).collect()
+        }
+        .into_iter()
+        .map(|i| format!("u[{i}]"))
+        .collect();
+        assert_eq!(names, expected, "{range}");
+        for name in names {
+            let wide = name == format!("u[{target}]");
+            assert_eq!(
+                width_at(&design, &format!("top.{name}")),
+                if wide { 8 } else { 1 },
+                "{range} defparam u[{target}]: {name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn two_dimensional_array_element_names() {
+    let sub = "module sub #(parameter W = 1) (input logic [W-1:0] a); endmodule\n";
+    for (target, wide) in [
+        ("[1][0]", "v[1][0]"),
+        ("[0][1]", "v[0][1]"),
+        ("[1][1]", "v[1][1]"),
+    ] {
+        let design = design(
+            &format!(
+                "{sub}module top; sub v [1:0][0:1] (.a()); defparam v{target}.W = 8; endmodule\n"
+            ),
+            "top",
+            &[],
+        );
+        assert_eq!(
+            design.child_instances("top").unwrap(),
+            ["v[1][0]", "v[1][1]", "v[0][0]", "v[0][1]"]
+        );
+        for name in ["v[1][0]", "v[1][1]", "v[0][0]", "v[0][1]"] {
+            assert_eq!(
+                width_at(&design, &format!("top.{name}")),
+                if name == wide { 8 } else { 1 },
+                "defparam v{target}: {name}"
+            );
+        }
+    }
+}
+
 #[test]
 fn overridden_type_parameter() {
     let text = format!(
