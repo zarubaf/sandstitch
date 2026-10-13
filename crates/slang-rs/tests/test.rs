@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+mod common;
+
 #[cfg(test)]
 mod tests {
+    use crate::common::*;
     use num_bigint::BigInt;
     use slang_rs::*;
     use std::collections::HashMap;
@@ -53,7 +56,7 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = without_locs(extract_ports(&cfg, false));
+        let definitions = without_locs(top_ports(&design(&cfg), false));
         assert_eq!(
             definitions["foo"],
             vec![
@@ -219,7 +222,7 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = without_locs(extract_ports(&cfg, true));
+        let definitions = without_locs(top_ports(&design(&cfg), true));
         assert_eq!(
             definitions["foo"],
             vec![
@@ -291,7 +294,7 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = without_locs(extract_ports(&cfg, false));
+        let definitions = without_locs(top_ports(&design(&cfg), false));
         assert_eq!(
             definitions["foo"],
             vec![
@@ -361,7 +364,7 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = without_locs(extract_ports(&cfg, false));
+        let definitions = without_locs(top_ports(&design(&cfg), false));
 
         assert_eq!(
             definitions["foo"],
@@ -410,7 +413,7 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = without_locs(extract_ports(&cfg, false));
+        let definitions = without_locs(top_ports(&design(&cfg), false));
 
         assert_eq!(
             definitions["foo"],
@@ -476,7 +479,7 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = without_locs(extract_ports(&cfg, false));
+        let definitions = without_locs(top_ports(&design(&cfg), false));
         assert_eq!(
             definitions["foo"],
             vec![
@@ -570,7 +573,7 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = without_locs(extract_ports(&cfg, false));
+        let definitions = without_locs(top_ports(&design(&cfg), false));
         assert_eq!(
             definitions["foo"],
             vec![
@@ -622,7 +625,7 @@ mod tests {
             ..Default::default()
         };
 
-        extract_ports(&cfg, false);
+        top_ports(&design(&cfg), false);
     }
 
     #[test]
@@ -661,57 +664,11 @@ mod tests {
             ..Default::default()
         };
 
-        let definitions = without_locs(extract_ports(&cfg, false));
+        let definitions = without_locs(top_ports(&design(&cfg), false));
 
         assert_eq!(definitions["foo"][0].ty.width().unwrap(), 422);
         assert_eq!(definitions["foo"][1].ty.width().unwrap(), 23632);
         assert_eq!(definitions["foo"][2].ty.width().unwrap(), 1);
-    }
-
-    #[test]
-    fn test_module_extract() {
-        // test verilog includes other kinds of definitions to make sure that the
-        // library is only extracting module names
-        let verilog = str2tmpfile(
-            "
-package my_pack;
-endpackage
-
-typedef struct {
-    logic [7:0] data;
-} my_struct_t;
-
-interface my_intf;
-endinterface
-
-module A;
-endmodule
-
-module B;
-endmodule
-
-module C;
-A a0();
-A a1();
-B b0();
-B b1();
-endmodule
-
-module D;
-endmodule
-",
-        )
-        .unwrap();
-
-        let cfg = SlangConfig {
-            sources: &[verilog.path().to_str().unwrap()],
-            ..Default::default()
-        };
-
-        let mut modules = extract_modules(&cfg).unwrap();
-        modules.sort();
-
-        assert_eq!(modules, vec!["A", "B", "C", "D"]);
     }
 
     #[test]
@@ -747,7 +704,7 @@ endmodule
         };
 
         assert_eq!(
-            without_locs(extract_ports(&cfg, false))["A"],
+            without_locs(top_ports(&design(&cfg), false))["A"],
             vec![Port {
                 loc: None,
                 dir: PortDir::Input,
@@ -780,7 +737,7 @@ endmodule
             ..Default::default()
         };
 
-        let definitions = without_locs(extract_ports(&cfg, false));
+        let definitions = without_locs(top_ports(&design(&cfg), false));
         assert_eq!(
             definitions["foo"],
             vec![Port {
@@ -817,7 +774,7 @@ endmodule
             ..Default::default()
         };
 
-        extract_ports(&cfg, false);
+        top_ports(&design(&cfg), false);
     }
 
     #[test]
@@ -839,7 +796,7 @@ endmodule
             ..Default::default()
         };
 
-        let definitions = without_locs(extract_ports(&cfg, false));
+        let definitions = without_locs(top_ports(&design(&cfg), false));
 
         assert_eq!(
             definitions["foo"],
@@ -883,7 +840,7 @@ endmodule
             ..Default::default()
         };
 
-        let ports = extract_ports(&cfg, false);
+        let ports = top_ports(&design(&cfg), false);
 
         assert_eq!(ports["foo"].len(), 2);
         assert_eq!(ports["foo"][0].name, "a");
@@ -915,7 +872,7 @@ endmodule
             ..Default::default()
         };
 
-        let parameters = extract_parameter_defs(&cfg, false);
+        let parameters = top_parameter_defs(&design(&cfg));
         assert_eq!(parameters["foo"].len(), 4);
         assert_eq!(parameters["foo"][0].name, "IntParam");
         assert_eq!(

@@ -9,24 +9,14 @@ homepage = "https://github.com/xlsynth/slang-rs.git"
 documentation = "https://docs.rs/slang-rs"
 
 [dependencies]
-regex = "1.10.6"
-serde = "1.0"
-serde_json = { version = "1.0.128", features = ["unbounded_depth"] }
-serde_stacker = "0.1"
 tempfile = "3"
-pest = "2.1"
-pest_derive = "2.1"
-num-bigint = "0.4.3"
-num-traits = "0.2"
 slang-sys = { path = "../slang-sys" }
 
-[features]
-# Test-only: compares the typed design with the JSON extractors on every run.
-differential = []
-
 [dev-dependencies]
-slang-rs = { path = ".", features = ["differential"] }
+num-bigint = "0.4.3"
+num-traits = "0.2"
 proptest = "1"
+regex = "1.10.6"
 
 
 # Pre-existing upstream style, kept to stay close to upstream.

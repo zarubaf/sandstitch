@@ -91,6 +91,40 @@ bool isTypeParameterAlias(const TypeAliasType& alias) {
            &symbol->as<TypeParameterSymbol>().getTypeAlias() == &alias;
 }
 
+/// Whether Slang's type printer can print `type`: it asserts that every
+/// member of a struct or union is a variable, which fails for a struct that
+/// declares an anonymous enum (its values are members of the struct's scope).
+bool printable(const Type& type);
+
+bool printableMembers(const Scope& scope) {
+    for (auto& member : scope.members()) {
+        if (member.kind != SymbolKind::Field || !printable(member.as<FieldSymbol>().getType()))
+            return false;
+    }
+    return true;
+}
+
+bool printable(const Type& type) {
+    switch (type.kind) {
+        case SymbolKind::TypeAlias:
+            return printable(type.as<TypeAliasType>().targetType.getType());
+        case SymbolKind::PackedArrayType:
+            return printable(type.as<PackedArrayType>().elementType);
+        case SymbolKind::FixedSizeUnpackedArrayType:
+            return printable(type.as<FixedSizeUnpackedArrayType>().elementType);
+        case SymbolKind::PackedStructType:
+            return printableMembers(type.as<PackedStructType>());
+        case SymbolKind::PackedUnionType:
+            return printableMembers(type.as<PackedUnionType>());
+        case SymbolKind::UnpackedStructType:
+            return printableMembers(type.as<UnpackedStructType>());
+        case SymbolKind::UnpackedUnionType:
+            return printableMembers(type.as<UnpackedUnionType>());
+        default:
+            return true;
+    }
+}
+
 std::string rangeText(const ConstantRange& range) {
     return "[" + std::to_string(range.left) + ":" + std::to_string(range.right) + "]";
 }
@@ -192,7 +226,7 @@ private:
             FfiPackageParameter parameter{};
             parameter.name = str(member.name);
             if (member.kind == SymbolKind::Parameter) {
-                // The serializer's form of the constant.
+                // The constant as `toString` prints it with unknown bits exact.
                 parameter.kind = PACKAGE_VALUE;
                 parameter.value = str(member.as<ParameterSymbol>().getValue().toString(
                     SVInt::MAX_BITS, /* exactUnknowns */ true, /* useAssignmentPatterns */ true));
@@ -201,10 +235,17 @@ private:
                 // The alias as Slang's type printer expands it, named by its
                 // package.
                 auto& alias = member.as<TypeAliasType>();
-                TypePrinter printer;
-                printer.append(alias);
                 parameter.kind = PACKAGE_ALIAS;
-                parameter.value = str(printer.toString());
+                if (printable(alias)) {
+                    TypePrinter printer;
+                    printer.append(alias);
+                    parameter.value = str(printer.toString());
+                }
+                else {
+                    // Only the name: the printer would assert on the members.
+                    parameter.value = str(scopePrefix(alias.getParentScope()) +
+                                          std::string(alias.name));
+                }
                 parameter.ty = intern(alias, "");
             }
             else {

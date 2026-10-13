@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+mod common;
+
 #[cfg(test)]
 mod tests {
+    use crate::common::*;
     use slang_rs::*;
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -29,7 +32,7 @@ mod tests {
             ..Default::default()
         };
 
-        let hierarchy = extract_hierarchy(&cfg);
+        let hierarchy = hierarchy(&cfg);
 
         let expected = Instance {
             def_name: "A".to_string(),
@@ -114,7 +117,7 @@ endmodule
             ..Default::default()
         };
 
-        let hierarchy = extract_hierarchy(&cfg);
+        let hierarchy = hierarchy(&cfg);
 
         let expected = Instance {
             def_name: "top".to_string(),
@@ -175,7 +178,7 @@ endmodule
             ..Default::default()
         };
 
-        extract_hierarchy(&cfg).unwrap();
+        hierarchy(&cfg).unwrap();
     }
 
     #[test]
@@ -205,7 +208,7 @@ endmodule
             ..Default::default()
         };
 
-        let hierarchy = extract_hierarchy(&cfg).unwrap();
+        let hierarchy = hierarchy(&cfg).unwrap();
 
         let expected = HashMap::from([(
             "A".to_string(),
@@ -246,7 +249,7 @@ endmodule
             sources: &[verilog.path().to_str().unwrap()],
             ..Default::default()
         };
-        let hierarchy = extract_hierarchy(&cfg).unwrap();
+        let hierarchy = hierarchy(&cfg).unwrap();
         hierarchy[top]
             .contents
             .iter()
@@ -406,7 +409,7 @@ endmodule
             sources: &[verilog.path().to_str().unwrap()],
             ..Default::default()
         };
-        let top = &extract_hierarchy(&cfg).unwrap()["top"];
+        let top = &hierarchy(&cfg).unwrap()["top"];
         let got: Vec<_> = top
             .contents
             .iter()
@@ -441,7 +444,7 @@ endmodule
             sources: &[verilog.path().to_str().unwrap()],
             ..Default::default()
         };
-        let top = &extract_hierarchy(&cfg).unwrap()["top"];
+        let top = &hierarchy(&cfg).unwrap()["top"];
         assert_eq!(top.contents.len(), 2);
         for mid in &top.contents {
             let mid = mid.borrow();

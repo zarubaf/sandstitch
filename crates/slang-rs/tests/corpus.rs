@@ -4,8 +4,7 @@
 //! elaborated through `run_slang_keep_design`, with every query answered on
 //! every top and on every instance reachable by path (instances inside
 //! generate blocks are not), and the hierarchy of every top checked against
-//! the child lists. Under the `differential` feature each run also
-//! compares the typed design with the JSON extractors.
+//! the child lists.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

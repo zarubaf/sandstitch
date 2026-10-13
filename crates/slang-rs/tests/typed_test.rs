@@ -3,6 +3,9 @@
 //! Resolved type-parameter port types, package-qualified type names, source
 //! locations, interface ports and type-parameter listing.
 
+mod common;
+
+use common::*;
 use slang_rs::*;
 
 const CFG_PKG: &str = "
@@ -19,7 +22,7 @@ module child #(parameter type T = logic, parameter int N = 2) (
 endmodule
 ";
 
-fn elaborate(sources: &[&str], tops: &[&str], extra_arguments: &[&str]) -> Ast {
+fn elaborate(sources: &[&str], tops: &[&str], extra_arguments: &[&str]) -> Design {
     let files: Vec<_> = sources.iter().map(|s| str2tmpfile(s).unwrap()).collect();
     let paths: Vec<&str> = files.iter().map(|f| f.path().to_str().unwrap()).collect();
     let cfg = SlangConfig {
@@ -28,7 +31,7 @@ fn elaborate(sources: &[&str], tops: &[&str], extra_arguments: &[&str]) -> Ast {
         extra_arguments,
         ..Default::default()
     };
-    run_slang(&cfg).unwrap().ast
+    design(&cfg)
 }
 
 fn flit_fields() -> Vec<Field> {
@@ -59,8 +62,8 @@ module top;
   child #(.T(cfg_pkg::flit_t), .N(3)) u();
 endmodule
 ";
-    let value = elaborate(&[CFG_PKG, CHILD, top], &["top"], &[]);
-    let ports = extract_instance_ports_from_value(&value, "top.u", false).unwrap();
+    let design = elaborate(&[CFG_PKG, CHILD, top], &["top"], &[]);
+    let ports = ports_at(&design, "top.u", false).unwrap();
     assert_eq!(ports[0].name, "in_i");
     assert_eq!(ports[0].dir, PortDir::Input);
     assert_eq!(
@@ -80,8 +83,8 @@ endmodule
 #[test]
 fn type_param_port_default_and_packed_override() {
     // Default `T = logic` with N = 2 as a top-level module.
-    let value = elaborate(&[CFG_PKG, CHILD], &["child"], &[]);
-    let ports = extract_ports_from_value(&value, false);
+    let design = elaborate(&[CFG_PKG, CHILD], &["child"], &[]);
+    let ports = top_ports(&design, false);
     assert_eq!(
         ports["child"][0].ty,
         Type::Logic {
@@ -97,8 +100,8 @@ module top;
   child #(.T(logic signed [7:0]), .N(3)) u();
 endmodule
 ";
-    let value = elaborate(&[CFG_PKG, CHILD, top], &["top"], &[]);
-    let ports = extract_instance_ports_from_value(&value, "top.u", false).unwrap();
+    let design = elaborate(&[CFG_PKG, CHILD, top], &["top"], &[]);
+    let ports = ports_at(&design, "top.u", false).unwrap();
     assert_eq!(
         ports[0].ty,
         Type::Logic {
@@ -107,7 +110,7 @@ endmodule
             unpacked_dimensions: vec![],
         }
     );
-    assert!(extract_instance_ports_from_value(&value, "top.nope", false).is_none());
+    assert!(ports_at(&design, "top.nope", false).is_none());
 }
 
 #[test]
@@ -116,8 +119,8 @@ fn package_qualified_name() {
 module imp import cfg_pkg::*; (input flit_t in_i);
 endmodule
 ";
-    let value = elaborate(&[CFG_PKG, CHILD, imported], &["child", "imp"], &[]);
-    let ports = extract_ports_from_value(&value, false);
+    let design = elaborate(&[CFG_PKG, CHILD, imported], &["child", "imp"], &[]);
+    let ports = top_ports(&design, false);
     for (module, port) in [("child", 1), ("imp", 0)] {
         match &ports[module][port].ty {
             Type::Struct { name, fields, .. } => {
@@ -145,8 +148,8 @@ module arr import arr_pkg::*; (input pair_t p, input pair_t [4:0] q, input trio_
   input same_t s, input anon_arr_t n);
 endmodule
 ";
-    let value = elaborate(&[pkg, module], &["arr"], &[]);
-    let ports = extract_ports_from_value(&value, false);
+    let design = elaborate(&[pkg, module], &["arr"], &[]);
+    let ports = top_ports(&design, false);
     let named = |i: usize| match &ports["arr"][i].ty {
         Type::Struct {
             name,
@@ -180,7 +183,7 @@ fn check_child_locations(path: &str) {
         tops: &["child"],
         ..Default::default()
     };
-    let ports = extract_ports(&cfg, false);
+    let ports = top_ports(&design(&cfg), false);
     let expected_file = std::fs::canonicalize(path).unwrap();
     // CFG_PKG spans lines 1-4; CHILD's port lines are 7 and 8.
     for (port, line, column) in [(0, 7, 19), (1, 8, 26)] {
@@ -227,8 +230,8 @@ module mac (
 );
 endmodule
 ";
-    let value = elaborate(&[sv], &["mac"], &[]);
-    let ports = extract_ports_from_value(&value, false);
+    let design = elaborate(&[sv], &["mac"], &[]);
+    let ports = top_ports(&design, false);
     let a_loc = ports["mac"][0].loc.as_ref().unwrap();
     assert_eq!((a_loc.line, a_loc.column), (3, None));
     let b_loc = ports["mac"][1].loc.as_ref().unwrap();
@@ -244,21 +247,21 @@ endmodule
 #[test]
 #[should_panic(expected = "Interface ports are not currently supported.")]
 fn interface_port_panics_without_skip() {
-    let value = elaborate(&[IFACE_SV], &["m"], &["--allow-toplevel-iface-ports"]);
-    extract_ports_from_value(&value, false);
+    let design = elaborate(&[IFACE_SV], &["m"], &["--allow-toplevel-iface-ports"]);
+    top_ports(&design, false);
 }
 
 #[test]
 fn interface_port_listed() {
-    let value = elaborate(&[IFACE_SV], &["m"], &["--allow-toplevel-iface-ports"]);
+    let design = elaborate(&[IFACE_SV], &["m"], &["--allow-toplevel-iface-ports"]);
 
     // With `skip_unsupported`, interface ports are skipped by
-    // `extract_ports_from_value` and listed separately.
-    let ports = extract_ports_from_value(&value, true);
+    // `top_ports` and listed separately.
+    let ports = top_ports(&design, true);
     assert_eq!(ports["m"].len(), 1);
     assert_eq!(ports["m"][0].name, "x");
 
-    let interface_ports = extract_interface_ports_from_value(&value);
+    let interface_ports = top_interface_ports(&design);
     let listed = &interface_ports["m"];
     assert_eq!(listed.len(), 2);
     assert_eq!(listed[0].name, "m_if");
@@ -278,12 +281,12 @@ module tp #(parameter type A = logic, parameter int W = 1, parameter type B = bi
   localparam type L = logic [W-1:0];
 endmodule
 ";
-    let value = elaborate(&[sv], &["tp"], &[]);
-    let names = extract_type_parameter_names_from_value(&value);
+    let design = elaborate(&[sv], &["tp"], &[]);
+    let names = top_type_parameter_names(&design);
     assert_eq!(names["tp"], vec!["A".to_string(), "B".to_string()]);
 
     // Type parameters are not value parameters and do not cause errors.
-    let parameters = extract_parameter_defs_from_value(&value, false);
+    let parameters = top_parameter_defs(&design);
     let parameter_names: Vec<_> = parameters["tp"].iter().map(|p| p.name.as_str()).collect();
     assert_eq!(parameter_names, vec!["W"]);
 }
@@ -294,8 +297,8 @@ fn value_parameter_typed_by_type_parameter() {
 module vp #(parameter type T = logic [3:0], parameter T INIT = '0) (input T x);
 endmodule
 ";
-    let value = elaborate(&[sv], &["vp"], &[]);
-    let parameters = extract_parameter_defs_from_value(&value, false);
+    let design = elaborate(&[sv], &["vp"], &[]);
+    let parameters = top_parameter_defs(&design);
     assert_eq!(parameters["vp"][0].name, "INIT");
     assert_eq!(parameters["vp"][0].ty.width().unwrap(), 4);
 }
@@ -308,8 +311,8 @@ module top;
   child #(.T(logic [5:0]), .N(4)) u_vec();
 endmodule
 ";
-    let value = elaborate(&[CFG_PKG, CHILD, top], &["top"], &[]);
-    let flit = extract_instance_ports_from_value(&value, "top.u_flit", false).unwrap();
+    let design = elaborate(&[CFG_PKG, CHILD, top], &["top"], &[]);
+    let flit = ports_at(&design, "top.u_flit", false).unwrap();
     assert_eq!(
         flit[0].ty,
         Type::Struct {
@@ -321,7 +324,7 @@ endmodule
             unpacked_dimensions: vec![],
         }
     );
-    let vec = extract_instance_ports_from_value(&value, "top.u_vec", false).unwrap();
+    let vec = ports_at(&design, "top.u_vec", false).unwrap();
     assert_eq!(
         vec[0].ty,
         Type::Logic {
@@ -389,8 +392,8 @@ module top;
   param #(.T(agg_pkg::e_t)) u_e();
 endmodule
 ";
-    let value = elaborate(&[pkg, plain, param], &["plain", "top"], &[]);
-    let ports = extract_ports_from_value(&value, false);
+    let design = elaborate(&[pkg, plain, param], &["plain", "top"], &[]);
+    let ports = top_ports(&design, false);
     for (port, name) in ["agg_pkg::s_t", "agg_pkg::u_t", "agg_pkg::e_t"]
         .iter()
         .enumerate()
@@ -402,7 +405,7 @@ endmodule
         ("top.u_u", "agg_pkg::u_t"),
         ("top.u_e", "agg_pkg::e_t"),
     ] {
-        let ports = extract_instance_ports_from_value(&value, instance, false).unwrap();
+        let ports = ports_at(&design, instance, false).unwrap();
         assert_named_unpacked(&ports[0].ty, name);
     }
 }
@@ -428,8 +431,8 @@ module atoms (
 );
 endmodule
 ";
-    let value = elaborate(&[sv], &["atoms"], &[]);
-    let ports = extract_ports_from_value(&value, false);
+    let design = elaborate(&[sv], &["atoms"], &[]);
+    let ports = top_ports(&design, false);
     let types: Vec<(&str, &Type)> = ports["atoms"]
         .iter()
         .map(|p| (p.name.as_str(), &p.ty))
@@ -456,8 +459,8 @@ endpackage
 module sm (input sp::s_t x);
 endmodule
 ";
-    let value = elaborate(&[sv], &["sm"], &[]);
-    let ports = extract_ports_from_value(&value, false);
+    let design = elaborate(&[sv], &["sm"], &[]);
+    let ports = top_ports(&design, false);
     let Type::Struct { fields, .. } = &ports["sm"][0].ty else {
         panic!("expected a struct, got {:?}", ports["sm"][0].ty);
     };
@@ -492,8 +495,8 @@ module sgm (input sg::ss_t ss, input sg::su_t su, input sg::sp_t sp,
             input sg::us_t us, input sg::up_t up);
 endmodule
 ";
-    let value = elaborate(&[sv], &["sgm"], &[]);
-    let ports = extract_ports_from_value(&value, false);
+    let design = elaborate(&[sv], &["sgm"], &[]);
+    let ports = top_ports(&design, false);
     let signing: Vec<(&str, &str, bool)> = ports["sgm"]
         .iter()
         .map(|p| match &p.ty {
@@ -526,8 +529,8 @@ endpackage
 module em (input ep::int_e i_i, input ep::signed_e s_i, input ep::unsigned_e u_i);
 endmodule
 ";
-    let value = elaborate(&[sv], &["em"], &[]);
-    let ports = extract_ports_from_value(&value, false);
+    let design = elaborate(&[sv], &["em"], &[]);
+    let ports = top_ports(&design, false);
     let signedness: Vec<(&str, Vec<bool>)> = ports["em"]
         .iter()
         .map(|p| match &p.ty {
@@ -557,8 +560,8 @@ module np (
 );
 endmodule
 ";
-    let value = elaborate(&[sv], &["np"], &[]);
-    let ports = extract_instance_ports_checked_from_value(&value, "np").unwrap();
+    let design = elaborate(&[sv], &["np"], &[]);
+    let ports = design.ports("np").unwrap();
     // Declaration order, parsed and unparsed interleaved.
     type Listed<'a> = (&'a str, Option<(&'a str, u32, Option<u32>)>);
     let listed: Vec<Listed> = ports
@@ -582,7 +585,7 @@ endmodule
             ("s_i", Some(("string", 5, Some(16)))),
         ]
     );
-    assert!(extract_instance_ports_checked_from_value(&value, "nope").is_none());
+    assert!(design.ports("nope").is_none());
 }
 
 #[test]
@@ -594,8 +597,8 @@ module vp #(parameter type T = logic, parameter int W = 1, localparam int L = 2,
   parameter int Q = 4;
 endmodule
 ";
-    let value = elaborate(&[sv], &["vp"], &[]);
-    let parameters = extract_overridable_parameters_from_value(&value);
+    let design = elaborate(&[sv], &["vp"], &[]);
+    let parameters = top_overridable_parameters(&design);
     // A body `parameter` in a module with a parameter port list is a localparam.
     assert_eq!(
         parameters["vp"],
@@ -618,14 +621,14 @@ module top;
   pchild #(.W(20)) u_wide();
 endmodule
 ";
-    let value = elaborate(&[child, top], &["top"], &[]);
-    let defs = extract_instance_parameter_defs_from_value(&value, "top.u_wide").unwrap();
+    let design = elaborate(&[child, top], &["top"], &[]);
+    let defs = design.parameters("top.u_wide").unwrap();
     let widths: Vec<_> = defs
         .iter()
         .map(|p| (p.name.as_str(), p.ty.width().unwrap()))
         .collect();
     assert_eq!(widths, vec![("W", 32), ("INIT", 20)]);
-    assert!(extract_instance_parameter_defs_from_value(&value, "top.nope").is_none());
+    assert!(design.parameters("top.nope").is_none());
 }
 
 #[test]
@@ -643,7 +646,7 @@ fn absolute_path_normalizes() {
 #[test]
 fn failed_run_keeps_design() {
     // `T` defaults to `logic`, which has no member `v`: the definition does
-    // not elaborate alone, but its declarations are in the dumped AST.
+    // not elaborate alone, but its declarations are in the kept design.
     let sv = "
 module m #(parameter type T = logic, parameter int N = 1) (input T x, output logic y);
   assign y = x.v;
@@ -667,7 +670,7 @@ endmodule
     let kept = run_slang_keep_design(&cfg).unwrap();
     assert!(!kept.ok);
     assert_eq!(
-        extract_overridable_parameters_from_value(&kept.ast)["m"],
+        top_overridable_parameters(&kept.design)["m"],
         vec![
             ("T".to_string(), ParameterKind::Type),
             ("N".to_string(), ParameterKind::Value),
@@ -683,7 +686,7 @@ endmodule
     };
     assert!(run_slang_keep_design(&cfg).unwrap().ok);
 
-    // No AST at all (a missing source): the failure is returned.
+    // No compilation at all (a missing source): the failure is returned.
     let cfg = SlangConfig {
         sources: &["/nonexistent/sandstitch.sv"],
         ..Default::default()

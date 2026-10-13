@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+mod common;
+
 #[cfg(test)]
 mod tests {
+    use crate::common::*;
     use slang_rs::*;
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -40,11 +43,11 @@ mod tests {
             ..Default::default()
         };
 
-        let value = run_slang(&cfg).unwrap().ast;
+        let design = design(&cfg);
 
         // check ports
 
-        let ports = without_locs(extract_ports_from_value(&value, false));
+        let ports = without_locs(top_ports(&design, false));
 
         let expected_ports = HashMap::from([(
             "A".to_string(),
@@ -76,7 +79,7 @@ mod tests {
 
         // check hierarchy
 
-        let hierarchy = extract_hierarchy(&cfg).unwrap();
+        let hierarchy = design.hierarchy();
 
         let expected_hierarchy = HashMap::from([(
             "A".to_string(),

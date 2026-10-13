@@ -394,8 +394,6 @@ struct Ctx<'a> {
     const_width: bool,
     /// An anonymous struct, union or enum may be written here.
     inline: bool,
-    /// An anonymous enum may be written here.
-    inline_enum: bool,
 }
 
 impl Ctx<'_> {
@@ -554,7 +552,7 @@ impl Lower {
                 )
             }
             RawType::Enum(raw_enum, dims) => {
-                if !ctx.inline || !ctx.inline_enum {
+                if !ctx.inline {
                     return self.logic(dims, ctx);
                 }
                 let (e, net, width) = self.enumeration(raw_enum, ctx);
@@ -621,12 +619,6 @@ impl Lower {
                     packed,
                     const_width: ctx.const_width || (*union && packed),
                     inline: true,
-                    // TODO(#35): an anonymous enum declared in a struct or
-                    // union makes Slang's JSON AST serializer fail an
-                    // assertion (`Symbol::as<VariableSymbol>`), for example
-                    // `module top(input struct packed { enum logic {A, B} e; } x); endmodule`.
-                    // Allow it when the JSON path is removed.
-                    inline_enum: false,
                     ..*ctx
                 };
                 let mut lowered: Vec<Member> = Vec::new();
@@ -806,7 +798,6 @@ impl Lower {
                 net: false,
                 const_width: false,
                 inline: true,
-                inline_enum: true,
             };
             let type_parameters: Vec<_> = refs
                 .iter()
@@ -953,7 +944,6 @@ fn lower(raw: RawDesign) -> Design {
                 net: props.net,
                 const_width: false,
                 inline: true,
-                inline_enum: true,
             };
             let default = lower.type_value(&raw_param.default, &ctx);
             type_params.push(TypeParam {
@@ -1031,7 +1021,6 @@ fn lower(raw: RawDesign) -> Design {
                 net: raw_port.dir == Dir::InOut,
                 const_width: false,
                 inline: true,
-                inline_enum: true,
             };
             let (ty, _) = lower.ty(&raw_port.ty, &ctx);
             let unpacked = lower.unpacked_dims(&raw_port.unpacked, &ctx);
@@ -1055,7 +1044,6 @@ fn lower(raw: RawDesign) -> Design {
                     net: false,
                     const_width: true,
                     inline: false,
-                    inline_enum: false,
                 };
                 let array = lower.unpacked_dims(&raw_instance.array, &array_ctx);
                 let param_overrides = raw_instance
@@ -1080,7 +1068,6 @@ fn lower(raw: RawDesign) -> Design {
                         net: props.net,
                         const_width: false,
                         inline: false,
-                        inline_enum: false,
                     };
                     type_overrides.push((i, lower.type_value(raw_ty, &ctx)));
                 }
@@ -1105,13 +1092,11 @@ fn lower(raw: RawDesign) -> Design {
         }
 
         let module = &mut modules[m];
-        // TODO(#35): an anonymous enum in an ANSI port list followed by a
-        // port of an anonymous struct or union makes Slang's JSON AST
-        // serializer fail an assertion (`Symbol::as<VariableSymbol>`), for
-        // example
-        // `module top (input enum {A} p3, input struct packed {logic f;} p5); endmodule`;
-        // such modules declare their ports in the body until the JSON path
-        // is removed.
+        // Slang v11 resolves an anonymous enum port to the error type, with
+        // no diagnostic, when an anonymous struct or union port follows it
+        // in an ANSI port list, for example
+        // `module top (input enum {A} p3, input struct packed {logic f;} p5); endmodule`.
+        // Such modules declare their ports in the body.
         let enum_before_aggregate = ports
             .iter()
             .position(|p| matches!(p.ty.base, Base::Enum(_)))

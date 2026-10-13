@@ -16,7 +16,6 @@
 #include "slang-sys/shim/design.h"
 #include "slang-sys/src/lib.rs.h"
 #include "slang/analysis/AnalysisManager.h"
-#include "slang/ast/ASTSerializer.h"
 #include "slang/ast/Compilation.h"
 #include "slang/ast/symbols/CompilationUnitSymbols.h"
 #include "slang/diagnostics/DiagnosticClient.h"
@@ -26,7 +25,6 @@
 #include "slang/driver/Driver.h"
 #include "slang/numeric/SVInt.h"
 #include "slang/syntax/SyntaxTree.h"
-#include "slang/text/Json.h"
 #include "slang/text/SourceManager.h"
 #include "slang/util/OS.h"
 #include "slang/util/VersionInfo.h"
@@ -217,23 +215,6 @@ FfiResponse run(const FfiRequest& request) {
             driver->diagEngine.issue(compilation->getAllDiagnostics());
             (void)driver->runAnalysis(*compilation);
         }
-    }
-
-    if (compilation && request.ast_json) {
-        JsonWriter writer;
-        ast::ASTSerializer serializer(*compilation, writer);
-        serializer.setIncludeSourceInfo(request.source_info);
-        serializer.setTryConstantFold(false);
-        serializer.startObject();
-        serializer.writeProperty("design");
-        serializer.serialize(compilation->getRoot());
-        serializer.writeProperty("definitions");
-        serializer.startArray();
-        for (auto def : compilation->getDefinitions())
-            serializer.serialize(*def);
-        serializer.endArray();
-        serializer.endObject();
-        response.ast_json = str(writer.view());
     }
 
     if (compilation && request.design != 0) {
