@@ -8,7 +8,9 @@ use std::io::Write as _;
 use std::process::Command;
 
 use floonoc::*;
-use topstitch::{EmitOptions, Manifest};
+use std::path::Path;
+
+use topstitch::{EmitOptions, IO, Manifest, ModDef, ModInst};
 
 /// Narrow 32-bit and wide 64-bit data, 1-bit coordinates, one shared wide
 /// link.
@@ -390,4 +392,128 @@ fn mesh_rejects_unroutable_port_count() {
     let mut cfg = small();
     cfg.num_routes = 7;
     mesh_2x2(&cfg, out_dir().path());
+}
+
+/// The mesh wired with the router link interfaces emits exactly the RTL of
+/// the same mesh wired element by element.
+#[test]
+fn link_interfaces_match_hand_wiring() {
+    let mut six = small();
+    six.name = "six".into();
+    six.num_routes = 6;
+    for cfg in [small(), big(), six] {
+        let dir = out_dir();
+        let by_links = mesh_2x2(&cfg, dir.path()).emit(EmitOptions::default());
+        let by_hand = hand_wired_mesh_2x2(&cfg, dir.path()).emit(EmitOptions::default());
+        assert_eq!(by_links, by_hand, "{}", cfg.name);
+    }
+}
+
+const CHANNELS: [&str; 3] = ["req", "rsp", "wide"];
+
+/// Connects the `dir` link of `a` to the `opposite` link of `b`, in both
+/// directions: `a.floo_<ch>_o[dir]` drives `b.floo_<ch>_i[opposite]` and
+/// `b.floo_<ch>_o[opposite]` drives `a.floo_<ch>_i[dir]`, for the request,
+/// response and wide channels. Each link struct carries its own ready.
+fn hand_link(a: &ModInst, dir: Direction, b: &ModInst, opposite: Direction) {
+    for ch in CHANNELS {
+        let (o, i) = (format!("floo_{ch}_o"), format!("floo_{ch}_i"));
+        a.get_port(&o)
+            .index(dir as usize)
+            .connect(&b.get_port(&i).index(opposite as usize));
+        b.get_port(&o)
+            .index(opposite as usize)
+            .connect(&a.get_port(&i).index(dir as usize));
+    }
+}
+
+/// `mesh_2x2` as it was wired by hand before the router link interfaces.
+fn hand_wired_mesh_2x2(cfg: &FlooConfig, out_dir: &Path) -> ModDef {
+    let router = router(cfg, out_dir).unwrap();
+    let top = ModDef::new(format!("{}_mesh_2x2", cfg.name));
+    let clk = top.add_port("clk_i", IO::Input(1));
+    let rst = top.add_port("rst_ni", IO::Input(1));
+    let test = top.add_port("test_enable_i", IO::Input(1));
+
+    let mut routers = Vec::new();
+    for x in 0..2usize {
+        let mut column = Vec::new();
+        for y in 0..2usize {
+            let r = top.instantiate(&router, Some(&format!("i_router_x{x}_y{y}")), None);
+            clk.connect(&r.get_port("clk_i"));
+            rst.connect(&r.get_port("rst_ni"));
+            test.connect(&r.get_port("test_enable_i"));
+            let id = r.get_port("id_i");
+            id.field("x").tieoff(x);
+            id.field("y").tieoff(y);
+            id.field("port_id").tieoff(0);
+            r.get_port("id_route_map_i").tieoff(0);
+            for side in ["wide", "narrow"] {
+                r.get_port(format!("offload_{side}_rsp_i")).tieoff(0);
+                r.get_port(format!("offload_{side}_req_o")).unused();
+            }
+            for p in Direction::Eject as usize..cfg.num_routes as usize {
+                for ch in CHANNELS {
+                    for dir in ["i", "o"] {
+                        r.get_port(format!("floo_{ch}_{dir}"))
+                            .index(p)
+                            .export_as(format!("x{x}_y{y}_p{p}_floo_{ch}_{dir}"));
+                    }
+                }
+            }
+            column.push(r);
+        }
+        routers.push(column);
+    }
+
+    hand_link(
+        &routers[0][0],
+        Direction::East,
+        &routers[1][0],
+        Direction::West,
+    );
+    hand_link(
+        &routers[0][1],
+        Direction::East,
+        &routers[1][1],
+        Direction::West,
+    );
+    hand_link(
+        &routers[0][0],
+        Direction::North,
+        &routers[0][1],
+        Direction::South,
+    );
+    hand_link(
+        &routers[1][0],
+        Direction::North,
+        &routers[1][1],
+        Direction::South,
+    );
+
+    for (x, y) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+        let r = &routers[x][y];
+        let x_edge = if x == 0 {
+            Direction::West
+        } else {
+            Direction::East
+        };
+        let y_edge = if y == 0 {
+            Direction::South
+        } else {
+            Direction::North
+        };
+        for (dir, ch) in [x_edge, y_edge]
+            .into_iter()
+            .flat_map(|dir| CHANNELS.map(|ch| (dir, ch)))
+        {
+            r.get_port(format!("floo_{ch}_i"))
+                .index(dir as usize)
+                .tieoff(0);
+            r.get_port(format!("floo_{ch}_o"))
+                .index(dir as usize)
+                .unused();
+        }
+    }
+    top
 }
