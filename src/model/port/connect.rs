@@ -29,6 +29,7 @@ impl Port {
 
     /// Jam-connects this port and `other` LSB-first and marks any remainder on
     /// either side with `unused_or_tieoff(0)`.
+    #[track_caller]
     pub fn todo_jam_connect<T: ConvertibleToPortSliceVec>(&self, other: &T) {
         self.to_port_slice().todo_jam_connect(other);
     }
