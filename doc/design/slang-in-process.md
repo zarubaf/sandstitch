@@ -144,7 +144,7 @@ pub struct Response {
 }
 ```
 
-`DesignQuery::Structure` collects instances, ports, parameters and packages; `WithSignals` adds the nets and variables of each body, which only the tests that check emitted RTL read. A run whose options fail or that creates no compilation returns `design: None` whatever was requested. While the JSON path exists (see Migration), `Request` also carries `ast_json` and `Response` the serialized AST.
+`DesignQuery::Structure` collects instances, ports, parameters and packages; `WithSignals` adds the nets and variables of each body, which the tests that check emitted RTL and the corpus read. A run whose options fail or that creates no compilation returns `design: None` whatever was requested. While the JSON path exists (see Migration), `Request` also carries `ast_json` and `Response` the serialized AST.
 
 ### What the shim walks
 
@@ -155,7 +155,7 @@ The walker (`shim/design.cc`) follows Slang's AST serializer in what it visits, 
   - ports in declaration order: `PortSymbol` (name, direction, type, location) and `InterfacePortSymbol` (name, interface definition name, modport, location). A `ref` port or a `MultiPortSymbol` is recorded as unsupported, never dropped;
   - parameters: `ParameterSymbol` (name, type, local flag) and `TypeParameterSymbol` (name, local flag);
   - children: `InstanceSymbol` (instance name, definition name, body), `UninstantiatedDefSymbol` (instance name, definition name), and the members of instantiated `GenerateBlockSymbol`s and valid `GenerateBlockArraySymbol`s, flattened into the body with a hierarchical prefix. A loop generate element's prefix is `name[index]` with the genvar value (`arrayIndex`). Each element of an `InstanceArraySymbol` is a child named by the array and its indices as declared, `u[3]`, or `u[1][0]` for a multi-dimensional array;
-  - with `WithSignals`, `NetSymbol` and `VariableSymbol` (name, Slang's display of the type, `getBitstreamWidth()`).
+  - with `WithSignals`, `NetSymbol` and `VariableSymbol` among the body's direct members (name, Slang's display of the type, `getBitstreamWidth()`); ports appear as their internal symbols, and members of generate blocks are not included.
 - **Packages.** The `PackageSymbol` members of `root.compilationUnits`: value parameters (name, value as `toString(SVInt::MAX_BITS, true, true)`, the serializer's form) and `TypeAliasType` members (name, target type, and the alias printed by Slang's type printer with `skipTypeDefs` off, such as `struct packed{logic[1:0] a;}my_pkg::my_struct_t`).
 
 **Locations** are those of the JSON source info: the file name and line of the symbol's fully expanded location (`getFileName`, `getLineNumber`, so `` `line `` directives apply), the column of its raw location (`getColumnNumber`, 0 inside a macro, which becomes `None`). File names are made absolute with `absolute_path`, except pseudo-files such as `<command-line>`.
@@ -201,7 +201,7 @@ impl Design {
 
 ### `slang-rs`
 
-`SlangOutput` holds `design: Design` in place of the AST. `run_slang` returns it when the design elaborated without errors. `run_slang_keep_design` returns it whenever a compilation was created, with `ok` false after errors; every declared member is kept, and members whose types Slang could not resolve are unsupported. It returns the failure when no compilation was created (failed options, a missing source), so S0102 still reports Slang's text. `check_slang` is unchanged. `extract_packages` runs Slang and returns `packages()`.
+`SlangOutput` holds `design: Design` in place of the AST. `run_slang` returns it when the design elaborated without errors. `run_slang_keep_design` returns it whenever a compilation was created, with `ok` false after errors; every declared member is kept, and members whose types Slang could not resolve are unsupported. It returns the failure when no compilation was created (failed options, a missing source), so S0102 still reports Slang's text. `check_slang` is unchanged. `SlangConfig::signals` (default false) makes `run_slang` and `run_slang_keep_design` request `DesignQuery::WithSignals`, so that `Design::signals` answers. `extract_packages` runs Slang and returns `packages()`.
 
 `slang-rs` has no JSON AST, `TypeResolver`, type grammar or literal parsing, and depends on neither `serde`, `serde_json`, `serde_stacker`, `pest`, `pest_derive` nor `regex`. The shim does not call `ASTSerializer`.
 
