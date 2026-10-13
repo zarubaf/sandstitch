@@ -1,6 +1,6 @@
 # Connection contract and structural snapshot
 
-Status: proposed, 2026-10-13. Tracks #6 (milestone 2). The serialized schema (JSON Schema and TypeScript types derived from the Rust types) belongs to #8, where the browser consumer lives.
+Status: accepted, 2026-10-13. Tracks #6 (milestone 2). The serialized schema (JSON Schema and TypeScript types derived from the Rust types) belongs to #8, where the browser consumer lives.
 
 ## Goal
 
@@ -127,7 +127,7 @@ The pass compares every two distinct `ModDef`s that share a `DefKey`. Opaque def
 
 Sub-issues of #6, landed in order:
 
-1. Resolver and design pass extracted from the emitter, with nets, drivers and emitted names; RTL checker; contract tests on emitted RTL for bit ranges, fan-out, constants and hierarchy. No behavior change: connection errors still panic with their current messages.
-1. Diagnostics S0401 to S0407 and S0409, `ObjectRef` and call-site spans; identical repeated connections ignored; contract test for open and unused.
+1. Resolver and design pass extracted from the emitter, yielding segments (net slices, constants, unused) that the emitter consumes; RTL checker; contract tests on emitted RTL for bit ranges, fan-out, constants and hierarchy. No behavior change: connection errors still panic with their current messages.
+1. Components, drivers and nets; `check()` consumes the pass; diagnostics S0401 to S0407 and S0409, `ObjectRef` and call-site spans; identical repeated connections ignored; contract test for open and unused.
 1. `DefKey`, `Snapshot`, `elaborate()`, `SCHEMA_VERSION` and `trace()`; contract tests extended to the snapshot.
 1. Coexisting definitions and S0408.
