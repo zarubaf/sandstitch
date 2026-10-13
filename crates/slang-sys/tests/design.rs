@@ -235,6 +235,79 @@ fn enum_with_xz_is_unsupported() {
     assert_eq!(port.type_text, "e_t");
 }
 
+/// Elaborate `text`, which must report errors: the response, with its design.
+fn failing(text: &str, top: &str, query: DesignQuery) -> slang_sys::Response {
+    let mut file = tempfile::Builder::new().suffix(".sv").tempfile().unwrap();
+    file.write_all(text.as_bytes()).unwrap();
+    let r = run(&Request {
+        args: vec![
+            file.path().to_str().unwrap().to_string(),
+            "--top".to_string(),
+            top.to_string(),
+        ],
+        stage: Stage::Elaborate,
+        design: query,
+    })
+    .unwrap();
+    assert!(!r.ok);
+    r
+}
+
+fn assert_undeclared(r: &slang_sys::Response) {
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|d| d.code == "UndeclaredIdentifier"),
+        "{}",
+        r.rendered
+    );
+}
+
+#[test]
+fn enum_value_that_failed_to_evaluate_is_unsupported() {
+    let r = failing(
+        "package p; typedef enum logic [1:0] {IDLE = 2'b00, BUSY = UNDEF} state_e; endpackage\n\
+         module top #(parameter p::state_e P = p::IDLE) (input p::state_e s, input enum logic [1:0] {A = UNDEF} e, input logic ok);\n\
+         endmodule\n",
+        "top",
+        DesignQuery::WithSignals,
+    );
+    assert_undeclared(&r);
+    let design = r.design.expect("a design after errors");
+    let ports = design.ports("top").unwrap();
+    let error = "enum values that are not constant integers are not supported";
+    assert_eq!(unsupported(ports, "s").error, error);
+    assert_eq!(unsupported(ports, "s").type_text, "p::state_e");
+    assert_eq!(unsupported(ports, "e").error, error);
+    assert!(unsupported(ports, "e").type_text.starts_with("enum"));
+    assert!(
+        ports
+            .iter()
+            .any(|p| p.as_ref().is_ok_and(|p| p.name == "ok"))
+    );
+    assert_eq!(design.parameters("top").unwrap(), []);
+    assert_eq!(
+        design.overridable_parameters("top").unwrap(),
+        [("P".to_string(), ParameterKind::Value)]
+    );
+    assert_eq!(design.signals("top").unwrap().len(), 3);
+}
+
+#[test]
+fn enum_value_failure_in_signal_types() {
+    let r = failing(
+        "package p; typedef enum logic [1:0] {IDLE = 2'b00, BUSY = UNDEF} state_e; endpackage\n\
+         module top; p::state_e v; enum {B = UNDEF} w; endmodule\n",
+        "top",
+        DesignQuery::WithSignals,
+    );
+    assert_undeclared(&r);
+    let design = r.design.expect("a design after errors");
+    let signals = design.signals("top").unwrap();
+    assert_eq!(signals[0].type_text, "p::state_e");
+    assert!(signals[1].type_text.starts_with("enum{"), "{signals:?}");
+}
+
 #[test]
 fn unpacked_struct_port() {
     let ports = ports(
@@ -512,6 +585,20 @@ fn child_instances_lists_instantiated_children_outside_generate_blocks() {
     assert_eq!(design.child_instances("top.a"), Some(vec![]));
     assert_eq!(design.child_instances("top.m"), None);
     assert_eq!(design.child_instances("nope"), None);
+}
+
+#[test]
+fn escaped_instance_name_with_a_dot_has_no_path() {
+    let design = design(
+        "module leaf; endmodule\n\
+         module top; leaf \\u.x (); leaf v(); endmodule\n",
+        "top",
+        &[],
+    );
+    // Listed under Slang's name, but a path segment cannot contain a dot.
+    assert_eq!(design.child_instances("top"), Some(vec!["u.x", "v"]));
+    assert!(design.ports("top.u.x").is_none());
+    assert!(design.ports("top.v").is_some());
 }
 
 #[test]

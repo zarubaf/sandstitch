@@ -111,7 +111,9 @@ impl Design {
     ///
     /// `path` is a top's name, or that followed by dot-separated instance
     /// names through children outside generate blocks; an instance array
-    /// element is named as declared (`top.u[3]`).
+    /// element is named as declared (`top.u[3]`). A segment cannot contain a
+    /// `.`, so an instance with an escaped name that does (`\u.x `) has no
+    /// path.
     pub fn ports(&self, path: &str) -> Option<&[Result<Port, UnsupportedPort>]> {
         self.body(path).map(|b| b.ports.as_slice())
     }
@@ -139,10 +141,13 @@ impl Design {
     }
 
     /// The names of the instantiated children of the instance at `path`
-    /// that are outside generate blocks, in the order Slang lists them; each is a
-    /// valid last segment of a path below `path`. An instance array element
-    /// is named as declared (`u[3]`). Instances of undefined modules are
-    /// not listed. `None` when `path` names no instantiated instance.
+    /// that are outside generate blocks, in the order Slang lists them; each
+    /// is a valid last segment of a path below `path`, except a name that
+    /// contains a `.` (an escaped name such as `\u.x `), which is listed but
+    /// not reachable by [`ports`](Self::ports) and the other path queries.
+    /// An instance array element is named as declared (`u[3]`). Instances of
+    /// undefined modules are not listed. `None` when `path` names no
+    /// instantiated instance.
     pub fn child_instances(&self, path: &str) -> Option<Vec<&str>> {
         self.body(path).map(|b| {
             b.children
