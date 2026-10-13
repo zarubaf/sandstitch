@@ -69,6 +69,9 @@ codes! {
     /// Inout conflict: several definition inouts on one net, or a definition
     /// inout with a definition input or output.
     S0406;
+    /// Two different nets that the emitted module would declare under one
+    /// name.
+    S0407;
     /// A connection between bits already joined by other connections, other
     /// than an identical repeat.
     S0409;

@@ -2,17 +2,22 @@
 
 //! Resolution of one definition's own connections.
 
+use std::cmp::Reverse;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
 
 use super::component::components;
-use super::{EndResolution, NetSlice, Resolution, Segment, Source};
+use super::{EndResolution, Net, NetName, NetSlice, Resolution, Segment, Source};
 use crate::check::connection::check_for_gaps;
+use crate::diagnostic::codes;
 use crate::model::connection::connected_item::ConnectedItem;
 use crate::model::connection::expression_source::merge_expression_sources;
+use crate::model::connection::port_slice::CallSite;
 use crate::model::connection::port_slice::PortSliceConnections;
-use crate::{Diagnostic, IO, ModDefCore};
+use crate::{Diagnostic, IO, Label, ModDefCore, ObjectRef, Port, Severity};
 
 type Connections = Arc<RwLock<PortSliceConnections>>;
 
@@ -37,10 +42,11 @@ pub(crate) fn resolve_def(core: &Arc<RwLock<ModDefCore>>) -> (Resolution, Vec<Di
             instances: Vec::new(),
             ports: Vec::new(),
             components,
+            nets: Vec::new(),
         };
         return (resolution, diagnostics);
     }
-    let (def_name, instance_jobs, port_jobs) = {
+    let (def_name, instance_jobs, port_jobs, def_ports) = {
         let core = core.read();
         let instance_jobs: Vec<(String, Vec<PortJob>)> = core
             .instances
@@ -69,10 +75,15 @@ pub(crate) fn resolve_def(core: &Arc<RwLock<ModDefCore>>) -> (Resolution, Vec<Di
                 connections: core.mod_def_connections.get(port_name).cloned(),
             })
             .collect();
-        (core.name.clone(), instance_jobs, port_jobs)
+        let def_ports: Vec<(String, usize)> = core
+            .ports
+            .iter()
+            .map(|(name, io)| (name.clone(), io.width()))
+            .collect();
+        (core.name.clone(), instance_jobs, port_jobs, def_ports)
     };
 
-    let instances = instance_jobs
+    let instances: Vec<Vec<EndResolution>> = instance_jobs
         .into_iter()
         .map(|(inst_name, jobs)| {
             jobs.into_iter()
@@ -83,19 +94,175 @@ pub(crate) fn resolve_def(core: &Arc<RwLock<ModDefCore>>) -> (Resolution, Vec<Di
                 .collect()
         })
         .collect();
-    let ports = port_jobs
+    let ports: Vec<EndResolution> = port_jobs
         .into_iter()
         .map(|job| {
             let debug = format!("{def_name}.{}", job.name);
             resolve_end(job, &debug)
         })
         .collect();
+    let nets = declared_nets(&def_ports, &instances, &ports);
     let resolution = Resolution {
         instances,
         ports,
         components,
+        nets,
     };
+    let diagnostics = net_name_collisions(core, &resolution.nets);
     (resolution, diagnostics)
+}
+
+/// The nets emission declares, in order of first use: the definition's
+/// ports, then what the segments of every instance end and then of every
+/// definition port read. A net that no segment reads is not declared.
+fn declared_nets(
+    def_ports: &[(String, usize)],
+    instances: &[Vec<EndResolution>],
+    ports: &[EndResolution],
+) -> Vec<Net> {
+    let mut nets: Vec<Net> = Vec::new();
+    let mut seen: HashSet<NetName> = HashSet::new();
+    let mut add = |name: NetName, width: usize| {
+        if seen.insert(name.clone()) {
+            nets.push(Net { name, width });
+        }
+    };
+    for (name, width) in def_ports {
+        add(NetName::DefPort(name.clone()), *width);
+    }
+    // An instance end that is only marked unused declares no net; one that
+    // also has other segments declares the net of its own port for the
+    // unused bits. A definition port never declares one for them.
+    let ends = instances
+        .iter()
+        .flatten()
+        .map(|end| (end, true))
+        .chain(ports.iter().map(|end| (end, false)));
+    for (end, instance) in ends {
+        let has_net = end
+            .segments
+            .iter()
+            .any(|s| !matches!(s.source, Source::Unused));
+        for segment in &end.segments {
+            match &segment.source {
+                Source::Net(NetSlice::Port(slice)) => {
+                    add(of_port(&slice.port), slice.port.io().width());
+                }
+                Source::Net(NetSlice::Wire(wire)) => {
+                    add(NetName::Wire(wire.name.clone()), wire.width);
+                }
+                Source::Unused if instance && has_net => {
+                    add(of_port(&segment.this.port), segment.this.port.io().width());
+                }
+                Source::Unused | Source::Constant(_) => {}
+            }
+        }
+    }
+    nets
+}
+
+/// The net named after `port`.
+fn of_port(port: &Port) -> NetName {
+    match port.inst_name() {
+        Some(inst) => NetName::InstPort(inst.to_string(), port.get_port_name()),
+        None => NetName::DefPort(port.get_port_name()),
+    }
+}
+
+/// S0407 for every net whose emitted name an earlier net already has.
+fn net_name_collisions(core: &Arc<RwLock<ModDefCore>>, nets: &[Net]) -> Vec<Diagnostic> {
+    let mut first: HashMap<String, &NetName> = HashMap::new();
+    let mut collisions = Vec::new();
+    for net in nets {
+        match first.entry(net.name.emitted()) {
+            Entry::Vacant(entry) => {
+                entry.insert(&net.name);
+            }
+            Entry::Occupied(entry) => collisions.push((*entry.get(), net)),
+        }
+    }
+    if collisions.is_empty() {
+        return Vec::new();
+    }
+
+    // The `specify_net_name` calls, by net name, with the end each was made on.
+    let core = core.read();
+    let mut wires: HashMap<String, (String, String, usize, CallSite)> = HashMap::new();
+    for (inst_name, connections) in &core.mod_inst_connections {
+        for (port_name, connections) in connections {
+            for c in connections.read().into_iter() {
+                if let ConnectedItem::Wire(wire) = &c.other {
+                    wires.insert(
+                        wire.name.clone(),
+                        (
+                            inst_name.clone(),
+                            port_name.clone(),
+                            c.this.port.io().width(),
+                            c.site.clone(),
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    let describe = |name: &NetName| match name {
+        NetName::DefPort(port) => format!("definition port `{port}`"),
+        NetName::InstPort(inst, port) => format!("the net of `{inst}.{port}`"),
+        NetName::Wire(wire) => format!("net name `{wire}`"),
+    };
+    collisions
+        .into_iter()
+        .map(|(earlier, later)| {
+            let (end, width) = match &later.name {
+                NetName::DefPort(port) => (port.clone(), later.width),
+                NetName::InstPort(inst, port) => (format!("{inst}.{port}"), later.width),
+                NetName::Wire(wire) => {
+                    let (inst, port, width, _) = &wires[wire];
+                    (format!("{inst}.{port}"), *width)
+                }
+            };
+            let mut sites: Vec<&CallSite> = [earlier, &later.name]
+                .into_iter()
+                .filter_map(|name| match name {
+                    NetName::Wire(wire) => Some(&wires[wire].3),
+                    _ => None,
+                })
+                .collect();
+            sites.sort_by_key(|site| Reverse(site.seq));
+            let mut labels = sites.into_iter().map(|site| Label {
+                span: site.span.clone(),
+                text: "net named here".into(),
+            });
+            let primary = labels.next().unwrap_or_else(|| Label {
+                span: core.span.clone(),
+                text: "defined here".into(),
+            });
+            Diagnostic {
+                code: codes::S0407,
+                severity: Severity::Error,
+                message: format!(
+                    "net name `{}` is used by both {} and {}",
+                    later.name.emitted(),
+                    describe(earlier),
+                    describe(&later.name)
+                ),
+                primary,
+                secondary: labels.collect(),
+                notes: Vec::new(),
+                helps: vec![
+                    "rename a port, or give one of the nets another name with `specify_net_name`"
+                        .into(),
+                ],
+                object: Some(ObjectRef {
+                    definition: core.name.clone(),
+                    end,
+                    msb: width - 1,
+                    lsb: 0,
+                }),
+            }
+        })
+        .collect()
 }
 
 /// The segments of one end; `debug` names it in panic messages.
@@ -138,7 +305,7 @@ fn resolve_end(job: PortJob, debug: &str) -> EndResolution {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{NetSlice, Source};
+    use super::super::{NetName, NetSlice, Source};
     use super::resolve_def;
     use crate::diagnostic::codes;
     use crate::{IO, ModDef, ModInst, Usage};
@@ -265,5 +432,107 @@ mod tests {
             ]
         );
         assert!(resolution.instances.is_empty() && resolution.ports.is_empty());
+    }
+
+    /// A definition `name` with one port per `(port, io)`.
+    fn module(name: &str, ports: &[(&str, IO)]) -> ModDef {
+        let module = ModDef::new(name);
+        for (port, io) in ports {
+            module.add_port(*port, io.clone());
+        }
+        module.set_usage(Usage::EmitNothingAndStop);
+        module
+    }
+
+    fn net_names(resolution: &super::super::Resolution) -> Vec<NetName> {
+        resolution.nets.iter().map(|n| n.name.clone()).collect()
+    }
+
+    #[test]
+    fn split_bus_is_one_net() {
+        let a = module("a", &[("o", IO::Output(8))]);
+        let b = module("b", &[("i", IO::Input(4))]);
+        let c = module("c", &[("i", IO::Input(4))]);
+        let top = ModDef::new("t");
+        let a = top.instantiate(&a, Some("a"), None);
+        let b = top.instantiate(&b, Some("b"), None);
+        let c = top.instantiate(&c, Some("c"), None);
+        a.get_port("o").slice(7, 4).connect(&b.get_port("i"));
+        a.get_port("o").slice(3, 0).connect(&c.get_port("i"));
+
+        let (resolution, diagnostics) = resolve_def(&top.core);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(
+            net_names(&resolution),
+            [NetName::InstPort("a".into(), "o".into())]
+        );
+        assert_eq!(resolution.nets[0].width, 8);
+    }
+
+    #[test]
+    fn wire_named_like_a_port_is_s0407() {
+        let (top, a, b, u) = top();
+        top.add_port("y", IO::Output(8)).tieoff(0);
+        a.get_port("o").connect(&u.get_port("dst"));
+        a.get_port("o").specify_net_name("y");
+        b.get_port("o").unused();
+
+        let (_, diagnostics) = resolve_def(&top.core);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        let d = &diagnostics[0];
+        assert_eq!(d.code, codes::S0407);
+        assert_eq!(
+            d.message,
+            "net name `y` is used by both definition port `y` and net name `y`"
+        );
+        let o = d.object.as_ref().unwrap();
+        assert_eq!(
+            (o.definition.as_str(), o.end.as_str(), o.msb, o.lsb),
+            ("t", "a.o", 7, 0)
+        );
+        assert_eq!(d.primary.text, "net named here");
+        assert!(d.secondary.is_empty());
+    }
+
+    #[test]
+    fn auto_names_collide() {
+        let a = module("a", &[("b_c", IO::Output(8))]);
+        let ab = module("ab", &[("c", IO::Output(8))]);
+        let u = module("u", &[("d", IO::Input(8)), ("e", IO::Input(8))]);
+        let top = ModDef::new("t");
+        let a = top.instantiate(&a, Some("a"), None);
+        let ab = top.instantiate(&ab, Some("a_b"), None);
+        let u = top.instantiate(&u, Some("u"), None);
+        a.get_port("b_c").connect(&u.get_port("d"));
+        ab.get_port("c").connect(&u.get_port("e"));
+
+        let (_, diagnostics) = resolve_def(&top.core);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        let d = &diagnostics[0];
+        assert_eq!(d.code, codes::S0407);
+        assert_eq!(
+            d.message,
+            "net name `a_b_c` is used by both the net of `a.b_c` and the net of `a_b.c`"
+        );
+        let o = d.object.as_ref().unwrap();
+        assert_eq!((o.end.as_str(), o.msb, o.lsb), ("a_b.c", 7, 0));
+        assert_eq!(d.primary.text, "defined here");
+    }
+
+    #[test]
+    fn unchosen_source_does_not_collide() {
+        let inout = |name: &str, port: &str| module(name, &[(port, IO::InOut(1))]);
+        let top = ModDef::new("t");
+        let a = top.instantiate(&inout("a", "b_c_d_e"), Some("a"), None);
+        let a_b = top.instantiate(&inout("a_b", "c_d_e"), Some("a_b"), None);
+        let a_b_c = top.instantiate(&inout("a_b_c", "d_e"), Some("a_b_c"), None);
+        let a_b_c_d = top.instantiate(&inout("a_b_c_d", "e"), Some("a_b_c_d"), None);
+        a.get_port("b_c_d_e").connect(&a_b.get_port("c_d_e"));
+        a.get_port("b_c_d_e").specify_net_name("xyz");
+        a_b_c.get_port("d_e").connect(&a_b_c_d.get_port("e"));
+
+        let (resolution, diagnostics) = resolve_def(&top.core);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(resolution.nets.len(), 2);
     }
 }
