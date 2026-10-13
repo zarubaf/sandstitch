@@ -306,6 +306,35 @@ endmodule
     assert_eq!(names, vec!["x".to_string()]);
 }
 
+#[test]
+fn unsupported_ports_are_reported_by_their_reason() {
+    let sources = Sources::new(&[
+        "module u (z, .p({a, b}), x); input z; input a, b; input real x; endmodule\n",
+    ]);
+    let err = sources.import("u").err().expect("the ports are rejected");
+    let diagnostics = &err.diagnostics.0;
+    assert_eq!(diagnostics.len(), 2, "{err}");
+    assert_eq!(diagnostics[0].code, codes::S0103);
+    assert_eq!(
+        diagnostics[0].message,
+        "port `p` of `u` connects several signals"
+    );
+    assert_eq!(
+        diagnostics[0].primary.text,
+        "ports that connect several signals are not supported"
+    );
+    assert_eq!(diagnostics[0].helps, ["declare one port per signal"]);
+    // A port of an unsupported type keeps the type wording and help.
+    assert_eq!(
+        diagnostics[1].message,
+        "port `x` of `u` has unsupported type `real`"
+    );
+    assert_eq!(
+        diagnostics[1].helps,
+        ["use a packed integral type (logic, bit, int, packed struct, enum)"]
+    );
+}
+
 const IFACE_MODULE: &str = "
 module i (
   bus_if.mst m_if,

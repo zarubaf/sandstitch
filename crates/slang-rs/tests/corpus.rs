@@ -15,8 +15,8 @@ use slang_rs::*;
 
 const EXCLUDED_DIRS: &[&str] = &["deprecated", "test", "tb", "formal", "synth"];
 
-/// Elaboration budget of the whole test; the spec's is 30 s.
-const TIME_LIMIT: Duration = Duration::from_secs(60);
+/// Elaboration budget of the whole test (the spec's).
+const TIME_LIMIT: Duration = Duration::from_secs(30);
 
 // Lower bounds on the answered tops defined in each library's own
 // directory, a few below the first run.
@@ -260,8 +260,8 @@ fn answer_all(design: &Design, path: &str) -> usize {
 
 /// Checks the hierarchy below `node` and returns the number of instances in
 /// it. `path` is the node's instance path, `None` for an instance without
-/// one: below a generate block or of an undefined module. Everything reachable by path must agree with the child
-/// lists.
+/// one: below a generate block or of an undefined module. Everything
+/// reachable by path must agree with the child lists.
 fn check_tree(design: &Design, path: Option<&str>, node: &Instance) -> usize {
     let at = path.unwrap_or("<generate>");
     let mut seen = BTreeSet::new();

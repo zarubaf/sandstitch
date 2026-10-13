@@ -151,27 +151,8 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
   used (`curl`, `toml`, `semver`, `cargo_metadata`, `log`, `env_logger`);
   `[lints.clippy]` allows `collapsible_if`, `unneeded_wildcard_pattern` and
   `while_let_loop` for pre-existing upstream code.
-- Sandstitch extensions (made on the upstream JSON extractors; the functions
-  named below no longer exist, and `Design` answers the same questions, see
-  `doc/design/slang-in-process.md`):
-  - `feat(slang-rs): resolve type parameters, add locations and interface ports`.
-  - `feat(slang-rs): parse integral atom types, keep enum and struct signedness
-    and list unparsable ports`: the grammar accepts `byte`, `shortint`,
-    `integer`, `time` and `struct|union packed signed|unsigned`;
-    `Type::Struct::signed`, `Type::Union::signed` and `Variant::signed`;
-    `is_aggregate` recognizes signed aggregates, so a named signed struct
-    resolves to its typedef name (`sp::s_t`, not `sp::s$3`); `UnsupportedPort`
-    and `extract_instance_ports_checked_from_value`; `absolute_path` is public.
-  - `feat(slang-rs): list overridable parameters, instance parameter defs,
-    version`: `ParameterKind`, `extract_overridable_parameters_from_value`,
-    `extract_instance_parameter_defs_from_value`, `slang_version`.
-  - `fix(slang-rs): name array typedefs by their element type`.
-  - `feat(slang-rs): keep the AST of a failed run` and `fix(slang-rs): read a
-    failed run's AST only on request, add check_slang`: `run_slang_keep_ast`,
-    `check_slang`.
-  - `feat(slang-rs): record whether structs and unions are packed`:
-    `Type::Struct::packed`, `Type::Union::packed` (the expected values in
-    the upstream `tests/test.rs` gain the field).
+- Sandstitch extensions: replaced by the typed design, see
+  `doc/design/slang-in-process.md`.
 
 ### xlsynth-vast (vendored)
 
