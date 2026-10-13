@@ -510,6 +510,7 @@ mod tests {
                         child("u", "", Some(0)),
                         child("a[1]", "", Some(0)),
                         child("u", "g", Some(0)),
+                        child("v", "g", Some(0)),
                         child("gone", "", None),
                     ],
                     ..Default::default()
@@ -526,6 +527,7 @@ mod tests {
         assert_eq!(design.ports("t.u").unwrap().len(), 1);
         assert_eq!(design.ports("t.a[1]").unwrap().len(), 1);
         assert!(design.ports("t.g.u").is_none());
+        assert!(design.ports("t.v").is_none());
         assert!(design.ports("t.x").is_none());
         assert!(design.ports("t.gone").is_none());
         assert!(design.interface_ports("t.u").is_some());
