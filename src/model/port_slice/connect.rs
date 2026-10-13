@@ -74,6 +74,7 @@ impl PortSlice {
     /// Connects this `PortSlice` to `other`, consuming both sides from LSB to
     /// MSB as an ordered stream of bits. Any unconsumed remainder on either
     /// side is marked with `unused_or_tieoff(0)`.
+    #[track_caller]
     pub fn todo_jam_connect<T: ConvertibleToPortSliceVec>(&self, other: &T) {
         let left = self.to_port_slice_vec();
         let right = other.to_port_slice_vec();

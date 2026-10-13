@@ -118,6 +118,20 @@ fn s0209_points_at_the_caller() {
     let a = top.instantiate(&node, Some("a"), None);
     let b = top.instantiate(&node, Some("b"), None);
     let (la, lb) = (a.get_intf("link"), b.get_intf("link"));
+    let fresh_port = || {
+        let n = top.get_ports(None).len();
+        top.add_port(format!("p{n}"), IO::Input(8))
+    };
+    let funnel = || {
+        let port = |io: IO| {
+            let n = top.get_ports(None).len();
+            top.add_port(format!("f{n}"), io)
+        };
+        Funnel::new(
+            (port(IO::Input(8)), port(IO::Output(8))),
+            (port(IO::Input(8)), port(IO::Output(8))),
+        )
+    };
     let calls: Vec<Call> = vec![
         (
             "set_max_distance",
@@ -130,7 +144,6 @@ fn s0209_points_at_the_caller() {
         ),
         ("place_across", Box::new(|| la.place_across())),
         ("place_abutted", Box::new(|| la.place_abutted())),
-        ("todo_jam_connect", Box::new(|| la.todo_jam_connect(&lb))),
         (
             "width",
             Box::new(|| {
@@ -139,16 +152,44 @@ fn s0209_points_at_the_caller() {
         ),
         (
             "connect_intf",
+            Box::new(|| funnel().connect_intf(&la, &lb, false)),
+        ),
+        (
+            "crossover_intf",
+            Box::new(|| funnel().crossover_intf(&la, &lb, "(.*)", "(.*)")),
+        ),
+        ("todo_jam_connect", Box::new(|| la.todo_jam_connect(&lb))),
+        (
+            "Port::todo_jam_connect",
+            Box::new(|| fresh_port().todo_jam_connect(&la)),
+        ),
+        (
+            "PortSlice::todo_jam_connect",
+            Box::new(|| fresh_port().to_port_slice().todo_jam_connect(&la)),
+        ),
+        (
+            "todo_jam_connect of a Vec",
+            Box::new(|| fresh_port().todo_jam_connect(&vec![la.clone()])),
+        ),
+        (
+            "place_across_from_except",
+            Box::new(|| la.place_across_from_except(&lb, false, None::<&[&str]>)),
+        ),
+        (
+            "place_overlapped",
             Box::new(|| {
-                let port = |name: &str, io: IO| {
-                    top.add_port(format!("{name}_{}", top.get_ports(None).len()), io)
+                let bbox = BoundingBox {
+                    min_x: 0,
+                    min_y: 0,
+                    max_x: 1,
+                    max_y: 1,
                 };
-                Funnel::new(
-                    (port("fa", IO::Input(8)), port("fa", IO::Output(8))),
-                    (port("fb", IO::Input(8)), port("fb", IO::Output(8))),
-                )
-                .connect_intf(&la, &lb, false)
+                la.place_overlapped(&PhysicalPin::new("M1", Polygon::from_bbox(&bbox)))
             }),
+        ),
+        (
+            "place_crossover_from",
+            Box::new(|| la.place_crossover_from(&lb, "(.*)", "(.*)")),
         ),
     ];
     for (what, call) in calls {

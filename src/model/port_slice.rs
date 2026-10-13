@@ -237,6 +237,7 @@ pub trait ConvertibleToPortSlice {
 /// This enables APIs that can operate on a single `Port`/`PortSlice`/`Intf`
 /// or on lists of those values.
 pub trait ConvertibleToPortSliceVec {
+    #[track_caller]
     fn to_port_slice_vec(&self) -> Vec<PortSlice>;
 }
 
