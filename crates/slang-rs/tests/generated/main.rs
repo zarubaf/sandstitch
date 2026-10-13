@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Generated designs: random packages and module hierarchies are printed as
-//! SystemVerilog, elaborated, and every instance's ports compared with what
-//! the model says they are.
+//! SystemVerilog, elaborated, and every instance's ports and parameters compared
+//! with what the model says they are.
 
 mod model;
 mod oracle;
@@ -18,7 +18,7 @@ type Ports = Vec<Result<Port, UnsupportedPort>>;
 
 proptest! {
     #[test]
-    fn generated_ports_match_model(design in strategy::design()) {
+    fn generated_design_matches_model(design in strategy::design()) {
         let sv = print::sv(&design);
         let file = str2tmpfile(&sv).unwrap();
         let path = file.path().to_str().unwrap();
@@ -55,6 +55,18 @@ proptest! {
             prop_assert!(
                 anonymous.same_ports(&path, &expected, &actual),
                 "ports of {path} differ\nexpected: {expected:#?}\nactual: {actual:#?}\n{sv}"
+            );
+            let expected = oracle::parameters(&design, &path);
+            let actual = output.design.parameters(&path);
+            prop_assert!(
+                actual == Some(expected.as_slice()),
+                "parameters of {path} differ\nexpected: {expected:#?}\nactual: {actual:#?}\n{sv}"
+            );
+            let expected = oracle::overridable_parameters(&design, &path);
+            let actual = output.design.overridable_parameters(&path);
+            prop_assert!(
+                actual.as_ref() == Some(&expected),
+                "overridable parameters of {path} differ\nexpected: {expected:?}\nactual: {actual:?}\n{sv}"
             );
         }
     }

@@ -35,6 +35,9 @@ pub struct Module {
     pub ansi: bool,
     pub params: Vec<Param>,
     pub type_params: Vec<TypeParam>,
+    /// Declared in the body, after the header.
+    pub local_params: Vec<LocalParam>,
+    pub local_type_params: Vec<LocalTypeParam>,
     pub typedefs: Vec<Typedef>,
     pub ports: Vec<PortDecl>,
     pub instances: Vec<Instance>,
@@ -53,6 +56,24 @@ pub struct Param {
 pub struct TypeParam {
     pub name: String,
     pub default: DataType,
+}
+
+/// `localparam logic [W-1:0] NAME = '0;`, where `W` is the value parameter
+/// `param` of the module.
+#[derive(Clone, Debug)]
+pub struct LocalParam {
+    pub name: String,
+    /// Index into the module's `params`.
+    pub param: usize,
+}
+
+/// `localparam type NAME = T;`, where `T` is the type parameter `type_param`
+/// of the module.
+#[derive(Clone, Debug)]
+pub struct LocalTypeParam {
+    pub name: String,
+    /// Index into the module's `type_params`.
+    pub type_param: usize,
 }
 
 /// `typedef ty name unpacked;`

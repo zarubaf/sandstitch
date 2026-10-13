@@ -10,7 +10,8 @@ use std::path::Path;
 use num_bigint::{BigInt, BigUint, Sign};
 
 use crate::types::{
-    Field, InterfacePort, Port, PortDir, Range, SourceLoc, Type, UnsupportedPort, Variant,
+    Field, InterfacePort, ParameterDef, ParameterKind, Port, PortDir, Range, SourceLoc, Type,
+    UnsupportedPort, Variant,
 };
 use crate::{Error, absolute_path, ffi};
 
@@ -44,6 +45,10 @@ struct Body {
     /// Data ports in declaration order; unsupported ones as `Err`.
     ports: Vec<Result<Port, UnsupportedPort>>,
     interface_ports: Vec<InterfacePort>,
+    /// Every parameter whose type is supported, localparams included.
+    parameters: Vec<ParameterDef>,
+    /// The non-local parameters, whatever their types.
+    overridable: Vec<(String, ParameterKind)>,
     children: Vec<Child>,
 }
 
@@ -75,6 +80,10 @@ const DATA_PORT: u8 = 0;
 const INTERFACE_PORT: u8 = 1;
 const UNSUPPORTED_PORT: u8 = 2;
 
+// `FfiParameter::kind`.
+const VALUE_PARAMETER: u8 = 0;
+const TYPE_PARAMETER: u8 = 1;
+
 impl Design {
     /// The top-level instances' names (their definitions' names), in the
     /// order Slang reports them.
@@ -98,6 +107,22 @@ impl Design {
     /// [`ports`](Self::ports).
     pub fn interface_ports(&self, path: &str) -> Option<&[InterfacePort]> {
         self.body(path).map(|b| b.interface_ports.as_slice())
+    }
+
+    /// The value parameters of the instance at `path` with their types, in
+    /// declaration order, with the instance's overrides applied. Localparams
+    /// are included; type parameters and parameters whose type is unsupported
+    /// (not integral) are left out. `None` when `path` names no instantiated
+    /// instance; see [`ports`](Self::ports) for `path`.
+    pub fn parameters(&self, path: &str) -> Option<&[ParameterDef]> {
+        self.body(path).map(|b| b.parameters.as_slice())
+    }
+
+    /// The non-local value and type parameters of the instance at `path`,
+    /// whatever their types, in declaration order. `None` when `path` names
+    /// no instantiated instance.
+    pub fn overridable_parameters(&self, path: &str) -> Option<Vec<(String, ParameterKind)>> {
+        self.body(path).map(|b| b.overridable.clone())
     }
 
     /// The names of the instantiated children of the instance at `path`
@@ -366,6 +391,40 @@ pub(crate) fn from_ffi(tables: ffi::FfiDesign, cwd: &Path) -> Result<Design, Err
                 }
             }
         }
+        let mut parameters = Vec::new();
+        let mut overridable = Vec::new();
+        for (i, parameter) in body.parameters.iter().enumerate() {
+            let kind = match parameter.kind {
+                VALUE_PARAMETER => ParameterKind::Value,
+                TYPE_PARAMETER => ParameterKind::Type,
+                kind => {
+                    return Err(bad(
+                        "bodies",
+                        at,
+                        format!("parameter {i} has unknown kind {kind}"),
+                    ));
+                }
+            };
+            if !parameter.is_local {
+                overridable.push((parameter.name.clone(), kind));
+            }
+            if kind == ParameterKind::Value {
+                let ty = check_index(
+                    "bodies",
+                    at,
+                    &format!("parameter {i} type"),
+                    parameter.ty,
+                    types.len(),
+                    None,
+                )?;
+                if let Resolved::Type(ty) = &types[ty] {
+                    parameters.push(ParameterDef {
+                        name: parameter.name.clone(),
+                        ty: ty.clone(),
+                    });
+                }
+            }
+        }
         let mut children = Vec::with_capacity(body.children.len());
         for (i, child) in body.children.iter().enumerate() {
             let body = if child.has_body {
@@ -389,6 +448,8 @@ pub(crate) fn from_ffi(tables: ffi::FfiDesign, cwd: &Path) -> Result<Design, Err
         bodies.push(Body {
             ports,
             interface_ports,
+            parameters,
+            overridable,
             children,
         });
     }
@@ -456,6 +517,27 @@ mod tests {
         });
         assert!(
             msg.contains("bodies[0]") && msg.contains("type index 1"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_parameter_type_out_of_range() {
+        let msg = message(ffi::FfiDesign {
+            types: vec![logic()],
+            bodies: vec![ffi::FfiBody {
+                parameters: vec![ffi::FfiParameter {
+                    name: "p".into(),
+                    kind: VALUE_PARAMETER,
+                    is_local: false,
+                    ty: 1,
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        assert!(
+            msg.contains("bodies[0]") && msg.contains("parameter 0 type index 1"),
             "{msg}"
         );
     }

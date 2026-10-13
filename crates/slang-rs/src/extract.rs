@@ -380,18 +380,55 @@ pub fn extract_overridable_parameters_from_value(
 ) -> HashMap<String, Vec<(String, ParameterKind)>> {
     let type_resolver = TypeResolver::new(value);
     top_level_bodies(value, &type_resolver)
-        .map(|(module_name, body)| {
-            let parameters = MemberIter::new(body, &["Parameter", "TypeParameter"])
-                .filter(|member| member["isLocal"].as_bool() != Some(true))
-                .filter_map(|member| {
-                    let kind = match member["kind"].as_str() {
-                        Some("TypeParameter") => ParameterKind::Type,
-                        _ => ParameterKind::Value,
-                    };
-                    Some((member["name"].as_str()?.to_string(), kind))
-                })
-                .collect();
-            (module_name.to_string(), parameters)
+        .map(|(module_name, body)| (module_name.to_string(), body_overridable_parameters(body)))
+        .collect()
+}
+
+/// The overridable parameters of the instance at `path`, with a resolver
+/// built once for `value`. `None` if no such instance exists.
+#[cfg(feature = "differential")]
+pub(crate) fn extract_instance_overridable_parameters_with(
+    type_resolver: &TypeResolver,
+    value: &Value,
+    path: &str,
+) -> Option<Vec<(String, ParameterKind)>> {
+    let body = find_instance_body(value, type_resolver, path)?;
+    Some(body_overridable_parameters(body))
+}
+
+/// The value parameters of the instance at `path` that
+/// [`extract_instance_parameter_defs_with`] skips, as `(name, type text)`.
+/// `None` if no such instance exists.
+#[cfg(feature = "differential")]
+pub(crate) fn instance_unparsed_parameters_with(
+    type_resolver: &TypeResolver,
+    value: &Value,
+    path: &str,
+) -> Option<Vec<(String, String)>> {
+    let body = find_instance_body(value, type_resolver, path)?;
+    let type_parameters = type_resolver.type_parameters(body);
+    Some(
+        MemberIter::new(body, &["Parameter"])
+            .filter_map(|member| {
+                let type_str =
+                    type_resolver.resolve_with(member["type"].as_str().unwrap(), &type_parameters);
+                parse_type_definition_no_error(&type_str)
+                    .is_err()
+                    .then(|| Some((member["name"].as_str()?.to_string(), type_str)))?
+            })
+            .collect(),
+    )
+}
+
+fn body_overridable_parameters(body: &Value) -> Vec<(String, ParameterKind)> {
+    MemberIter::new(body, &["Parameter", "TypeParameter"])
+        .filter(|member| member["isLocal"].as_bool() != Some(true))
+        .filter_map(|member| {
+            let kind = match member["kind"].as_str() {
+                Some("TypeParameter") => ParameterKind::Type,
+                _ => ParameterKind::Value,
+            };
+            Some((member["name"].as_str()?.to_string(), kind))
         })
         .collect()
 }
@@ -405,8 +442,17 @@ pub fn extract_instance_parameter_defs_from_value(
     value: &Value,
     path: &str,
 ) -> Option<Vec<ParameterDef>> {
-    let type_resolver = TypeResolver::new(value);
-    let body = find_instance_body(value, &type_resolver, path)?;
+    extract_instance_parameter_defs_with(&TypeResolver::new(value), value, path)
+}
+
+/// [`extract_instance_parameter_defs_from_value`] with a resolver built once
+/// for `value`.
+pub(crate) fn extract_instance_parameter_defs_with(
+    type_resolver: &TypeResolver,
+    value: &Value,
+    path: &str,
+) -> Option<Vec<ParameterDef>> {
+    let body = find_instance_body(value, type_resolver, path)?;
     let type_parameters = type_resolver.type_parameters(body);
     Some(
         MemberIter::new(body, &["Parameter"])
