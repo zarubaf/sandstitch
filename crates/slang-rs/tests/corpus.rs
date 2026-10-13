@@ -159,6 +159,14 @@ fn answer_all(design: &Design, path: &str) -> usize {
             "type parameter {name} listed as a value parameter at {path}"
         );
     }
+    // Every non-local value parameter is listed: the corpus declares none of
+    // an unsupported type.
+    for (name, kind) in &overridable {
+        assert!(
+            *kind != ParameterKind::Value || parameter_names.contains(name.as_str()),
+            "value parameter {name} at {path} is not listed"
+        );
+    }
     let children = design
         .child_instances(path)
         .unwrap_or_else(|| panic!("no children at {path}"));

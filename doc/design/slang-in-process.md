@@ -216,6 +216,7 @@ The JSON path's results differ from the snapshot's in these cases, each a defect
 1. Instance array elements are part of the hierarchy instead of being dropped.
 1. A package alias of a struct, union or enum prints with its package-qualified name (`...}my_pkg::my_struct_t`), as port types are named, instead of the bare alias name.
 1. A typedef that reaches a type parameter through aliases only (`typedef T tt;`, `typedef tt tt2;`) names the struct, union or enum the parameter resolves to, as any alias does (`c.tt`), instead of leaving it the parameter value's name.
+1. A value parameter whose type is a type parameter, or a typedef of one (`parameter T P = '0`), is listed by `parameters` with the type the type parameter resolves to, instead of being dropped.
 
 ### Migration
 

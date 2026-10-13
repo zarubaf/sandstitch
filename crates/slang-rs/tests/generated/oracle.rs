@@ -51,7 +51,8 @@ pub fn ports(design: &Design, path: &str) -> Vec<Result<Port, UnsupportedPort>> 
 }
 
 /// The value parameters of the instance at `path`, localparams included, in
-/// declaration order: each header parameter is an `int`, each localparam a
+/// declaration order: each header parameter is an `int` or has the type its
+/// type parameter resolves to, each localparam a
 /// `logic` vector as wide as its parameter's value. Type parameters, of
 /// either kind, are not value parameters. Empty if the model has no such
 /// instance.
@@ -69,6 +70,10 @@ pub fn parameters(design: &Design, path: &str) -> Vec<ParameterDef> {
                     unpacked_dimensions: vec![],
                 },
             });
+            let typed = module.typed_params.iter().map(|param| ParameterDef {
+                name: param.name.clone(),
+                ty: env.type_params[param.type_param].clone(),
+            });
             let locals = module.local_params.iter().map(|local| ParameterDef {
                 name: local.name.clone(),
                 ty: Type::Logic {
@@ -80,13 +85,13 @@ pub fn parameters(design: &Design, path: &str) -> Vec<ParameterDef> {
                     unpacked_dimensions: vec![],
                 },
             });
-            header.chain(locals).collect()
+            header.chain(typed).chain(locals).collect()
         })
         .unwrap_or_default()
 }
 
 /// The overridable parameters of the instance at `path`: the header's value
-/// parameters, then its type parameters; localparams are not overridable.
+/// parameters, then its type parameters, then those typed by one; localparams are not overridable.
 pub fn overridable_parameters(design: &Design, path: &str) -> Vec<(String, ParameterKind)> {
     instances(design)
         .into_iter()
@@ -101,7 +106,11 @@ pub fn overridable_parameters(design: &Design, path: &str) -> Vec<(String, Param
                 .type_params
                 .iter()
                 .map(|param| (param.name.clone(), ParameterKind::Type));
-            values.chain(types).collect()
+            let typed = module
+                .typed_params
+                .iter()
+                .map(|param| (param.name.clone(), ParameterKind::Value));
+            values.chain(types).chain(typed).collect()
         })
         .unwrap_or_default()
 }

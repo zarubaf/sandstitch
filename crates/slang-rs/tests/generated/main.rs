@@ -12,7 +12,9 @@ mod strategy;
 use std::collections::HashMap;
 
 use proptest::prelude::*;
-use slang_rs::{Field, Port, SlangConfig, Type, UnsupportedPort, run_slang, str2tmpfile};
+use slang_rs::{
+    Field, ParameterDef, Port, SlangConfig, Type, UnsupportedPort, run_slang, str2tmpfile,
+};
 
 type Ports = Vec<Result<Port, UnsupportedPort>>;
 
@@ -59,7 +61,7 @@ proptest! {
             let expected = oracle::parameters(&design, &path);
             let actual = output.design.parameters(&path);
             prop_assert!(
-                actual == Some(expected.as_slice()),
+                actual.is_some_and(|actual| anonymous.same_parameters(&path, &expected, actual)),
                 "parameters of {path} differ\nexpected: {expected:#?}\nactual: {actual:#?}\n{sv}"
             );
             let expected = oracle::overridable_parameters(&design, &path);
@@ -96,6 +98,19 @@ impl Anonymous {
                 (Err(e), Err(a)) => e == a,
                 _ => false,
             })
+    }
+
+    fn same_parameters(
+        &mut self,
+        path: &str,
+        expected: &[ParameterDef],
+        actual: &[ParameterDef],
+    ) -> bool {
+        expected.len() == actual.len()
+            && expected
+                .iter()
+                .zip(actual)
+                .all(|(e, a)| e.name == a.name && self.same_type(path, &e.ty, &a.ty))
     }
 
     fn same_type(&mut self, path: &str, expected: &Type, actual: &Type) -> bool {
