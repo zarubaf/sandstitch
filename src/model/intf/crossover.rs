@@ -183,6 +183,7 @@ impl Intf {
     }
 }
 
+#[track_caller]
 pub fn find_crossover_matches(
     x: &Intf,
     y: &Intf,

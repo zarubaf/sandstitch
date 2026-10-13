@@ -9,6 +9,7 @@ use crate::model::intf::crossover::find_crossover_matches;
 use crate::{Intf, ModDef, PhysicalPin, PinPlacementError, PortSlice};
 
 impl Intf {
+    #[track_caller]
     pub fn set_max_distance(&self, max_distance: Option<i64>) {
         for (_, port_slice) in self.get_port_slices() {
             port_slice.set_max_distance(max_distance);
@@ -20,6 +21,7 @@ impl Intf {
     /// overlapping member slices are allowed. An empty definition interface is a no-op.
     /// Returns an error for instance interfaces, missing pins, or missing track setup.
     /// If any member bit fails, no reservations are changed.
+    #[track_caller]
     pub fn block_tracks(&self) -> Result<(), PinPlacementError> {
         if !matches!(self, Intf::ModDef { .. }) {
             return Err(PinPlacementError::RequiresModDef);
@@ -32,12 +34,14 @@ impl Intf {
     }
 
     /// Places this interface across from another interface, matching functions
+    #[track_caller]
     pub fn place_across_from(&self, other: &Intf, allow_mismatch: bool) {
         self.place_across_from_generic(other, allow_mismatch, None::<&[&str]>);
     }
 
     /// Places this interface across from another interface, matching functions
     /// by name, skipping the specified functions.
+    #[track_caller]
     pub fn place_across_from_except<'a, I, T>(
         &self,
         other: &Intf,
@@ -52,6 +56,7 @@ impl Intf {
 
     /// Places this interface across from another interface, matching functions
     /// by name. See [`PortSlice::place_across_from`] for placement behavior.
+    #[track_caller]
     fn place_across_from_generic<'a, I, T>(
         &self,
         other: &Intf,
@@ -115,6 +120,7 @@ impl Intf {
 
     /// Places this interface across from ModDef ports it is directly connected
     /// to within the same module.
+    #[track_caller]
     pub fn place_across(&self) {
         for (_, port_slice) in self.get_port_slices() {
             port_slice.place_across();
@@ -122,6 +128,7 @@ impl Intf {
     }
 
     /// Places this interface based on what has been connected to it.
+    #[track_caller]
     pub fn place_abutted(&self) {
         for (_, port_slice) in self.get_port_slices() {
             port_slice.place_abutted();
@@ -131,6 +138,7 @@ impl Intf {
     /// For each port slice in this interface, trace its connectivity to
     /// determine what existing pin it is connected to, and then place a new
     /// pin for the slice that overlaps the connected pin.
+    #[track_caller]
     pub fn place_overlapped(&self, pin: &PhysicalPin) {
         for (_, port_slice) in self.get_port_slices() {
             port_slice.place_overlapped(pin);
@@ -140,6 +148,7 @@ impl Intf {
     /// Places this interface across from another interface using a crossover
     /// matching pattern. Matched functions are found the same way as crossover;
     /// each pair is placed using place_across_from.
+    #[track_caller]
     pub fn place_crossover_from(
         &self,
         other: &Intf,

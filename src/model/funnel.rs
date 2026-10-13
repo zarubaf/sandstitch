@@ -158,6 +158,7 @@ impl Funnel {
         }
     }
 
+    #[track_caller]
     pub fn connect_intf(&mut self, a: &Intf, b: &Intf, allow_mismatch: bool) {
         let a_ports = a.get_port_slices();
         let b_ports = b.get_port_slices();
@@ -193,6 +194,7 @@ impl Funnel {
         }
     }
 
+    #[track_caller]
     pub fn crossover_intf(
         &mut self,
         x: &Intf,

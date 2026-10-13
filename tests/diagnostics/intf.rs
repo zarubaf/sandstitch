@@ -83,3 +83,59 @@ fn s0209_crossover() {
             .crossover(&b.get_intf("link"), "(.*)", "(.*)");
     });
 }
+
+/// A named call that is expected to panic.
+type Call<'a> = (&'static str, Box<dyn Fn() + 'a>);
+
+/// Every operation that reads members by name reports S0209 at its caller.
+#[test]
+fn s0209_points_at_the_caller() {
+    let node = node();
+    let link = link(&node);
+    let top = ModDef::new("top");
+    let a = top.instantiate(&node, Some("a"), None);
+    let b = top.instantiate(&node, Some("b"), None);
+    let (la, lb) = (a.get_intf("link"), b.get_intf("link"));
+    let calls: Vec<Call> = vec![
+        (
+            "set_max_distance",
+            Box::new(|| la.set_max_distance(Some(3))),
+        ),
+        ("block_tracks", Box::new(|| drop(link.block_tracks()))),
+        (
+            "place_across_from",
+            Box::new(|| la.place_across_from(&lb, false)),
+        ),
+        ("place_across", Box::new(|| la.place_across())),
+        ("place_abutted", Box::new(|| la.place_abutted())),
+        ("todo_jam_connect", Box::new(|| la.todo_jam_connect(&lb))),
+        (
+            "width",
+            Box::new(|| {
+                let _ = link.width();
+            }),
+        ),
+        (
+            "connect_intf",
+            Box::new(|| {
+                let port = |name: &str, io: IO| {
+                    top.add_port(format!("{name}_{}", top.get_ports(None).len()), io)
+                };
+                Funnel::new(
+                    (port("fa", IO::Input(8)), port("fa", IO::Output(8))),
+                    (port("fb", IO::Input(8)), port("fb", IO::Output(8))),
+                )
+                .connect_intf(&la, &lb, false)
+            }),
+        ),
+    ];
+    for (what, call) in calls {
+        let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(call)).expect_err(what);
+        let message = payload.downcast::<String>().expect("a String panic");
+        assert!(message.contains("error[S0209]"), "{what}: {message}");
+        assert!(
+            message.contains("tests/diagnostics/intf.rs"),
+            "{what}: {message}"
+        );
+    }
+}

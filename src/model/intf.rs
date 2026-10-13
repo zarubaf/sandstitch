@@ -208,6 +208,7 @@ impl Intf {
 }
 
 impl ConvertibleToPortSliceVec for Intf {
+    #[track_caller]
     fn to_port_slice_vec(&self) -> Vec<PortSlice> {
         self.get_port_slices().into_values().collect()
     }
