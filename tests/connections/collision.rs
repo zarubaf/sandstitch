@@ -89,7 +89,6 @@ endmodule
 }
 
 #[test]
-#[should_panic(expected = "Net name collision")]
 fn test_mod_def_name_collision_with_custom_net_name() {
     let a = ModDef::new("a");
     a.add_port("x", IO::Output(8));
@@ -108,11 +107,18 @@ fn test_mod_def_name_collision_with_custom_net_name() {
     a_inst.get_port("x").connect(&b_inst.get_port("y"));
     a_inst.get_port("x").specify_net_name("custom");
 
-    top.emit(EmitOptions::default());
+    let diagnostics = top.check();
+    assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
+    let d = &diagnostics.0[0];
+    assert_eq!(d.code, diagnostic::codes::S0407);
+    let o = d.object.as_ref().unwrap();
+    assert_eq!(
+        (o.definition.as_str(), o.end.as_str(), o.msb, o.lsb),
+        ("Top", "a_i.x", 7, 0)
+    );
 }
 
 #[test]
-#[should_panic(expected = "Net name collision")]
 fn test_mod_inst_name_collision_with_custom_net_name() {
     let a = ModDef::new("a");
     a.add_port("ix", IO::Input(8));
@@ -133,5 +139,13 @@ fn test_mod_inst_name_collision_with_custom_net_name() {
     a_inst.get_port("ox").specify_net_name("b_i_oy");
     b_inst.get_port("oy").connect(&a_inst.get_port("ix"));
 
-    top.emit(EmitOptions::default());
+    let diagnostics = top.check();
+    assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
+    let d = &diagnostics.0[0];
+    assert_eq!(d.code, diagnostic::codes::S0407);
+    let o = d.object.as_ref().unwrap();
+    assert_eq!(
+        (o.definition.as_str(), o.end.as_str(), o.msb, o.lsb),
+        ("Top", "a_i.ox", 7, 0)
+    );
 }

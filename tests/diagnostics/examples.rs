@@ -633,6 +633,26 @@ fn s0406() {
 }
 
 #[test]
+fn s0407() {
+    let entry = Entry::load(diagnostic::codes::S0407);
+    let paths = entry.paths();
+    let cfg = config(&paths);
+    documented! { entry;
+        let src = ModDef::from_verilog_with_config("src", &cfg);
+        let snk = ModDef::from_verilog_with_config("snk", &cfg);
+        let top = ModDef::new("top");
+        top.add_port("data", IO::Input(8)).unused();
+        let a = top.instantiate(&src, Some("a"), None);
+        let u = top.instantiate(&snk, Some("u"), None);
+        a.get_port("o").connect(&u.get_port("i"));
+        a.get_port("o").specify_net_name("data");
+        let diagnostics = top.check();
+    }
+    entry.finish();
+    assert_connection_error(&entry, &diagnostics, ("top", "a.o", 7, 0));
+}
+
+#[test]
 fn s0409() {
     let entry = Entry::load(diagnostic::codes::S0409);
     documented! { entry;

@@ -55,6 +55,34 @@ pub(crate) struct EndResolution {
     pub(crate) segments: Vec<Segment>,
 }
 
+/// What a declared net is named after.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum NetName {
+    /// A port of the definition.
+    DefPort(String),
+    /// A port of an instance: instance name, port name.
+    InstPort(String, String),
+    /// A net named with `specify_net_name`.
+    Wire(String),
+}
+
+impl NetName {
+    /// The name the net is declared with in the emitted module.
+    pub(crate) fn emitted(&self) -> String {
+        match self {
+            NetName::DefPort(name) | NetName::Wire(name) => name.clone(),
+            NetName::InstPort(inst, port) => format!("{inst}_{port}"),
+        }
+    }
+}
+
+/// A net the emitted module declares or uses.
+#[derive(Debug)]
+pub(crate) struct Net {
+    pub(crate) name: NetName,
+    pub(crate) width: usize,
+}
+
 /// The resolved ends of one definition.
 #[derive(Debug)]
 pub(crate) struct Resolution {
@@ -65,4 +93,6 @@ pub(crate) struct Resolution {
     /// The bits joined by connections and what drives them.
     #[cfg_attr(not(test), expect(dead_code, reason = "read by the snapshot (#45)"))]
     pub(crate) components: Vec<component::Component>,
+    /// The nets the emitted module declares, each once, in order of first use.
+    pub(crate) nets: Vec<Net>,
 }

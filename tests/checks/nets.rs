@@ -11,7 +11,6 @@ fn test_duplicate_mod_def_port() {
 }
 
 #[test]
-#[should_panic(expected = "Net name collision")]
 fn test_mod_def_name_collision() {
     let top = ModDef::new("top");
     top.add_port("a_b", IO::InOut(1));
@@ -28,7 +27,15 @@ fn test_mod_def_name_collision() {
     a_inst.get_port("b").connect(&b_inst.get_port("c"));
     top.get_port("a_b").unused();
 
-    top.emit(EmitOptions::default());
+    let diagnostics = top.check();
+    assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
+    let d = &diagnostics.0[0];
+    assert_eq!(d.code, diagnostic::codes::S0407);
+    let o = d.object.as_ref().unwrap();
+    assert_eq!(
+        (o.definition.as_str(), o.end.as_str(), o.msb, o.lsb),
+        ("top", "a.b", 0, 0)
+    );
 }
 
 #[test]
@@ -98,7 +105,6 @@ endmodule
 }
 
 #[test]
-#[should_panic(expected = "Net name collision")]
 fn test_mod_inst_name_collision() {
     let top = ModDef::new("top");
     let a = ModDef::new("a");
@@ -122,7 +128,15 @@ fn test_mod_inst_name_collision() {
         .get_port("d_e")
         .connect(&a_b_c_d_inst.get_port("e"));
 
-    top.emit(EmitOptions::default());
+    let diagnostics = top.check();
+    assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
+    let d = &diagnostics.0[0];
+    assert_eq!(d.code, diagnostic::codes::S0407);
+    let o = d.object.as_ref().unwrap();
+    assert_eq!(
+        (o.definition.as_str(), o.end.as_str(), o.msb, o.lsb),
+        ("top", "a_b_c.d_e", 0, 0)
+    );
 }
 
 #[test]

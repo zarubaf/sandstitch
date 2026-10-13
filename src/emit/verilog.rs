@@ -167,11 +167,7 @@ impl NetCollection {
                 if existing_source == &source {
                     *existing_ref.unwrap()
                 } else {
-                    panic!(
-                        "Net name collision for {source:?} and {:?}: both resolve to \"{}\". If you have used specify_net_name() on one of the ports involved, you may need to remove it or change the net name. If not, you may need to use specify_net_name() to override the net name for one of the ModInst ports involved.",
-                        existing_source,
-                        source_entry.key()
-                    );
+                    unreachable!("net name collisions are reported by check()");
                 }
             }
             Entry::Vacant(source_entry) => {
