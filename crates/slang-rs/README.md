@@ -6,14 +6,14 @@ Note: the API is currently under development and is subject to frequent changes.
 
 ## Slang version compatibility
 
-Slang v11.0 is vendored and linked in-process through the `slang-sys` crate.
+Slang v12.0 is vendored and linked in-process through the `slang-sys` crate.
 No other Slang version is supported.
 
 ## Prerequisite
 
-Slang v11.0 is built from the vendored source by the `slang-sys` crate and
+Slang v12.0 is built from the vendored source by the `slang-sys` crate and
 called in-process, so no `slang` binary and no `SLANG_PATH` are needed. Building
-needs GCC 11+ or Clang 17+, CMake 3.20+ and Python 3; `ccache`, if installed, speeds up
+needs GCC 11+ or Clang 17+, CMake 3.28+ and Python 3; `ccache`, if installed, speeds up
 rebuilds.
 
 ## Installation

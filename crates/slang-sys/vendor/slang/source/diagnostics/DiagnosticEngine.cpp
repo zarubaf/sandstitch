@@ -14,6 +14,7 @@
 #include "slang/diagnostics/DiagnosticClient.h"
 #include "slang/diagnostics/MetaDiags.h"
 #include "slang/diagnostics/TextDiagnosticClient.h"
+#include "slang/diagnostics/WaiverManager.h"
 #include "slang/text/Glob.h"
 #include "slang/text/SourceManager.h"
 #include "slang/util/SmallMap.h"
@@ -41,6 +42,10 @@ DiagnosticEngine::~DiagnosticEngine() = default;
 void DiagnosticEngine::addClient(const std::shared_ptr<DiagnosticClient>& client) {
     client->setEngine(*this);
     clients.push_back(client);
+}
+
+void DiagnosticEngine::removeClient(const std::shared_ptr<DiagnosticClient>& client) {
+    std::erase(clients, client);
 }
 
 void DiagnosticEngine::clearClients() {
@@ -166,6 +171,10 @@ std::error_code DiagnosticEngine::addIgnoreMacroPaths(std::string_view pattern) 
     return ec;
 }
 
+void DiagnosticEngine::setWaiverManager(std::shared_ptr<WaiverManager> manager) {
+    waiverManager = std::move(manager);
+}
+
 // Checks that all of the given ranges are in the same macro argument expansion as `loc`
 static bool checkMacroArgRanges(const DiagnosticEngine& engine, SourceLocation loc,
                                 std::span<const SourceRange> ranges) {
@@ -204,13 +213,44 @@ void DiagnosticEngine::issue(const Diagnostic& diagnostic) {
                          severity == DiagnosticSeverity::Fatal;
     if (isError && errorLimit && numErrors >= errorLimit) {
         Diagnostic diag(diag::TooManyErrors, SourceLocation::NoLocation);
-        issueImpl(diag, DiagnosticSeverity::Fatal);
+        ReportedDiagnostic report(diag, DiagnosticSeverity::Fatal);
+        report.location = diag.location;
+        report.formattedMessage = formatMessage(diag);
+        for (auto& client : clients)
+            client->report(report);
         issuedOverLimitErr = true;
         return;
     }
 
-    if (!issueImpl(diagnostic, severity))
+    auto info = getReportedDiag(diagnostic);
+    if (!info)
         return;
+
+    ReportedDiagnostic report(std::move(*info), severity);
+
+    for (const Diagnostic& note : diagnostic.notes) {
+        // Notes shouldn't have subnotes. We should change this shape too eventually, unless we
+        // want to support that.
+        SLANG_ASSERT(note.notes.empty());
+
+        // Notes are ignored if location is "NoLocation" since they frequently make no
+        // sense without location information.
+        if (note.location == SourceLocation::NoLocation && !note.code.showNoteWithNoLocation())
+            continue;
+
+        auto noteSeverity = getSeverity(note.code, note.location);
+        if (noteSeverity == DiagnosticSeverity::Ignored)
+            continue;
+
+        SLANG_ASSERT(noteSeverity == DiagnosticSeverity::Note);
+
+        auto noteInfo = getReportedDiag(note);
+        SLANG_ASSERT(noteInfo);
+        report.notes.emplace_back(std::move(*noteInfo));
+    }
+
+    for (auto& client : clients)
+        client->report(report);
 
     if (severity == DiagnosticSeverity::Warning)
         numWarnings++;
@@ -223,11 +263,11 @@ void DiagnosticEngine::issue(const Diagnostics& diagnostics) {
         issue(diag);
 }
 
-bool DiagnosticEngine::issueImpl(const Diagnostic& diagnostic, DiagnosticSeverity severity) {
+std::optional<ReportedDiagnosticInfo> DiagnosticEngine::getReportedDiag(
+    const Diagnostic& diagnostic) {
     // Walk out until we find a location for this diagnostic that isn't inside a macro.
     SmallVector<SourceLocation, 8> expansionLocs;
     SourceLocation loc = diagnostic.location;
-    size_t ignoreExpansionsUntil = 0;
     bool showIncludeStack = false;
 
     if (loc != SourceLocation::NoLocation) {
@@ -243,16 +283,16 @@ bool DiagnosticEngine::issueImpl(const Diagnostic& diagnostic, DiagnosticSeverit
             }
 
             if (checkMacroArgRanges(*this, prevLoc, diagnostic.ranges))
-                ignoreExpansionsUntil = expansionLocs.size();
+                expansionLocs.clear();
         }
 
         showIncludeStack = reportedIncludeStack.emplace(loc.buffer()).second;
 
-        auto checkSuppressed = [&](const std::vector<fs::path>& patterns, SourceLocation loc) {
+        auto checkSuppressed = [&](const std::vector<fs::path>& patterns, SourceLocation location) {
             if (patterns.empty())
                 return false;
 
-            auto& path = sourceManager.getFullPath(loc.buffer());
+            auto& path = sourceManager.getFullPath(location.buffer());
             for (auto& pattern : patterns) {
                 if (svGlobMatches(path, pattern))
                     return true;
@@ -262,39 +302,29 @@ bool DiagnosticEngine::issueImpl(const Diagnostic& diagnostic, DiagnosticSeverit
 
         if (getDefaultSeverity(diagnostic.code) == DiagnosticSeverity::Warning) {
             if (checkSuppressed(ignoreWarnPatterns, loc))
-                return false;
+                return std::nullopt;
 
-            if (ignoreExpansionsUntil < expansionLocs.size() && !ignoreMacroWarnPatterns.empty()) {
-                auto originalLoc = sourceManager.getFullyOriginalLoc(
-                    expansionLocs[ignoreExpansionsUntil]);
+            if (!expansionLocs.empty() && !ignoreMacroWarnPatterns.empty()) {
+                auto originalLoc = sourceManager.getFullyOriginalLoc(expansionLocs.front());
 
                 if (checkSuppressed(ignoreMacroWarnPatterns, originalLoc))
-                    return false;
+                    return std::nullopt;
             }
+        }
+
+        if (waiverManager && (getDefaultSeverity(diagnostic.code) != DiagnosticSeverity::Note) &&
+            waiverManager->shouldWaive(diagnostic, loc, sourceManager, *this)) {
+            return std::nullopt;
         }
     }
 
-    std::string message = formatMessage(diagnostic);
-
-    ReportedDiagnostic report(diagnostic);
-    report.expansionLocs = std::span<SourceLocation>(expansionLocs).subspan(ignoreExpansionsUntil);
+    ReportedDiagnosticInfo report(diagnostic);
+    report.expansionLocs = std::move(expansionLocs);
     report.ranges = diagnostic.ranges;
     report.location = loc;
-    report.severity = severity;
-    report.formattedMessage = message;
+    report.formattedMessage = formatMessage(diagnostic);
     report.shouldShowIncludeStack = showIncludeStack;
-
-    for (auto& client : clients)
-        client->report(report);
-
-    // Notes are ignored if location is "NoLocation" since they frequently make no
-    // sense without location information.
-    for (const Diagnostic& note : diagnostic.notes) {
-        if (note.location != SourceLocation::NoLocation || note.code.showNoteWithNoLocation())
-            issue(note);
-    }
-
-    return true;
+    return report;
 }
 
 const DiagnosticEngine::FormatterMap& DiagnosticEngine::getFormatters() const {

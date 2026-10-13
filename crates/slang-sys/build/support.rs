@@ -75,16 +75,16 @@ pub fn check_compiler(id: CompilerId, version_output: &str) -> Result<(), String
     }
 }
 
-/// Ok if CMake is 3.20 or newer.
+/// Ok if CMake is 3.28 or newer.
 pub fn check_cmake(version_output: &str) -> Result<(), String> {
     let first = version_output.lines().next().unwrap_or("");
     let version = first.strip_prefix("cmake version ").unwrap_or("");
     let mut parts = version.split('.').map(|p| p.parse::<u32>().ok());
     let found = (parts.next().flatten(), parts.next().flatten());
     match found {
-        (Some(major), Some(minor)) if (major, minor) >= (3, 20) => Ok(()),
+        (Some(major), Some(minor)) if (major, minor) >= (3, 28) => Ok(()),
         _ => Err(format!(
-            "slang-sys needs CMake 3.20 or newer to build Slang; found `{first}` \
+            "slang-sys needs CMake 3.28 or newer to build Slang; found `{first}` \
              (`pip install cmake` installs a current one without root)"
         )),
     }
@@ -186,9 +186,9 @@ mod tests {
     #[test]
     fn cmake_versions() {
         let e = check_cmake("cmake version 3.19.8\n\nCMake suite").unwrap_err();
-        assert!(e.contains("3.20") && e.contains("pip install cmake"), "{e}");
+        assert!(e.contains("3.28") && e.contains("pip install cmake"), "{e}");
         assert!(check_cmake("cmake version 4.4.4").is_ok());
-        assert!(check_cmake("cmake version 3.20.0").is_ok());
+        assert!(check_cmake("cmake version 3.28.0").is_ok());
     }
 
     #[test]

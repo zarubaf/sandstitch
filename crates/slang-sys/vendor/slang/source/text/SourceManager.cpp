@@ -196,7 +196,7 @@ const SourceLibrary* SourceManager::getLibraryFor(BufferID buffer) const {
 SourceManager::BufferKind SourceManager::getBufferKind(BufferID buffer) const {
     std::shared_lock<std::shared_mutex> lock(mutex);
     if (buffer && buffer.getId() < bufferEntries.size()) {
-        if (auto* exp = std::get_if<ExpansionInfo>(&bufferEntries[buffer.getId()]))
+        if (auto exp = std::get_if<ExpansionInfo>(&bufferEntries[buffer.getId()]))
             return exp->isMacroArg ? BufferKind::MacroArg : BufferKind::Macro;
         else
             return std::get<FileInfo>(bufferEntries[buffer.getId()]).bufferKind;
@@ -355,6 +355,30 @@ std::string_view SourceManager::getSourceText(BufferID buffer) const {
 
     auto fd = info->data;
     return std::string_view(fd->mem.data(), fd->mem.size());
+}
+
+std::string_view SourceManager::getSourceLine(SourceLocation location) const {
+    std::string_view text = getSourceText(location.buffer());
+    if (text.empty())
+        return {};
+
+    // Buffers always carry a trailing '\0' sentinel (see assignText); drop it
+    // so callers never see it as part of the line.
+    size_t end = text.size() - 1;
+
+    size_t offset = location.offset();
+    if (offset > end)
+        offset = end;
+
+    size_t lineStart = offset;
+    while (lineStart > 0 && text[lineStart - 1] != '\n')
+        lineStart--;
+
+    size_t lineEnd = offset;
+    while (lineEnd < end && text[lineEnd] != '\n' && text[lineEnd] != '\r')
+        lineEnd++;
+
+    return text.substr(lineStart, lineEnd - lineStart);
 }
 
 uint64_t SourceManager::getSortKey(BufferID buffer) const {
@@ -679,7 +703,7 @@ SourceBuffer SourceManager::cacheBuffer(fs::path&& path, std::string&& pathStr,
     }
 
     if (name.empty())
-        name = getU8Str(path.filename());
+        name = getU8Str(path);
 
     std::unique_lock<std::shared_mutex> lock(mutex);
 

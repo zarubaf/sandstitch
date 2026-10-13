@@ -9,7 +9,7 @@
 
 #include "SVIntHelpers.h"
 #include <cmath>
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <ostream>
 #include <stdexcept>
 
@@ -818,7 +818,7 @@ void SVInt::writeTo(SmallVectorBase<char>& buffer, LiteralBase base, bool includ
         logic_t x = tmp != 0;
         while (x || x.isUnknown()) {
             if (bitsLeft < int(shiftAmount))
-                maskAmount = (1 << bitsLeft) - 1;
+                maskAmount = (1 << bitsLeft) - 1; // NOLINT(clang-analyzer-core.BitwiseShift)
 
             uint32_t digit = uint32_t(tmp.getRawData()[0]) & maskAmount;
             if (!tmp.unknownFlag)
@@ -1516,7 +1516,7 @@ void SVInt::set(int32_t msb, int32_t lsb, const SVInt& value) {
 
     if (!hasUnknown() && value.hasUnknown()) {
         uint64_t* newData = new uint64_t[getNumWords(bitWidth, true)]();
-        memcpy(newData, getRawData(), getNumWords());
+        memcpy(newData, getRawData(), getNumWords() * WORD_SIZE);
 
         if (!isSingleWord())
             delete[] pVal;

@@ -6,6 +6,9 @@ error ExpectedExpression "expected expression"
 note NotePreviousDefinition "previous definition here"
 note NotePreviousUsage "previous usage here"
 note NoteDeclarationHere "declared here"
+note NoteNamedDeclaredHere "'{}' declared here"
+note NoteLabeledDeclaredHere "{} '{}' declared here"
+note NoteConnectedHere "connected to '{}' here"
 note NotePreviousMatch "previous match here"
 note NoteReferencedHere "referenced here"
 note NoteAssignedHere "also assigned here"
@@ -319,6 +322,7 @@ warning nonstandard-constraint-block NonstandardConstraintBlock "use of nested c
 warning empty-body EmptyBody "{} has empty body (put the semicolon on a separate line to silence this warning)"
 warning dangling-else DanglingElse "ambiguous dangling 'else'; add begin/end to clarify which 'if' the 'else' belongs to"
 note NoteMatchingIf "'if' statement here"
+warning missing-else-clause MissingElseClause "'if' starts on the same line as the previous 'end' without an 'else'; did you mean 'end else if'"
 warning misleading-indentation MisleadingIndentation "this statement is misleadingly indented as if it is part of the preceding {}"
 warning colon-plus ColonPlusRange "':+' in range select was probably meant to be '+:' for ascending range select"
 warning split-distweight-op SplitDistWeightOp "split dist weight operator is not allowed; SystemVerilog requires that they be joined together"
@@ -574,6 +578,7 @@ warning empty-output-connection EmptyOutputPortConn "output port '{}' is explici
 warning empty-inout-connection EmptyInOutPortConn "inout port '{}' is explicitly connected to nothing"
 note EmptyInputPortConnDefault "port has a default value expression here that will not be used"
 warning implicit-net-port ImplicitNetPortNoDefault "implicit net port disallowed because `default_nettype is set to 'none'"
+warning implicit-net ImplicitNet "implicit net '{}' created"
 warning dup-attr DuplicateAttribute "duplicate attribute definition '{}'; taking last value"
 warning empty-member EmptyMember "extra ';' has no effect"
 warning ineffective-sign SignednessNoEffect "'{}' on I/O declaration has no effect on type {}"
@@ -637,7 +642,8 @@ error AssignmentPatternKeyDupDefault "assignment pattern has multiple default ke
 error AssignmentPatternKeyDupValue "assignment pattern has multiple keys for index {}"
 error AssignmentPatternKeyDupName "assignment pattern has multiple keys for member '{}'"
 error AssignmentPatternNoMember "member '{}' is not covered by any assignment pattern key"
-error AssignmentPatternMissingElements "not all elements of array are covered by an assignment pattern key"
+error AssignmentPatternMissingElements "assignment pattern does not cover all elements of type {}"
+error AssignmentPatternMissingDynamicElements "assignment pattern does not cover all elements in an array of length {} of type {}"
 error AssignmentPatternDynamicType "assignment patterns for dynamic arrays, associative arrays, and queues cannot have type keys"
 error AssignmentPatternAssociativeType "assignment pattern for associative array must specify key:value pairs"
 error EmptyArgNotAllowed "empty argument not allowed"
@@ -793,6 +799,7 @@ warning arith-op-mismatch ArithOpMismatch "arithmetic between operands of differ
 warning bitwise-op-mismatch BitwiseOpMismatch "bitwise operation between operands of different types ({} and {})"
 warning comparison-mismatch ComparisonMismatch "comparison between operands of different types ({} and {})"
 warning sign-compare SignCompare "comparison of differently signed types ({} and {})"
+warning real-case-eq RealCaseEq "a real operand has no x or z bits so '{}' acts as ordinary {}"
 warning case-type CaseTypeMismatch "comparison of different types in '{}' statement ({} and {})"
 warning case-outside-range CaseOutsideRange "'{}' item with {} bits can never match the {} bit case expression"
 warning bitwise-rel-precedence BitwiseRelPrecedence "'{}' has lower precedence than '{}'; '{}' will be evaluated first"
@@ -1279,6 +1286,8 @@ warning unknown-warning-option UnknownWarningOption "unknown warning option '{}'
 
 subsystem Driver
 error CommandLineError "{}"
+warning command-line CommandLineWarning "{}"
+note NoteCommandLine "{}"
 
 // Following are groups of diagnostics, to make it easy to control them from the command line.
 // The default group is the set of warnings that are enabled by default.
@@ -1308,7 +1317,7 @@ group default = { real-underflow real-overflow vector-overflow int-overflow unco
                   string-int-concat range-select-reversed nonstandard-constraint-block format-empty-arg
                   format-too-many-args clockvar-target-assign cross-ident-in-binsof ref-arg-in-fork-join
                   cannot-index-scalar string-in-constraint virtual-arg-name-mismatch undefined-param-override
-                  redefinition redefinition-different-type }
+                  redefinition redefinition-different-type command-line }
 
 group extra = { empty-member empty-stmt dup-import pointless-void-cast case-gen-none case-gen-dup
                 unused-result format-real ignored-slice task-ignored width-trunc dup-attr event-const
@@ -1321,7 +1330,7 @@ group extra = { empty-member empty-stmt dup-import pointless-void-cast case-gen-
                 shadow-hierarchy shadow-property implicit-conv inc-dec-bit dangling-else constraint-func-cycle
                 misleading-indentation constraint-solve-cycle header-guard dynamic-cast-const
                 fork-loop-var loop-var-modify loop-cond-not-modified divide-by-zero colon-plus empty-input-connection
-                bits-of-integer-constant }
+                bits-of-integer-constant missing-else-clause }
 
 group pedantic = { empty-pattern implicit-net-port nonstandard-escape-code nonstandard-generate format-multibit-strength
                    nonstandard-sys-func nonstandard-foreach nonstandard-dist nonstandard-randomize isunbounded-param-arg udp-coverage }

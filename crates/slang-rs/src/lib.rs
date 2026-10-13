@@ -163,7 +163,7 @@ fn paths(deps: Vec<String>) -> Vec<PathBuf> {
     deps.into_iter().map(PathBuf::from).collect()
 }
 
-/// The Slang library [`run_slang`] calls, for example `slang 11.0`.
+/// The Slang library [`run_slang`] calls, for example `slang 12.0`.
 pub const fn slang_version() -> &'static str {
     slang_sys::SLANG_VERSION_LABEL
 }

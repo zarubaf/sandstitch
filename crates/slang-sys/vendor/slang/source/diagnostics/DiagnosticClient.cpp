@@ -40,20 +40,6 @@ void DiagnosticClient::getIncludeStack(BufferID buffer,
     }
 }
 
-std::string_view DiagnosticClient::getSourceLine(SourceLocation location, size_t col) const {
-    std::string_view text = sourceManager->getSourceText(location.buffer());
-    if (text.empty())
-        return "";
-
-    const char* start = text.data() + location.offset() - (col - 1);
-    const char* curr = start;
-    const char* end = text.data() + text.size() - 1;
-    while (curr != end && *curr != '\n' && *curr != '\r')
-        curr++;
-
-    return std::string_view(start, (size_t)(curr - start));
-}
-
 size_t DiagnosticClient::getColumnNumber(SourceLocation location) const {
     return columnUnit == ColumnUnit::Display ? sourceManager->getDisplayColumnNumber(location)
                                              : sourceManager->getColumnNumber(location);

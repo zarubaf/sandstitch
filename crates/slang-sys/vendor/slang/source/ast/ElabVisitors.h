@@ -73,7 +73,7 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
     void handle(const PackageSymbol& symbol) {
         if (!handleDefault(symbol))
             return;
-        symbol.checkExplicitExports();
+        symbol.resolveExports();
     }
 
     void handle(const InterfacePortSymbol& symbol) {
@@ -503,7 +503,9 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
         }
 
         // Visit all attributes and force their values to resolve.
-        for (auto& [_, attrList] : compilation.attributeMap) {
+        // Map is copied in case binding the expression causes map mutation
+        auto attributeMap = compilation.attributeMap;
+        for (auto& [_, attrList] : attributeMap) {
             for (auto attr : attrList)
                 attr->getValue();
         }

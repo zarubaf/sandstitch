@@ -9,7 +9,7 @@
 
 #include <charconv>
 #include <filesystem>
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 #include "slang/text/CharInfo.h"
 #include "slang/util/OS.h"
@@ -95,6 +95,10 @@ void CommandLine::add(std::string_view name, OptionBoolCallback cb, std::string_
     addInternal(name, std::move(cb), desc, {}, flags);
 }
 
+void CommandLine::setGroup(std::string_view name) {
+    currentGroup = name;
+}
+
 void CommandLine::addInternal(std::string_view name, OptionStorage storage, std::string_view desc,
                               std::string_view valueName, bitmask<CommandLineFlags> flags) {
     if (name.empty())
@@ -104,6 +108,7 @@ void CommandLine::addInternal(std::string_view name, OptionStorage storage, std:
     option->desc = desc;
     option->valueName = valueName;
     option->allArgNames = name;
+    option->group = currentGroup;
     option->storage = std::move(storage); // NOLINT
     option->flags = flags;
 
@@ -163,12 +168,12 @@ void CommandLine::setPositional(const OptionStrCallback& cb, std::string_view va
     positional->flags = flags;
 }
 
-bool CommandLine::parse(int argc, const char* const argv[]) {
+bool CommandLine::parse(int argc, const char* const argv[], const ParseOptions& options) {
     SmallVector<std::string_view, 8> args{size_t(argc), UninitializedTag()};
     for (int i = 0; i < argc; i++)
         args.push_back(argv[i]);
 
-    return parse(args);
+    return parse(args, options);
 }
 
 bool CommandLine::parse(std::string_view argList, const ParseOptions& options) {
@@ -527,7 +532,7 @@ void CommandLine::handleArg(std::string_view arg, Option*& expectingVal,
     }
 }
 
-std::string CommandLine::getHelpText(std::string_view overview) const {
+std::string CommandLine::getHelpText(std::string_view overview, size_t maxWidth) const {
     std::string result;
     if (!overview.empty())
         result = fmt::format("OVERVIEW: {}\n\n"sv, overview);
@@ -538,10 +543,12 @@ std::string CommandLine::getHelpText(std::string_view overview) const {
 
     result += "\n\nOPTIONS:\n"sv;
 
-    // For each option group that takes a value, tack on the value name.
-    // Then compute the maximum length of any particular group's key.
+    // For each option, tack on the value name if it takes one, and track the
+    // maximum key length for alignment. Simultaneously bucket the options into
+    // their display groups, preserving the order in which each group was first seen.
     size_t maxLen = 0;
-    std::vector<std::pair<Option*, std::string>> lines;
+    std::vector<std::string_view> groupOrder;
+    std::map<std::string_view, std::vector<std::pair<Option*, std::string>>> groups;
     for (auto& opt : orderedOptions) {
         std::string key = opt->allArgNames;
         std::string& val = opt->valueName;
@@ -552,31 +559,137 @@ std::string CommandLine::getHelpText(std::string_view overview) const {
         }
 
         maxLen = std::max(maxLen, key.length());
-        lines.emplace_back(opt.get(), std::move(key));
+
+        auto [it, inserted] = groups.try_emplace(opt->group);
+        if (inserted)
+            groupOrder.push_back(it->first);
+        it->second.emplace_back(opt.get(), std::move(key));
     }
 
     // Add two spaces so that the description text is offset from the longest option name.
     maxLen += 2;
 
-    // Finally append all groups to the output.
-    std::string indent = fmt::format("  {:{}}"sv, " "sv, maxLen);
-    for (auto& [opt, key] : lines) {
-        result += fmt::format("  {:{}}"sv, key, maxLen);
-        if (!opt->desc.empty()) {
-            std::string_view desc = opt->desc;
-            while (true) {
-                size_t index = desc.find_first_of('\n');
-                if (index == std::string_view::npos) {
-                    result += desc;
-                    break;
-                }
+    // Descriptions are word-wrapped so that no line exceeds this many columns.
+    // A width of zero means detect the current terminal width, falling back to a
+    // sensible default when the output isn't attached to a terminal.
+    size_t maxLineWidth = maxWidth;
+    if (maxLineWidth == 0) {
+        maxLineWidth = OS::getTerminalWidth();
+        if (maxLineWidth == 0)
+            maxLineWidth = 100;
+    }
 
-                result += desc.substr(0, index + 1);
+    // The description column starts after the two leading spaces and the padded key.
+    // On narrow terminals cap it so descriptions keep at least a minimum width; any
+    // option whose key is too long then has its description start on the next line.
+    static constexpr size_t minDescWidth = 20;
+    size_t descCol = maxLen + 2;
+    if (maxLineWidth > minDescWidth && descCol + minDescWidth > maxLineWidth)
+        descCol = maxLineWidth - minDescWidth;
+
+    const size_t descWidth = descCol < maxLineWidth ? maxLineWidth - descCol : minDescWidth;
+    const std::string indent(descCol, ' ');
+
+    // Appends a description, honoring explicit newlines and soft-wrapping long lines
+    // at word boundaries. A word that is too long to fit on a line by itself is
+    // hard-broken so that no line ever exceeds the maximum width.
+    auto appendDescription = [&](std::string_view desc) {
+        size_t col = 0;
+        for (size_t i = 0; i < desc.size();) {
+            char c = desc[i];
+            if (c == '\n') {
+                result += '\n';
                 result += indent;
-                desc = desc.substr(index + 1);
+                col = 0;
+                i++;
+            }
+            else if (c == ' ') {
+                // Measure the next word to decide whether it still fits on this line.
+                size_t j = i + 1;
+                while (j < desc.size() && desc[j] != ' ' && desc[j] != '\n')
+                    j++;
+
+                size_t wordLen = j - (i + 1);
+                if (col != 0 && col + 1 + wordLen > descWidth) {
+                    // Break here; the wrapped word starts the next line, so drop the space.
+                    result += '\n';
+                    result += indent;
+                    col = 0;
+                    i++;
+                }
+                else {
+                    result += ' ';
+                    col++;
+                    i++;
+                }
+            }
+            else {
+                // Hard-break a word that is too long to fit on a line by itself.
+                if (col >= descWidth) {
+                    result += '\n';
+                    result += indent;
+                    col = 0;
+                }
+                result += c;
+                col++;
+                i++;
             }
         }
-        result += "\n";
+    };
+
+    auto appendOption = [&](Option* opt, const std::string& key) {
+        result += "  ";
+        result += key;
+        if (!opt->desc.empty()) {
+            // Pad to the description column, or wrap to the next line if the key is
+            // too long to leave room for the description.
+            size_t keyEnd = 2 + key.size();
+            if (keyEnd + 1 > descCol) {
+                result += '\n';
+                result += indent;
+            }
+            else {
+                result.append(descCol - keyEnd, ' ');
+            }
+            appendDescription(opt->desc);
+        }
+        result += '\n';
+    };
+
+    // The default (unnamed) group is always printed first, without a header, so
+    // that ungrouped options appear at the top of the list. The named groups then
+    // follow in the order they were first seen.
+    if (auto it = groups.find(std::string_view{}); it != groups.end()) {
+        for (auto& [opt, key] : it->second)
+            appendOption(opt, key);
+    }
+
+    for (auto groupName : groupOrder) {
+        if (groupName.empty())
+            continue;
+
+        result += fmt::format("\n{}:\n"sv, groupName);
+        for (auto& [opt, key] : groups.at(groupName))
+            appendOption(opt, key);
+    }
+
+    return result;
+}
+
+std::vector<std::pair<std::string, std::string>> CommandLine::getHelpOptions() const {
+    std::vector<std::pair<std::string, std::string>> result;
+    result.reserve(orderedOptions.size());
+
+    for (const auto& opt : orderedOptions) {
+        std::string key = opt->allArgNames;
+
+        if (!opt->valueName.empty()) {
+            if (opt->valueName[0] != '=')
+                key += ' ';
+            key += opt->valueName;
+        }
+
+        result.emplace_back(std::move(key), opt->desc);
     }
 
     return result;

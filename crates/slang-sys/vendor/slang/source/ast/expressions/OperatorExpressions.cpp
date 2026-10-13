@@ -873,6 +873,15 @@ Expression& BinaryExpression::fromComponents(Expression& lhs, Expression& rhs, B
                          op == BinaryOperator::CaseInequality) {
                     good = true;
                     result->type = &compilation.getBitType();
+
+                    // Reals have no x or z bits, so the case equality operators
+                    // behave just like ordinary equality here. Warn so the user
+                    // knows the case comparison has no special effect on a real operand.
+                    if (!bothIntegral) {
+                        context.addDiag(diag::RealCaseEq, opRange)
+                            << OpInfo::getText(op)
+                            << (op == BinaryOperator::CaseEquality ? "equality"sv : "inequality"sv);
+                    }
                 }
                 else {
                     good = bothIntegral;
@@ -1943,7 +1952,8 @@ Expression& ConcatenationExpression::fromSyntax(Compilation& comp,
 
         if (!type.isIntegral()) {
             errored = true;
-            context.addDiag(diag::BadConcatExpression, arg->sourceRange) << type;
+            if (!context.flags.has(ASTFlags::UnknownPortConn))
+                context.addDiag(diag::BadConcatExpression, arg->sourceRange) << type;
             break;
         }
 
@@ -1987,7 +1997,8 @@ Expression& ConcatenationExpression::fromSyntax(Compilation& comp,
         }
 
         if (!anyStrings && totalWidth == 0) {
-            context.addDiag(diag::EmptyConcatNotAllowed, syntax.sourceRange());
+            if (!context.flags.has(ASTFlags::UnknownPortConn))
+                context.addDiag(diag::EmptyConcatNotAllowed, syntax.sourceRange());
             errored = true;
         }
     }
@@ -2013,8 +2024,10 @@ Expression& ConcatenationExpression::fromEmpty(Compilation& comp,
                                                const Type* assignmentTarget) {
     // Empty concatenation can only target arrays.
     if (!assignmentTarget || !assignmentTarget->isUnpackedArray()) {
-        if (!assignmentTarget || !assignmentTarget->isError())
+        if ((!assignmentTarget || !assignmentTarget->isError()) &&
+            !context.flags.has(ASTFlags::UnknownPortConn)) {
             context.addDiag(diag::EmptyConcatNotAllowed, syntax.sourceRange());
+        }
         return badExpr(comp, nullptr);
     }
 

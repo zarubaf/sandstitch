@@ -187,10 +187,13 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
     `make_packed_array_type_ranges` (packed arrays with declared ranges).
 - Upstreaming: send patches against the xlsynth-crate monorepo.
 
-### Slang and fmt (vendored in slang-sys)
+### Slang and its dependencies (vendored in slang-sys)
 
-- Upstream: https://github.com/MikePopoloski/slang tag `v11.0`, and fmt
-  https://github.com/fmtlib/fmt tag `12.1.0` (Slang's pinned fmt).
+- Upstream: https://github.com/MikePopoloski/slang tag `v12.0`, and the
+  dependencies its CMake fetches, as pinned by Slang: fmt
+  https://github.com/fmtlib/fmt tag `12.2.0`, toml++
+  https://github.com/marzer/tomlplusplus tag `v3.4.0` and the header-only
+  boost::regex fork https://github.com/MikePopoloski/regex tag `boost-1.91.0`.
 - Unmodified subsets of the release tarballs under `crates/slang-sys/vendor/`;
   `crates/slang-sys/vendor/README.md` lists the tarball sha256 sums, what is
   kept and dropped, and the update procedure.

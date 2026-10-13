@@ -130,9 +130,28 @@ enum class SLANG_EXPORT CompilationFlags {
     AllowLibModuleRedefinition = 1 << 16,
 
     /// Don't instantiate unreferenced modules to perform semantic checking on them.
-    IgnoreUninstantiatedModules = 1 << 17
+    IgnoreUninstantiatedModules = 1 << 17,
+
+    /// Allow the legacy `cross_auto_bin_max` coverage option to be set on covergroups
+    /// and crosses. This option was part of SystemVerilog 3.1a but is not in IEEE 1800;
+    /// some tools still accept it for compatibility with older code.
+    AllowCrossAutoBinMax = 1 << 18,
+
+    /// Infer an ANSI `input` port that has an explicit data type as a variable
+    /// instead of a net. By default slang follows the LRM and treats such ports as nets,
+    /// which for example allows them to be connected to `inout` ports. Some tools treat them
+    /// as variables instead; enabling this flag selects that behavior.
+    InferInputPortsAsVars = 1 << 19,
+
+    /// Allow top-level modules to be selected even when their parameters have no defaults.
+    AllowInvalidTop = 1 << 20,
+
+    /// Elaborate code that would normally be skipped because it is uninstantiated
+    /// (untaken generate branches and uninstantiated module instances) so that
+    /// additional lints, like port and parameter name checks, can run on it.
+    CheckUninstantiated = 1 << 21,
 };
-SLANG_BITMASK(CompilationFlags, IgnoreUninstantiatedModules)
+SLANG_BITMASK(CompilationFlags, CheckUninstantiated)
 
 /// Contains various options that can control compilation behavior.
 struct SLANG_EXPORT CompilationOptions {

@@ -7,13 +7,13 @@
 //------------------------------------------------------------------------------
 #include "slang/ast/SFormat.h"
 
+#include "../text/FormatBuffer.h"
 #include <cmath>
 #include <ieee1800/vpi_user.h>
 
 #include "slang/ast/ASTVisitor.h"
 #include "slang/diagnostics/SysFuncsDiags.h"
 #include "slang/text/CharInfo.h"
-#include "slang/text/FormatBuffer.h"
 #include "slang/util/String.h"
 
 static const double log2_10 = std::log2(10.0);
@@ -270,6 +270,13 @@ static void formatRaw2(std::string& result, const ConstantValue& value) {
         return;
     }
 
+    if (value.isUnion()) {
+        // An unpacked union stores its active member; emit that member's raw
+        // representation, mirroring the unpacked struct/array recursion above.
+        formatRaw2(result, value.unionVal()->value);
+        return;
+    }
+
     SVInt sv = value.integer();
     sv.flattenUnknowns();
 
@@ -290,6 +297,13 @@ static void formatRaw4(std::string& result, const ConstantValue& value) {
     if (value.isUnpacked()) {
         for (auto& elem : value.elements())
             formatRaw4(result, elem);
+        return;
+    }
+
+    if (value.isUnion()) {
+        // An unpacked union stores its active member; emit that member's raw
+        // representation, mirroring the unpacked struct/array recursion above.
+        formatRaw4(result, value.unionVal()->value);
         return;
     }
 
@@ -349,7 +363,7 @@ void formatStrength(std::string& result, const SVInt& value) {
         }
 
         if (i != 1)
-            result += " ";
+            result += ' ';
     }
 }
 
@@ -531,21 +545,34 @@ void formatPattern(std::string& result, const ConstantValue& arg, const Type& ty
     result += visitor.buffer.str();
 }
 
+// A class handle, a chandle, or the null literal has no integer value:
+// convertToInt() yields an invalid ConstantValue for them. The format-string
+// checker (checkArgType) permits these types for the integer/char specifiers
+// (%h %x %d %o %b %c), so instead of dereferencing the missing value (which does
+// std::get<SVInt> on the wrong variant and aborts with an internal error) format
+// them as their numeric value, which is zero for a null handle.
+static SVInt toFormatInt(const ConstantValue& arg) {
+    auto cv = arg.convertToInt();
+    if (cv.bad())
+        return SVInt::Zero;
+    return cv.integer();
+}
+
 void formatArg(std::string& result, const ConstantValue& arg, const Type& type, char specifier,
                const FormatOptions& options, bool isStringLiteral) {
     switch (charToLower(specifier)) {
         case 'h':
         case 'x':
-            formatInt(result, arg.convertToInt().integer(), LiteralBase::Hex, options);
+            formatInt(result, toFormatInt(arg), LiteralBase::Hex, options);
             return;
         case 'd':
-            formatInt(result, arg.convertToInt().integer(), LiteralBase::Decimal, options);
+            formatInt(result, toFormatInt(arg), LiteralBase::Decimal, options);
             return;
         case 'o':
-            formatInt(result, arg.convertToInt().integer(), LiteralBase::Octal, options);
+            formatInt(result, toFormatInt(arg), LiteralBase::Octal, options);
             return;
         case 'b':
-            formatInt(result, arg.convertToInt().integer(), LiteralBase::Binary, options);
+            formatInt(result, toFormatInt(arg), LiteralBase::Binary, options);
             return;
         case 'u':
             formatRaw2(result, arg);
@@ -562,11 +589,11 @@ void formatArg(std::string& result, const ConstantValue& arg, const Type& type, 
             auto timeOptions = options;
             if (!timeOptions.width)
                 timeOptions.width = 20;
-            formatInt(result, arg.convertToInt().integer(), LiteralBase::Decimal, timeOptions);
+            formatInt(result, toFormatInt(arg), LiteralBase::Decimal, timeOptions);
             return;
         }
         case 'c':
-            formatChar(result, arg.convertToInt().integer());
+            formatChar(result, toFormatInt(arg));
             return;
         case 'v':
             formatStrength(result, arg.integer());

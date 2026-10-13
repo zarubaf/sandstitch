@@ -1143,7 +1143,7 @@ fn lower(raw: RawDesign) -> Design {
         }
 
         let module = &mut modules[m];
-        // Slang v11 resolves an anonymous enum port to the error type, with
+        // Slang (MikePopoloski/slang#2017) resolves an anonymous enum port to the error type, with
         // no diagnostic, when an anonymous struct or union port follows it
         // in an ANSI port list, for example
         // `module top (input enum {A} p3, input struct packed {logic f;} p5); endmodule`.

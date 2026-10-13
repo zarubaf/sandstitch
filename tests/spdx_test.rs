@@ -63,7 +63,7 @@ fn find_missing_spdx_files(root: &Path) -> Vec<PathBuf> {
             if path.is_dir() {
                 // Exclude directories that should not be checked
                 // `third_party/`, `crates/slang-rs/` (which has its own SPDX
-                // test) and the Slang and fmt sources in
+                // test) and the Slang sources and dependencies in
                 // `crates/slang-sys/vendor/` keep their upstream headers.
                 let is_vendored = path.strip_prefix(root).is_ok_and(|rel| {
                     rel == Path::new("third_party")

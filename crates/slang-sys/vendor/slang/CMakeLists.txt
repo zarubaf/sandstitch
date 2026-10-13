@@ -4,7 +4,7 @@
 # ~~~
 
 # slang - cmake entry point
-cmake_minimum_required(VERSION 3.20...3.29)
+cmake_minimum_required(VERSION 3.28...4.3)
 
 # Determine if slang is built as a subproject (using add_subdirectory) or if it
 # is the master project.
@@ -28,7 +28,7 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 include(gitversion)
 get_git_version(SLANG_VERSION_PATCH SLANG_GIT_PRERELEASE SLANG_VERSION_HASH)
 
-set(SLANG_VERSION_MAJOR 11)
+set(SLANG_VERSION_MAJOR 12)
 set(SLANG_VERSION_MINOR 0)
 set(SLANG_VERSION_PRERELEASE
     "${SLANG_GIT_PRERELEASE}"
@@ -79,13 +79,21 @@ option(SLANG_INCLUDE_COVERAGE "Enable code coverage" OFF)
 option(SLANG_INCLUDE_THREADTEST "Include threadtest target in the build" OFF)
 option(SLANG_INCLUDE_UVM_TEST "Include UVM as a test target in the build" OFF)
 option(SLANG_INCLUDE_BENCHMARKS "Include benchmark targets in the build" OFF)
+option(SLANG_INCLUDE_EXAMPLES
+       "Include the integration example projects in the build" OFF)
 option(SLANG_CI_BUILD "Enable longer running tests for CI builds" OFF)
 option(SLANG_FUZZ_TARGET "Enables changes to make binaries easier to fuzz test"
        OFF)
 option(BUILD_SHARED_LIBS "Generate shared libraries instead of static" OFF)
 option(SLANG_USE_THREADS "Enable use of threads" ON)
 option(SLANG_USE_MIMALLOC "Enable use of the mimalloc library" ON)
-option(SLANG_USE_CPPTRACE "Enable use of the cpptrace library" OFF)
+option(SLANG_USE_SYSTEM_FMT
+       "Use a system-installed fmt library instead of FetchContent" OFF)
+option(SLANG_USE_SYSTEM_BOOST
+       "Use a system-installed boost library instead of FetchContent" OFF)
+option(SLANG_USE_SYSTEM_TOMLPLUSPLUS
+       "Use a system-installed tomlplusplus library instead of FetchContent"
+       OFF)
 
 set(SLANG_LIB_NAME
     "svlang"
@@ -106,7 +114,15 @@ set(SCRIPTS_DIR ${PROJECT_SOURCE_DIR}/scripts)
 # Find Python. If we're building python bindings we need the development modules
 # as well.
 if(SLANG_INCLUDE_PYLIB)
-  find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
+  # Split-mode nanobind extensions use the stable ABI. On Windows this requires
+  # FindPython to provide the Python::SABIModule target in addition to
+  # Python::Module (nanobind still checks for the latter when it is loaded).
+  if(WIN32)
+    find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module
+                                                 Development.SABIModule)
+  else()
+    find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module)
+  endif()
 else()
   find_package(Python REQUIRED COMPONENTS Interpreter)
 endif()
@@ -151,10 +167,22 @@ foreach(
   endif()
 endforeach()
 
-# Always require C++20 or later, no extensions.
-set(CMAKE_CXX_STANDARD 20)
+# Require C++20, but let a parent project ask for something higher
+if(DEFINED CMAKE_CXX_STANDARD)
+  if(CMAKE_CXX_STANDARD EQUAL 98 OR CMAKE_CXX_STANDARD LESS 20)
+    message(FATAL_ERROR "This project requires at least C++20")
+  endif()
+else()
+  set(CMAKE_CXX_STANDARD 20)
+endif()
+
+# Always enforce the language constraint
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+
+# We don't need compiler extensions, but let a parent ask for them
+if(NOT DEFINED CMAKE_CXX_EXTENSIONS)
+  set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
 
 # Defaults for a bunch of Windows-specific junk. These are required by all
 # targets to build and run correctly and don't affect ABI so shouldn't need
@@ -185,9 +213,6 @@ if(CMAKE_SYSTEM_NAME MATCHES "WASI")
   add_link_options(-lwasi-emulated-signal)
   set(CATCH_CONFIG_NO_POSIX_SIGNALS ON)
 
-  # https://github.com/fmtlib/fmt/issues/4496#issuecomment-3094630184
-  add_compile_definitions(FMT_USE_FCNTL=0)
-
   # to make stack overflows crash instead of silently corrupt memory
   add_link_options(-Wl,--stack-first -Wl,-z,stack-size=1048576)
 
@@ -197,7 +222,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "WASI")
   # to have CTest invoke a Wasm engine when running tests
   set(mappings --dir=/ --dir=${CMAKE_CURRENT_SOURCE_DIR}/tests::tests)
   set(CMAKE_TEST_LAUNCHER
-      wasmtime run -S threads ${mappings}
+      wasmtime run ${mappings}
       CACHE STRING "")
 endif()
 
@@ -251,6 +276,10 @@ if(SLANG_INCLUDE_TOOLS)
   add_subdirectory(tools)
 endif()
 
+if(SLANG_INCLUDE_EXAMPLES)
+  add_subdirectory(examples)
+endif()
+
 if(SLANG_INCLUDE_DOCS)
   add_subdirectory(docs)
 endif()
@@ -265,28 +294,4 @@ endif()
 
 if(SLANG_INCLUDE_INSTALL)
   include(cmake/install-rules.cmake)
-endif()
-
-set(gitignore ${PROJECT_SOURCE_DIR}/.gitignore)
-if(SLANG_MASTER_PROJECT AND EXISTS ${gitignore})
-  # Get the list of ignored files from .gitignore.
-  file(STRINGS ${gitignore} lines)
-  list(REMOVE_ITEM lines /doc/html)
-  foreach(line ${lines})
-    string(REPLACE "/" "" line "${line}")
-    string(REPLACE "." "[.]" line "${line}")
-    string(REPLACE "*" ".*" line "${line}")
-    set(ignored_files ${ignored_files} "${line}$" "${line}/")
-  endforeach()
-  set(ignored_files ${ignored_files} /.git)
-
-  set(CPACK_PACKAGE_NAME slang)
-  set(CPACK_PACKAGE_INSTALL_DIRECTORY slang)
-  set(CPACK_PACKAGE_VENDOR "Michael Popoloski")
-  set(CPACK_SOURCE_GENERATOR ZIP)
-  set(CPACK_VERBATIM_VARIABLES YES)
-  set(CPACK_SOURCE_IGNORE_FILES ${ignored_files})
-  set(CPACK_SOURCE_PACKAGE_FILE_NAME slang-${SLANG_VERSION_STRING})
-  set(CPACK_RESOURCE_FILE_README ${PROJECT_SOURCE_DIR}/README.md)
-  include(CPack)
 endif()

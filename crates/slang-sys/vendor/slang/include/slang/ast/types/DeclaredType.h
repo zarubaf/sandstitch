@@ -85,12 +85,18 @@ enum class SLANG_EXPORT DeclaredTypeFlags {
     /// The type is for a variable declaration inside an interface or generate block.
     IfaceOrGenBlkVar = 1 << 16,
 
+    /// The net type was implicitly inferred for an ANSI `input` port that has an
+    /// explicit data type. Such a port is treated as a net per the LRM but the data type
+    /// is allowed to be one that wouldn't otherwise be valid for a net, so the usual net
+    /// type check is suppressed.
+    ImplicitInputNet = 1 << 17,
+
     /// A mask of flags that indicate additional type rules are needed to
     /// be checked after the type itself is resolved.
     NeedsTypeCheck = NetType | UserDefinedNetType | FormalArgMergeVar | Rand | DPIReturnType |
-                     DPIArg | RequireSequenceType | CoverageType | IfaceOrGenBlkVar
+        DPIArg | RequireSequenceType | CoverageType | IfaceOrGenBlkVar
 };
-SLANG_BITMASK(DeclaredTypeFlags, IfaceOrGenBlkVar)
+SLANG_BITMASK(DeclaredTypeFlags, ImplicitInputNet)
 
 /// Ties together various syntax nodes that declare the type of some parent symbol
 /// along with the logic necessary to resolve that type. Optionally includes an
@@ -128,6 +134,19 @@ public:
     /// Otherwise returns nullptr.
     const syntax::DataTypeSyntax* getTypeSyntax() const {
         return hasLink ? nullptr : typeOrLink.typeSyntax;
+    }
+
+    /// Like @a getTypeSyntax but follows the link chain, so for declared
+    /// types that link to a parameter's targetType this returns the syntax
+    /// of the parameter binding (e.g. `other_t` in `I #(.data_type(other_t))`).
+    const syntax::DataTypeSyntax* getResolvedTypeSyntax() const {
+        const DeclaredType* dt = this;
+        while (dt->hasLink) {
+            if (!dt->typeOrLink.link)
+                return nullptr;
+            dt = dt->typeOrLink.link;
+        }
+        return dt->typeOrLink.typeSyntax;
     }
 
     /// Sets an additional set of dimensions that represent the unpacked portion of

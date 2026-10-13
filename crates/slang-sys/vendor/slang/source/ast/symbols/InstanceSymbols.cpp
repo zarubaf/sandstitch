@@ -373,12 +373,11 @@ InstanceSymbol::InstanceSymbol(Compilation& compilation, std::string_view name, 
 InstanceSymbol& InstanceSymbol::createDefault(Compilation& comp, const DefinitionSymbol& definition,
                                               const HierarchyOverrideNode* hierarchyOverrideNode,
                                               const ConfigBlockSymbol* configBlock,
-                                              const ConfigRule* configRule,
-                                              SourceLocation locationOverride) {
-    auto loc = locationOverride ? locationOverride : definition.location;
-    auto& body = InstanceBodySymbol::fromDefinition(comp, definition, loc, InstanceFlags::None,
-                                                    hierarchyOverrideNode, configBlock, configRule);
-    auto& result = *comp.emplace<InstanceSymbol>(definition.name, loc, body, 0u);
+                                              const ConfigRule* configRule) {
+    auto& body = InstanceBodySymbol::fromDefinition(comp, definition, definition.location,
+                                                    InstanceFlags::None, hierarchyOverrideNode,
+                                                    configBlock, configRule);
+    auto& result = *comp.emplace<InstanceSymbol>(definition.name, definition.location, body, 0u);
 
     if (configBlock) {
         auto rc = comp.emplace<ResolvedConfig>(*configBlock, result);
@@ -438,8 +437,7 @@ Symbol& InstanceSymbol::createDefaultNested(const Scope& scope,
 
     auto instantiation = comp.emplace<HierarchyInstantiationSyntax>(
         nullptr, header.name, nullptr,
-        syntax::SeparatedSyntaxList<syntax::HierarchicalInstanceSyntax>(comp, instances),
-        header.semi);
+        SeparatedSyntaxList<HierarchicalInstanceSyntax>(comp, instances), header.semi);
 
     ASTContext context(scope, LookupLocation::max);
     SmallVector<const Symbol*> results;
@@ -506,7 +504,8 @@ void InstanceSymbol::fromSyntax(Compilation& comp, const HierarchyInstantiationS
 
     // If this instance is not instantiated then we'll just fill in a placeholder
     // and move on. This is likely inside an untaken generate branch.
-    if (flags.has(InstanceFlags::Uninstantiated)) {
+    if (flags.has(InstanceFlags::Uninstantiated) &&
+        !comp.hasFlag(CompilationFlags::CheckUninstantiated)) {
         UninstantiatedDefSymbol::fromSyntax(comp, syntax, context, results, implicitNets);
         return;
     }
@@ -753,8 +752,7 @@ void InstanceSymbol::fromFixupSyntax(Compilation& comp, const DefinitionSymbol& 
 
     auto instantiation = comp.emplace<HierarchyInstantiationSyntax>(
         nullptr, syntax.type->getFirstToken(), nullptr,
-        syntax::SeparatedSyntaxList<syntax::HierarchicalInstanceSyntax>(comp, instances),
-        syntax.semi);
+        SeparatedSyntaxList<HierarchicalInstanceSyntax>(comp, instances), syntax.semi);
 
     SmallVector<const Symbol*> implicitNets;
     fromSyntax(comp, *instantiation, context, results, implicitNets);
@@ -856,13 +854,256 @@ void InstanceSymbol::resolvePortConnections() const {
     connections = conns.copy(comp);
 }
 
+struct IfaceParamAccess {
+    std::string_view portName;
+    std::string_view paramName;
+    SmallVector<const ExpressionSyntax*, 4> elementSelectors;
+};
+
+static bool parseIfacePortBase(const ExpressionSyntax& expr, std::string_view& portName,
+                               SmallVectorBase<const ExpressionSyntax*>& selectors) {
+    if (expr.kind == SyntaxKind::IdentifierName) {
+        portName = expr.as<IdentifierNameSyntax>().identifier.valueText();
+        return true;
+    }
+
+    if (expr.kind == SyntaxKind::IdentifierSelectName) {
+        auto& selected = expr.as<IdentifierSelectNameSyntax>();
+        portName = selected.identifier.valueText();
+        for (auto select : selected.selectors) {
+            if (!select->selector || select->selector->kind != SyntaxKind::BitSelect)
+                return false;
+
+            selectors.push_back(select->selector->as<BitSelectSyntax>().expr);
+        }
+        return true;
+    }
+
+    if (expr.kind == SyntaxKind::ElementSelectExpression) {
+        auto& selected = expr.as<ElementSelectExpressionSyntax>();
+        if (!selected.select->selector ||
+            selected.select->selector->kind != SyntaxKind::BitSelect) {
+            return false;
+        }
+
+        if (!parseIfacePortBase(*selected.left, portName, selectors))
+            return false;
+
+        selectors.push_back(selected.select->selector->as<BitSelectSyntax>().expr);
+        return true;
+    }
+
+    return false;
+}
+
+// Returns the port and parameter names if `expr` is `<port>.<param>`. The access can parse either
+// as a member-access expression or, when the left side could be a scope, as a dotted scoped name.
+static std::optional<IfaceParamAccess> asPortParamAccess(const ExpressionSyntax& expr) {
+    if (expr.kind == SyntaxKind::MemberAccessExpression) {
+        auto& access = expr.as<MemberAccessExpressionSyntax>();
+        IfaceParamAccess result;
+        if (!parseIfacePortBase(*access.left, result.portName, result.elementSelectors))
+            return std::nullopt;
+
+        result.paramName = access.name.valueText();
+        return result;
+    }
+
+    if (expr.kind == SyntaxKind::ScopedName) {
+        auto& scoped = expr.as<ScopedNameSyntax>();
+        if (scoped.separator.kind != TokenKind::Dot)
+            return std::nullopt;
+        if (scoped.right->kind != SyntaxKind::IdentifierName)
+            return std::nullopt;
+
+        IfaceParamAccess result;
+        if (!parseIfacePortBase(*scoped.left, result.portName, result.elementSelectors))
+            return std::nullopt;
+
+        result.paramName = scoped.right->as<IdentifierNameSyntax>().identifier.valueText();
+        return result;
+    }
+
+    return std::nullopt;
+}
+
+using IfacePortMap = SmallMap<std::string_view, const InterfacePortSymbol*, 8>;
+
+struct IfaceParamConstraintMatch {
+    const InterfacePortSymbol* port;
+    std::string_view paramName;
+    const ExpressionSyntax* constraintExpr;
+    SmallVector<const ExpressionSyntax*, 4> elementSelectors;
+    bool isType;
+};
+
+// Given a `$static_assert` condition expression, see if it pins an interface port parameter to a
+// constant. Two shapes are recognized (with either operand on the left):
+//   - value:  `<port>.<param> == <expr>`
+//   - type:   `type(<port>.<param>) == type(<expr>)`
+static std::optional<IfaceParamConstraintMatch> matchIfaceParamConstraint(
+    const ExpressionSyntax& condition, const IfacePortMap& ifacePorts) {
+    if (condition.kind != SyntaxKind::EqualityExpression)
+        return std::nullopt;
+
+    auto& binExpr = condition.as<BinaryExpressionSyntax>();
+    const ExpressionSyntax* paramExpr = binExpr.left;
+    const ExpressionSyntax* constraintExpr = binExpr.right;
+
+    // In the type form both sides are `type(...)` references. Keep the full constraint expression
+    // for use as the parameter assignment, but unwrap the candidate parameter expression for
+    // matching the port access.
+    const bool isType = paramExpr->kind == SyntaxKind::TypeReference &&
+                        constraintExpr->kind == SyntaxKind::TypeReference;
+    auto getParamAccess = [&](const ExpressionSyntax& expr)
+        -> std::optional<std::pair<const InterfacePortSymbol*, IfaceParamAccess>> {
+        auto& access = isType ? *expr.as<TypeReferenceSyntax>().expr : expr;
+        auto result = asPortParamAccess(access);
+        if (!result)
+            return std::nullopt;
+
+        auto portIt = ifacePorts.find(result->portName);
+        if (portIt == ifacePorts.end())
+            return std::nullopt;
+
+        return std::pair{portIt->second, std::move(*result)};
+    };
+
+    auto paramAccess = getParamAccess(*paramExpr);
+    if (!paramAccess) {
+        std::swap(paramExpr, constraintExpr);
+        paramAccess = getParamAccess(*paramExpr);
+        if (!paramAccess)
+            return std::nullopt;
+    }
+
+    return IfaceParamConstraintMatch{paramAccess->first, paramAccess->second.paramName,
+                                     constraintExpr,
+                                     std::move(paramAccess->second.elementSelectors), isType};
+}
+
+struct IfaceParamAssignment {
+    std::string_view paramName;
+    const ExpressionSyntax* constraintExpr;
+};
+
+using IfaceParamAssignmentMap =
+    flat_hash_map<const InterfacePortSymbol*, std::vector<IfaceParamAssignment>>;
+
+// Scan direct-body `$static_assert`s once and collect the parameter assignments they imply for
+// each interface port. Asserts nested in generate blocks are skipped because their constraints are
+// conditional, but parameter assignments must be applied before elaborating generate branches.
+static IfaceParamAssignmentMap collectIfaceParamAssignments(const InstanceBodySymbol& body) {
+    auto bodySyntax = body.getSyntax() ? body.getSyntax()->as_if<ModuleDeclarationSyntax>()
+                                       : nullptr;
+    if (!bodySyntax)
+        return {};
+
+    IfacePortMap ifacePorts;
+    for (auto port : body.getPortList()) {
+        if (port->kind == SymbolKind::InterfacePort) {
+            auto& ifacePort = port->as<InterfacePortSymbol>();
+            if (ifacePort.interfaceDef)
+                ifacePorts.emplace(ifacePort.name, &ifacePort);
+        }
+    }
+
+    ASTContext context(body, LookupLocation::max);
+    IfaceParamAssignmentMap result;
+    for (auto member : bodySyntax->members) {
+        if (member->kind != SyntaxKind::ElabSystemTask)
+            continue;
+
+        auto& task = member->as<ElabSystemTaskSyntax>();
+        if (SemanticFacts::getElabSystemTaskKind(task.name) != ElabSystemTaskKind::StaticAssert)
+            continue;
+        if (!task.arguments || task.arguments->parameters.empty())
+            continue;
+
+        auto firstArg = task.arguments->parameters[0];
+        if (firstArg->kind != SyntaxKind::OrderedArgument)
+            continue;
+
+        // Unwrap the property/sequence wrappers down to a plain expression.
+        auto& propExpr = *firstArg->as<OrderedArgumentSyntax>().expr;
+        if (propExpr.kind != SyntaxKind::SimplePropertyExpr)
+            continue;
+
+        auto& seqExpr = *propExpr.as<SimplePropertyExprSyntax>().expr;
+        if (seqExpr.kind != SyntaxKind::SimpleSequenceExpr)
+            continue;
+
+        auto& simpleSeq = seqExpr.as<SimpleSequenceExprSyntax>();
+        if (simpleSeq.repetition)
+            continue;
+
+        auto match = matchIfaceParamConstraint(*simpleSeq.expr, ifacePorts);
+        if (!match)
+            continue;
+
+        // Only override parameters the interface actually declares, and require the constraint
+        // form to agree with the parameter kind. Localparams cannot be overridden.
+        auto& def = *match->port->interfaceDef;
+        auto declIt = std::ranges::find(def.parameters, match->paramName,
+                                        &DefinitionSymbol::ParameterDecl::name);
+        if (declIt == def.parameters.end() || declIt->isLocalParam ||
+            declIt->isTypeParam != match->isType) {
+            continue;
+        }
+
+        auto dims = match->port->getDeclaredRange();
+        if (!dims || dims->size() != match->elementSelectors.size())
+            continue;
+
+        // An interface instance array has one shared parameterization. The selectors identify a
+        // valid element whose parameter can appear in the assertion; the inferred assignment is
+        // applied to every element below.
+        bool validPath = true;
+        for (size_t i = 0; i < dims->size(); i++) {
+            auto& selectorExpr = Expression::bind(*match->elementSelectors[i], context);
+            auto selectorValue = context.tryEval(selectorExpr);
+            auto index = selectorValue.isInteger() ? selectorValue.integer().as<int32_t>()
+                                                   : std::optional<int32_t>{};
+            if (selectorExpr.hasHierarchicalReference() || !index ||
+                !(*dims)[i].containsPoint(*index)) {
+                validPath = false;
+                break;
+            }
+        }
+        if (!validPath)
+            continue;
+
+        // The assignment is bound before default interface instances exist, so values that
+        // traverse the instance hierarchy could observe stale parameter defaults. Restrict
+        // inference to expressions that are constant without any hierarchical references.
+        if (!match->isType) {
+            auto& expr = Expression::bind(*match->constraintExpr, context);
+            if (expr.hasHierarchicalReference() || !context.tryEval(expr))
+                continue;
+        }
+        else {
+            auto& typeRef = match->constraintExpr->as<TypeReferenceSyntax>();
+            auto access = asPortParamAccess(*typeRef.expr);
+            if (access && ifacePorts.contains(access->portName))
+                continue;
+        }
+
+        result[match->port].push_back({match->paramName, match->constraintExpr});
+    }
+
+    return result;
+}
+
 static Symbol* recurseDefaultIfaceInst(Compilation& comp, const InterfacePortSymbol& port,
                                        const InstanceSymbol*& firstInst,
+                                       ParameterBuilder& paramBuilder,
                                        std::span<const ConstantRange>::iterator it,
                                        std::span<const ConstantRange>::iterator end) {
     if (it == end) {
-        auto& result = InstanceSymbol::createDefault(comp, *port.interfaceDef, nullptr, nullptr,
-                                                     nullptr, port.location);
+        auto& body = InstanceBodySymbol::fromDefinition(comp, *port.interfaceDef, port.location,
+                                                        paramBuilder, InstanceFlags::None);
+
+        auto& result = *comp.emplace<InstanceSymbol>(port.name, port.location, body, 0u);
 
         if (!firstInst)
             firstInst = &result;
@@ -875,7 +1116,7 @@ static Symbol* recurseDefaultIfaceInst(Compilation& comp, const InterfacePortSym
 
     SmallVector<const Symbol*> elements;
     for (uint32_t i = 0; i < range.width(); i++) {
-        auto symbol = recurseDefaultIfaceInst(comp, port, firstInst, it, end);
+        auto symbol = recurseDefaultIfaceInst(comp, port, firstInst, paramBuilder, it, end);
         symbol->name = "";
         elements.push_back(symbol);
     }
@@ -893,19 +1134,40 @@ void InstanceSymbol::connectDefaultIfacePorts() const {
     SLANG_ASSERT(parent);
 
     auto& comp = parent->getCompilation();
-    ASTContext context(*parent, LookupLocation::max);
+    ASTContext context(body, LookupLocation::max);
+
+    // The body of the instantiating module may contain `$static_assert` constraints that
+    // pin interface-port parameters to specific values; we honor those when synthesizing
+    // the default interface instances below. Ideally one day the language will allow
+    // specifying these constraints in the port declaration itself, or typdefing parameterized
+    // interfaces.
+    auto ifaceParamAssignments = collectIfaceParamAssignments(body);
 
     SmallVector<const PortConnection*> conns;
     for (auto port : body.getPortList()) {
         if (port->kind == SymbolKind::InterfacePort) {
             auto& ifacePort = port->as<InterfacePortSymbol>();
             if (ifacePort.interfaceDef) {
+                auto& def = *ifacePort.interfaceDef;
+                ParameterBuilder paramBuilder(*def.getParentScope(), def.name, def.parameters);
+                paramBuilder.setInstanceContext(context);
+                if (comp.hasFlag(CompilationFlags::AllowInvalidTop))
+                    paramBuilder.setSuppressErrors(true);
+
+                if (auto it = ifaceParamAssignments.find(&ifacePort);
+                    it != ifaceParamAssignments.end()) {
+                    for (auto& assignment : it->second) {
+                        paramBuilder.addAssignment(assignment.paramName,
+                                                   *assignment.constraintExpr);
+                    }
+                }
+
                 Symbol* inst;
                 const ModportSymbol* modport = nullptr;
                 if (auto dims = ifacePort.getDeclaredRange()) {
                     const InstanceSymbol* firstInst = nullptr;
-                    inst = recurseDefaultIfaceInst(comp, ifacePort, firstInst, dims->begin(),
-                                                   dims->end());
+                    inst = recurseDefaultIfaceInst(comp, ifacePort, firstInst, paramBuilder,
+                                                   dims->begin(), dims->end());
 
                     if (firstInst) {
                         auto portRange = SourceRange{port->location,
@@ -964,6 +1226,10 @@ InstanceBodySymbol& InstanceBodySymbol::fromDefinition(
     ParameterBuilder paramBuilder(*definition.getParentScope(), definition.name,
                                   definition.parameters);
     paramBuilder.setForceInvalidValues(flags.has(InstanceFlags::Uninstantiated));
+    if (compilation.hasFlag(CompilationFlags::AllowInvalidTop) &&
+        instanceLoc == definition.location) {
+        paramBuilder.setSuppressErrors(true);
+    }
     if (hierarchyOverrideNode)
         paramBuilder.setOverrides(hierarchyOverrideNode);
 
@@ -1237,8 +1503,8 @@ void UninstantiatedDefSymbol::fromSyntax(Compilation& compilation,
 }
 
 void UninstantiatedDefSymbol::fromSyntax(
-    Compilation& compilation, const syntax::HierarchyInstantiationSyntax& syntax,
-    const syntax::HierarchicalInstanceSyntax* specificInstance, const ASTContext& parentContext,
+    Compilation& compilation, const HierarchyInstantiationSyntax& syntax,
+    const HierarchicalInstanceSyntax* specificInstance, const ASTContext& parentContext,
     SmallVectorBase<const Symbol*>& results, SmallVectorBase<const Symbol*>& implicitNets,
     SmallSet<std::string_view, 8>& implicitNetNames, const NetType& netType) {
 
@@ -1260,7 +1526,7 @@ void UninstantiatedDefSymbol::fromSyntax(
 
 void UninstantiatedDefSymbol::fromSyntax(Compilation& compilation,
                                          const PrimitiveInstantiationSyntax& syntax,
-                                         const syntax::HierarchicalInstanceSyntax* specificInstance,
+                                         const HierarchicalInstanceSyntax* specificInstance,
                                          const ASTContext& parentContext,
                                          SmallVectorBase<const Symbol*>& results,
                                          SmallVectorBase<const Symbol*>& implicitNets,
@@ -1298,7 +1564,8 @@ static const AssertionExpr* bindUnknownPortConn(const ASTContext& context,
     // We have to check for a simple reference to an interface instance or port here,
     // since we don't know whether this is an interface port connection or even
     // a normal connection with a virtual interface type.
-    const auto flags = ASTFlags::AllowUnboundedLiteral | ASTFlags::StreamingAllowed;
+    const auto flags = ASTFlags::AllowUnboundedLiteral | ASTFlags::StreamingAllowed |
+                       ASTFlags::UnknownPortConn;
     const SyntaxNode* node = &syntax;
     if (node->kind == SyntaxKind::SimplePropertyExpr) {
         node = node->as<SimplePropertyExprSyntax>().expr;
@@ -1331,9 +1598,11 @@ static const AssertionExpr* bindUnknownPortConn(const ASTContext& context,
                     }
                 }
 
-                return comp.emplace<SimpleAssertionExpr>(
-                    Expression::bindRValue(comp.getErrorType(), *expr, {}, context, flags),
-                    std::nullopt);
+                // Bind self-determined so that typeable connections keep their real
+                // type. The UnknownPortConn flag suppresses diagnostics for the
+                // genuinely context-dependent expressions that have no such type.
+                return comp.emplace<SimpleAssertionExpr>(Expression::bind(*expr, context, flags),
+                                                         std::nullopt);
             }
         }
     }
@@ -1384,6 +1653,9 @@ std::span<const AssertionExpr* const> UninstantiatedDefSymbol::getPortConnection
         portNames = names.copy(comp);
 
         for (auto port : *ports) {
+            if (port->kind == AssertionExprKind::Invalid)
+                continue;
+
             if (port->kind != AssertionExprKind::Simple ||
                 port->as<SimpleAssertionExpr>().repetition) {
                 mustBeChecker = true;
@@ -1510,8 +1782,8 @@ Symbol* recursePrimArray(Compilation& comp, const PrimitiveSymbol& primitive,
 
 template<typename TSyntax>
 void createPrimitives(const PrimitiveSymbol& primitive, const TSyntax& syntax,
-                      const syntax::HierarchicalInstanceSyntax* specificInstance,
-                      const ASTContext& context, SmallVectorBase<const Symbol*>& results,
+                      const HierarchicalInstanceSyntax* specificInstance, const ASTContext& context,
+                      SmallVectorBase<const Symbol*>& results,
                       SmallVectorBase<const Symbol*>& implicitNets,
                       SmallSet<std::string_view, 8>& implicitNetNames) {
     SmallVector<uint32_t> path;
@@ -1519,7 +1791,7 @@ void createPrimitives(const PrimitiveSymbol& primitive, const TSyntax& syntax,
     auto& comp = context.getCompilation();
     auto& netType = context.scope->getDefaultNetType();
 
-    auto createInst = [&](const syntax::HierarchicalInstanceSyntax* instance) {
+    auto createInst = [&](const HierarchicalInstanceSyntax* instance) {
         path.clear();
         detail::createImplicitNets(*instance, context, netType, InstanceFlags::None,
                                    implicitNetNames, implicitNets);
@@ -1549,7 +1821,7 @@ void createPrimitives(const PrimitiveSymbol& primitive, const TSyntax& syntax,
 
 void PrimitiveInstanceSymbol::fromSyntax(const PrimitiveSymbol& primitive,
                                          const HierarchyInstantiationSyntax& syntax,
-                                         const syntax::HierarchicalInstanceSyntax* specificInstance,
+                                         const HierarchicalInstanceSyntax* specificInstance,
                                          const ASTContext& context,
                                          SmallVectorBase<const Symbol*>& results,
                                          SmallVectorBase<const Symbol*>& implicitNets,
@@ -1612,7 +1884,7 @@ void PrimitiveInstanceSymbol::fromSyntax(const PrimitiveInstantiationSyntax& syn
                 auto pvas = comp.emplace<ParameterValueAssignmentSyntax>(
                     delaySyntax.hash,
                     missing(TokenKind::OpenParenthesis, delayVal.getFirstToken().location()),
-                    syntax::SeparatedSyntaxList<syntax::ParamAssignmentSyntax>(comp, parameters),
+                    SeparatedSyntaxList<ParamAssignmentSyntax>(comp, parameters),
                     missing(TokenKind::CloseParenthesis, delayVal.getLastToken().location()));
 
                 // Rebuild the instance list. The const_casts are fine because
@@ -1629,8 +1901,7 @@ void PrimitiveInstanceSymbol::fromSyntax(const PrimitiveInstantiationSyntax& syn
 
                 auto instantiation = comp.emplace<HierarchyInstantiationSyntax>(
                     syntax.attributes, syntax.type, pvas,
-                    syntax::SeparatedSyntaxList<syntax::HierarchicalInstanceSyntax>(comp,
-                                                                                    instanceBuf),
+                    SeparatedSyntaxList<HierarchicalInstanceSyntax>(comp, instanceBuf),
                     syntax.semi);
                 InstanceSymbol::fromSyntax(comp, *instantiation, context, results, implicitNets);
                 return;
@@ -1915,10 +2186,9 @@ void createImplicitNets(const HierarchicalInstanceSyntax& instance, const ASTCon
         SmallVector<const IdentifierNameSyntax*> implicitNets;
         Expression::findPotentiallyImplicitNets(*expr, ctx, implicitNets);
 
-        auto& comp = ctx.getCompilation();
         for (auto ins : implicitNets) {
             if (implicitNetNames.emplace(ins->identifier.valueText()).second)
-                results.push_back(&NetSymbol::createImplicit(comp, *ins, netType));
+                results.push_back(&NetSymbol::createImplicit(ctx, *ins, netType));
         }
     }
 }

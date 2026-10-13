@@ -792,7 +792,7 @@ fn anonymous_enum_in_package_typedef() {
 
 #[test]
 fn ansi_enum_port_before_aggregate_port() {
-    // Slang v11 resolves the enum port to the error type, without a
+    // Slang (MikePopoloski/slang#2017) resolves the enum port to the error type, without a
     // diagnostic, when an anonymous struct or union port follows it; the
     // port is reported as unsupported.
     for aggregate in ["struct packed { logic f; }", "union packed { logic f; }"] {

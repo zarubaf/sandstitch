@@ -8,10 +8,11 @@
 #pragma once
 
 #include <filesystem>
-#include <fmt/color.h>
+#include <functional>
 
 #include "slang/util/ScopeGuard.h"
 #include "slang/util/SmallVector.h"
+#include "slang/util/TextStyle.h"
 #include "slang/util/Util.h"
 
 namespace slang {
@@ -49,23 +50,29 @@ public:
     static void print(std::string_view text);
 
     /// Prints colored formatted text to stdout.
-    static void print(const fmt::text_style& style, std::string_view text);
+    static void print(const TextStyle& style, std::string_view text);
 
     /// Prints formatted text to stderr.
     static void printE(std::string_view text);
 
     /// Prints colored formatted text to stderr.
-    static void printE(const fmt::text_style& style, std::string_view text);
+    static void printE(const TextStyle& style, std::string_view text);
+
+    /// Formats an exception message and prints it to stderr. @a format is a
+    /// format string containing a single `{}` placeholder that is replaced
+    /// with @a what.
+    static void printException(std::string_view format, std::string_view what);
 
     static std::string getEnv(const std::string& name);
     static std::string parseEnvVar(const char*& ptr, const char* end);
 
-    static auto captureOutput() {
+    static auto captureOutput(
+        std::function<void(std::string_view, bool)> callback = captureOutputStreams) {
+
+        outputCallback = std::move(callback);
         capturedStdout.clear();
         capturedStderr.clear();
-
-        capturingOutput = true;
-        return ScopeGuard([] { capturingOutput = false; });
+        return ScopeGuard([] { outputCallback = {}; });
     }
 
     static inline std::string capturedStdout;
@@ -77,12 +84,25 @@ public:
     /// or 0 if the information is not available on this platform.
     static uint64_t getPeakMemoryBytes();
 
+    /// Returns the width in columns of the terminal attached to the standard
+    /// output (or standard error) stream, or 0 if it can't be determined, for
+    /// example when the output is redirected to a file or pipe.
+    static uint32_t getTerminalWidth();
+
 private:
     OS() = default;
 
+    // Default callback to record outputs
+    static void captureOutputStreams(std::string_view text, bool isStdout) {
+        if (isStdout)
+            capturedStdout += text;
+        else
+            capturedStderr += text;
+    }
+
     static inline bool showColorsStdout = false;
     static inline bool showColorsStderr = false;
-    static inline bool capturingOutput = false;
+    static inline std::function<void(std::string_view, bool)> outputCallback;
 };
 
 } // namespace slang
