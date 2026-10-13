@@ -26,6 +26,13 @@ fn elaborate(args: &[&str]) -> Response {
     run(&request(args, Stage::Elaborate)).unwrap()
 }
 
+/// Like `elaborate`, asking for the AST as JSON.
+fn elaborate_json(args: &[&str]) -> Response {
+    let mut req = request(args, Stage::Elaborate);
+    req.ast_json = AstJson::Json { source_info: false };
+    run(&req).unwrap()
+}
+
 /// A source file with `text`, deleted when dropped.
 fn source(text: &str) -> tempfile::NamedTempFile {
     let mut file = tempfile::Builder::new().suffix(".sv").tempfile().unwrap();
@@ -92,7 +99,7 @@ fn macro_error_reports_original_location() {
 
 #[test]
 fn missing_source_is_fatal() {
-    let r = elaborate(&["/nonexistent/x.sv"]);
+    let r = elaborate_json(&["/nonexistent/x.sv"]);
     assert!(!r.ok);
     let fatal = with_severity(&r, Severity::Fatal);
     assert_eq!(fatal.len(), 1, "{:?}", r.diagnostics);
@@ -148,7 +155,7 @@ fn missing_include_dir_is_a_warning() {
 
 #[test]
 fn binary_only_option_is_fatal() {
-    let r = elaborate(&["--ast-json", "x.json", &fixture("width.sv")]);
+    let r = elaborate_json(&["--ast-json", "x.json", &fixture("width.sv")]);
     assert!(!r.ok);
     let fatal = with_severity(&r, Severity::Fatal);
     assert!(
@@ -157,6 +164,57 @@ fn binary_only_option_is_fatal() {
         r.diagnostics
     );
     assert!(r.ast_json.is_empty());
+}
+
+#[test]
+fn dependency_file_options_are_fatal() {
+    let width = fixture("width.sv");
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("deps.txt");
+    let out = out.to_str().unwrap();
+    let cases: [&[&str]; 8] = [
+        &["--Mall", out],
+        &["--all-deps", out],
+        &["--Minclude", out],
+        &["--include-deps", out],
+        &["--Mmodule", out],
+        &["--module-deps", out],
+        &["--depfile-target", "t"],
+        &["--diag-json", out],
+    ];
+    for case in cases {
+        let mut args: Vec<&str> = case.to_vec();
+        args.push(&width);
+        let r = elaborate_json(&args);
+        assert!(!r.ok, "{case:?}");
+        let fatal = with_severity(&r, Severity::Fatal);
+        assert!(
+            fatal
+                .iter()
+                .any(|d| d.message.contains(case[0]) && d.message.contains("not supported")),
+            "{case:?}: {:?}",
+            r.diagnostics
+        );
+        assert!(r.ast_json.is_empty(), "{case:?}");
+        assert!(!Path::new(out).exists(), "{case:?} wrote a file");
+    }
+}
+
+#[test]
+fn invalid_utf8_in_a_diagnostic_is_replaced() {
+    // `$error` with a Latin-1 byte in its string literal.
+    let mut text = b"module m; $error(\"caf".to_vec();
+    text.push(0xE9);
+    text.extend_from_slice(b"\");endmodule\n");
+    let mut file = tempfile::Builder::new().suffix(".sv").tempfile().unwrap();
+    file.write_all(&text).unwrap();
+    let r = elaborate(&[path(&file)]);
+    let all: Vec<&Diag> = r.diagnostics.iter().collect();
+    assert!(
+        all.iter().any(|d| d.message.contains('\u{FFFD}')),
+        "{:?}",
+        r.diagnostics
+    );
 }
 
 #[test]

@@ -158,11 +158,12 @@ pub fn run(request: &Request) -> Result<Response, Error> {
         ast_json,
         source_info,
     };
-    let response = std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("slang".into())
         .stack_size(STACK_SIZE)
         .spawn(move || ffi::run(&ffi_request))
-        .expect("spawning the Slang thread")
+        .map_err(|e| Error(format!("spawning the Slang thread: {e}")))?;
+    let response = thread
         .join()
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
         .map_err(|e| Error(e.what().to_string()))?;

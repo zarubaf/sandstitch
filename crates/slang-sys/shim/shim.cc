@@ -41,8 +41,33 @@ constexpr uint8_t WARNING = 1;
 constexpr uint8_t ERROR = 2;
 constexpr uint8_t FATAL = 3;
 
+/// Invalid UTF-8 (a Latin-1 byte in a string literal, say) becomes U+FFFD
+/// instead of making `rust::String` throw and the whole run fail.
 rust::String str(std::string_view text) {
-    return rust::String(text.data(), text.size());
+    return rust::String::lossy(text.data(), text.size());
+}
+
+/// Options whose effect lives in `Driver::optionallyWriteDepFiles` or
+/// `Driver::reportDiagnostics`, which the shim never calls: they would
+/// silently do nothing, so they are rejected.
+std::vector<FfiDiag> unsupportedOptions(const driver::Driver::Options& options) {
+    std::vector<FfiDiag> out;
+    auto reject = [&](bool set, std::string_view names) {
+        if (!set)
+            return;
+        FfiDiag d{};
+        d.severity = FATAL;
+        d.message = str("`" + std::string(names) +
+                        "` is not supported in-process: Sandstitch does not write dependency "
+                        "or diagnostic files; use the dependency list Sandstitch records");
+        out.push_back(std::move(d));
+    };
+    reject(options.allDepfile.has_value(), "--Mall`/`--all-deps");
+    reject(options.includeDepfile.has_value(), "--Minclude`/`--include-deps");
+    reject(options.moduleDepfile.has_value(), "--Mmodule`/`--module-deps");
+    reject(options.depfileTarget.has_value(), "--depfile-target");
+    reject(options.diagJson.has_value(), "--diag-json");
+    return out;
 }
 
 /// Records every diagnostic the engine reports, after the engine applied
@@ -155,6 +180,7 @@ FfiResponse run(const FfiRequest& request) {
 
     bool optionsOk = false;
     std::string printed;
+    std::vector<FfiDiag> unsupported;
     {
         std::lock_guard lock(frontMutex);
         auto capture = OS::captureOutput();
@@ -167,6 +193,10 @@ FfiResponse run(const FfiRequest& request) {
         driver->addStandardArgs();
         optionsOk = driver->parseCommandLine(int(argv.size()), argv.data()) &&
                     driver->processOptions();
+        if (optionsOk) {
+            unsupported = unsupportedOptions(driver->options);
+            optionsOk = unsupported.empty();
+        }
         // As `slang`: a source that fails to load is reported, and the run
         // goes on with the rest.
         if (optionsOk)
@@ -221,6 +251,8 @@ FfiResponse run(const FfiRequest& request) {
     }
 
     auto fromPrinter = printedDiags(printed);
+    for (auto& d : unsupported)
+        fromPrinter.push_back(std::move(d));
     bool fatal = false;
     for (auto& d : fromPrinter) {
         fatal |= d.severity == FATAL;
