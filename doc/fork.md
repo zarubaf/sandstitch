@@ -14,6 +14,24 @@ Sandstitch is a hard fork of Topstitch.
   Layout), so the paths have diverged. The base above stays recorded.
 - Divergences are listed below as they happen.
 
+## Releases
+
+- Sandstitch has its own SemVer, independent of Topstitch's. Topstitch's
+  `v0.x` tags (through `v0.100.0`, the base) belong to upstream: they arrive
+  with the `upstream` remote and are never pushed here. Fetch that remote with
+  `git fetch --no-tags upstream`, and push release tags by name, never with
+  `git push --tags`. A Sandstitch version that coincides with an upstream tag
+  name is skipped.
+- Every workspace crate carries one version, set in `[workspace.package]` in
+  the root `Cargo.toml`. Before 1.0, a minor bump is a breaking change.
+- A release is an annotated tag `v<version>` on `main` with a GitHub release;
+  pre-releases use SemVer pre-release identifiers (`v0.1.0-alpha.1`).
+- The crates are not published to crates.io (`publish = false`); downstream
+  projects depend on a tag through Cargo's git source, by the package name
+  `topstitch`:
+  `topstitch = { git = "https://github.com/zarubaf/sandstitch", tag = "v0.1.0-alpha.1" }`.
+  Publishing is planned for the pilot release (#9).
+
 ## Layout
 
 Upstream path (base `v0.100.0`) to Sandstitch path:
@@ -72,8 +90,8 @@ outside the crate no longer compile.
   `tests/syntax/params.rs` (upstream paths; see Layout for the current ones).
 - `src/` reorganised by concern (see Layout); the moves changed only module,
   `use` and macro paths.
-- `Cargo.toml`: `slang-rs = "=0.22.0"` and `xlsynth-vast = "=0.65.0"` are
-  pinned exactly (upstream used caret requirements).
+- `Cargo.toml`: `slang-rs` and `xlsynth-vast` are path dependencies on the
+  forked copies under `crates/` (upstream used crates.io caret requirements).
 
 ### Library behavior
 
@@ -131,8 +149,9 @@ see `slang_check_rejects_flat_union_connection` in `tests/typed/emit.rs`).
 
 ## Forked dependencies
 
-Both live under `crates/` as workspace members; the library depends on them by
-path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
+Both live under `crates/` as workspace members, and the library depends on them
+by path. They carry the Sandstitch release version (see Releases), not their
+upstream versions.
 
 ### slang-rs (subtree)
 
@@ -155,7 +174,8 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
   `log`, `env_logger`); `[lints.clippy]` allows `collapsible_if`,
   `unneeded_wildcard_pattern` and `while_let_loop` for pre-existing upstream
   code; `Cargo.lock` is dropped, as for xlsynth-vast (the workspace lock is
-  authoritative), and a subtree pull brings it back.
+  authoritative), and a subtree pull brings it back; `version` inherits from
+  `[workspace.package]` and `publish = false` is set.
 - Sandstitch extensions: replaced by the typed design, see
   `doc/design/slang-in-process.md`.
 
@@ -176,7 +196,8 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
   - Manifest: the `[[test]]` list, `autotests`, `autolib`, `autobins` and
     `resolver = "2"` are removed (so new test files run and the workspace
     resolver applies); `[lints.clippy] write_with_newline` and `clone_on_copy`
-    are allowed for pre-existing upstream code.
+    are allowed for pre-existing upstream code; `version` inherits from
+    `[workspace.package]` and `publish = false` is set.
   - `LICENSE`: added because the published crate declares
     `license = "Apache-2.0"` but ships no licence file; it is the monorepo's
     own `LICENSE` at the base commit, byte for byte.

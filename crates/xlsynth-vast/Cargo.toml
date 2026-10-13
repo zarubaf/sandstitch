@@ -12,7 +12,8 @@
 [package]
 edition = "2024"
 name = "xlsynth-vast"
-version = "0.65.0"
+version.workspace = true
+publish = false
 authors = ["Christopher D. Leary <cdleary@gmail.com>"]
 build = false
 autoexamples = false
