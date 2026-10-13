@@ -53,4 +53,23 @@ codes! {
     S0301;
     /// Macro defined differently by two imports in the build.
     S0302;
+    /// Component bits with more than one driver: two definition inputs or
+    /// instance outputs, one of each, a constant and a port, or two constants.
+    S0401;
+    /// Bits of an end that are not connected, tied off or marked unused.
+    S0402;
+    /// Component bits with no driver.
+    S0403;
+    /// Conflicting intent on the same bits: unused and connected, tied off or
+    /// wired; unused twice; the same end tied off twice; wired twice; tied off
+    /// and wired; a wire on a net driven by a definition input.
+    S0404;
+    /// Tieoff or unused on an end whose direction does not allow it.
+    S0405;
+    /// Inout conflict: several definition inouts on one net, or a definition
+    /// inout with a definition input or output.
+    S0406;
+    /// A connection between bits already joined by other connections, other
+    /// than an identical repeat.
+    S0409;
 }

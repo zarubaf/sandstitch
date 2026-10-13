@@ -37,7 +37,7 @@ impl PortSlice {
             self.port
                 .get_port_connections_define_if_missing()
                 .write()
-                .add_user(this, other, CallSite::here());
+                .add_user(this, other, CallSite::here(), true);
         } else {
             panic!(
                 "{} only works on ports (or slices of ports) on module instances",
@@ -247,7 +247,7 @@ impl PortSlice {
             {
                 let connections = self.port.get_port_connections_define_if_missing();
                 let mut connections = connections.write();
-                connections.add_user(self.clone(), other_as_slice.clone(), site.clone());
+                connections.add_user(self.clone(), other_as_slice.clone(), site.clone(), true);
                 if let Some(record) = record {
                     connections.add_record(record);
                 }
@@ -256,7 +256,7 @@ impl PortSlice {
                 .port
                 .get_port_connections_define_if_missing()
                 .write()
-                .add_user(other_as_slice.clone(), self.clone(), site);
+                .add_user(other_as_slice.clone(), self.clone(), site, false);
         }
     }
 

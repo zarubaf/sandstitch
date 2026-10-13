@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use topstitch::diagnostic::codes;
 use topstitch::*;
+
+use crate::common::assert_check;
 
 #[test]
 fn test_inout_rename() {
@@ -176,7 +179,6 @@ endmodule
 }
 
 #[test]
-#[should_panic(expected = "B.inst_a.a is unconnected")]
 fn test_inout_unused_0() {
     let a_verilog = "\
 module A(
@@ -189,11 +191,10 @@ endmodule";
 
     b_mod_def.instantiate(&a_mod_def, Some("inst_a"), None);
 
-    b_mod_def.emit(EmitOptions::default());
+    assert_check(&b_mod_def, &[(codes::S0402, "B", "inst_a.a", 0, 0)]);
 }
 
 #[test]
-#[should_panic(expected = "B.inst_a.a[1] is unconnected")]
 fn test_inout_unused_1() {
     let a_verilog = "\
 module A(
@@ -212,19 +213,17 @@ endmodule";
         .bit(0)
         .connect(&b_mod_def.get_port("b"));
 
-    b_mod_def.emit(EmitOptions::default());
+    assert_check(&b_mod_def, &[(codes::S0402, "B", "inst_a.a", 1, 1)]);
 }
 
 #[test]
-#[should_panic(expected = "A.a is unconnected")]
 fn test_inout_unused_2() {
     let a_mod_def: ModDef = ModDef::new("A");
     a_mod_def.add_port("a", IO::InOut(1));
-    a_mod_def.emit(EmitOptions::default());
+    assert_check(&a_mod_def, &[(codes::S0402, "A", "a", 0, 0)]);
 }
 
 #[test]
-#[should_panic(expected = "B.b[1] is unconnected")]
 fn test_inout_unused_3() {
     let a_verilog = "\
 module A(
@@ -243,5 +242,5 @@ endmodule";
         .bit(0)
         .connect(&b_mod_def.get_port("b").bit(0));
 
-    b_mod_def.emit(EmitOptions::default());
+    assert_check(&b_mod_def, &[(codes::S0402, "B", "b", 1, 1)]);
 }

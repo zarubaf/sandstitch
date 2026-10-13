@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::time::Instant;
+use topstitch::diagnostic::codes;
 use topstitch::*;
 
+use crate::common::assert_check;
+
 #[test]
-#[should_panic(expected = "TestMod.out is unconnected")]
 fn test_moddef_output_undriven() {
     let mod_def = ModDef::new("TestMod");
     mod_def.add_port("out", IO::Output(1));
-    mod_def.emit(EmitOptions::default()); // Should panic
+    assert_check(&mod_def, &[(codes::S0402, "TestMod", "out", 0, 0)]);
 }
 
 #[test]
-#[should_panic(expected = "TestMod.out[0:0] is multiply driven")]
 fn test_moddef_output_multiple_drivers() {
     let mod_def = ModDef::new("TestMod");
     let out_port = mod_def.add_port("out", IO::Output(1));
@@ -22,11 +23,10 @@ fn test_moddef_output_multiple_drivers() {
     out_port.connect(&in_port1);
     out_port.connect(&in_port2);
 
-    mod_def.emit(EmitOptions::default()); // Should panic
+    assert_check(&mod_def, &[(codes::S0401, "TestMod", "out", 0, 0)]);
 }
 
 #[test]
-#[should_panic(expected = "ParentMod.leaf_inst.in is unconnected")]
 fn test_modinst_input_undriven() {
     let leaf = ModDef::new("LeafMod");
     leaf.set_usage(Usage::EmitStubAndStop);
@@ -34,11 +34,13 @@ fn test_modinst_input_undriven() {
 
     let parent = ModDef::new("ParentMod");
     parent.instantiate(&leaf, Some("leaf_inst"), None);
-    parent.emit(EmitOptions::default()); // Should panic
+    assert_check(
+        &parent,
+        &[(codes::S0402, "ParentMod", "leaf_inst.in", 0, 0)],
+    );
 }
 
 #[test]
-#[should_panic(expected = "ParentMod.leaf_inst.in[0:0] is multiply driven")]
 fn test_modinst_input_multiple_drivers() {
     let leaf = ModDef::new("LeafMod");
     leaf.set_usage(Usage::EmitStubAndStop);
@@ -53,15 +55,17 @@ fn test_modinst_input_multiple_drivers() {
     inst.get_port("in").connect(&in_port1);
     inst.get_port("in").connect(&in_port2);
 
-    parent.emit(EmitOptions::default()); // Should panic
+    assert_check(
+        &parent,
+        &[(codes::S0401, "ParentMod", "leaf_inst.in", 0, 0)],
+    );
 }
 
 #[test]
-#[should_panic(expected = "TestMod.in is unconnected")]
 fn test_moddef_input_not_driving_anything() {
     let mod_def = ModDef::new("TestMod");
     mod_def.add_port("in", IO::Input(1));
-    mod_def.emit(EmitOptions::default()); // Should panic
+    assert_check(&mod_def, &[(codes::S0402, "TestMod", "in", 0, 0)]);
 }
 
 #[test]
@@ -73,7 +77,6 @@ fn test_moddef_input_unused() {
 }
 
 #[test]
-#[should_panic(expected = "ParentMod.leaf_inst.out is unconnected")]
 fn test_modinst_output_not_driving_anything() {
     let leaf = ModDef::new("LeafMod");
     leaf.set_usage(Usage::EmitStubAndStop);
@@ -81,7 +84,10 @@ fn test_modinst_output_not_driving_anything() {
 
     let parent = ModDef::new("ParentMod");
     parent.instantiate(&leaf, Some("leaf_inst"), None);
-    parent.emit(EmitOptions::default()); // Should panic
+    assert_check(
+        &parent,
+        &[(codes::S0402, "ParentMod", "leaf_inst.out", 0, 0)],
+    );
 }
 
 #[test]
@@ -187,7 +193,6 @@ fn test_valid_connection_moddef_to_modinst() {
 
 // Test 19: Multiple drivers due to overlapping tieoffs
 #[test]
-#[should_panic(expected = "TestMod.out[6:1] has been tied off multiple times")]
 fn test_multiple_drivers_overlapping_tieoffs() {
     let mod_def = ModDef::new("TestMod");
     let out_port = mod_def.add_port("out", IO::Output(8));
@@ -195,11 +200,10 @@ fn test_multiple_drivers_overlapping_tieoffs() {
     out_port.slice(7, 0).tieoff(0);
     out_port.slice(6, 1).tieoff(1);
 
-    mod_def.emit(EmitOptions::default()); // Should panic
+    assert_check(&mod_def, &[(codes::S0404, "TestMod", "out", 6, 1)]);
 }
 
 #[test]
-#[should_panic(expected = "TestMod.out[6:1] is multiply driven")]
 fn test_multiple_drivers_overlapping_connections() {
     let mod_def = ModDef::new("TestMod");
     let out_port = mod_def.add_port("out", IO::Output(8));
@@ -212,7 +216,7 @@ fn test_multiple_drivers_overlapping_connections() {
     out_port.connect(&bus_a);
     out_port.slice(6, 1).connect(&bus_b.slice(6, 1));
 
-    mod_def.emit(EmitOptions::default()); // Should panic
+    assert_check(&mod_def, &[(codes::S0401, "TestMod", "out", 6, 1)]);
 }
 
 #[test]
@@ -250,7 +254,6 @@ fn test_large_validation() {
 }
 
 #[test]
-#[should_panic(expected = "Cycle detected in the connection graph")]
 fn test_multiple_drivers_complex() {
     let top = ModDef::new("Top");
 
@@ -271,11 +274,16 @@ fn test_multiple_drivers_complex() {
     blks.first().unwrap().get_port("left").export();
     blks.last().unwrap().get_port("right").export();
 
-    top.emit(EmitOptions::default());
+    assert_check(
+        &top,
+        &[
+            (codes::S0401, "Top", "Block_i_0.right", 7, 0),
+            (codes::S0409, "Top", "Block_i_0.right", 7, 0),
+        ],
+    );
 }
 
 #[test]
-#[should_panic(expected = "Cycle detected in the connection graph")]
 fn test_connection_cycle_inout() {
     let top = ModDef::new("Top");
 
@@ -295,5 +303,5 @@ fn test_connection_cycle_inout() {
     blk_b.get_port("x").connect(&blk_c.get_port("x"));
     blk_c.get_port("x").connect(&blk_a.get_port("x"));
 
-    top.emit(EmitOptions::default());
+    assert_check(&top, &[(codes::S0409, "Top", "blk_a.x", 0, 0)]);
 }

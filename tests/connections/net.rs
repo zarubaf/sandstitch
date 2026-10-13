@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use topstitch::diagnostic::codes;
 use topstitch::*;
+
+use crate::common::assert_check;
 
 #[test]
 fn test_specify_net_name() {
@@ -124,7 +127,6 @@ endmodule
 }
 
 #[test]
-#[should_panic(expected = "TopModule.B_i.bi is unconnected")]
 fn test_specify_net_name_undriven_input() {
     let a_verilog = "\
 module A(
@@ -142,11 +144,10 @@ endmodule";
     let a_inst = top.instantiate(&a_mod_def, None, None);
     top.instantiate(&b_mod_def, None, None);
     a_inst.get_port("ao").specify_net_name("custom");
-    top.emit(EmitOptions::default());
+    assert_check(&top, &[(codes::S0402, "TopModule", "B_i.bi", 0, 0)]);
 }
 
 #[test]
-#[should_panic(expected = "TopModule.A_i.ao is unconnected")]
 fn test_specify_net_name_unused_output() {
     let a_verilog = "\
 module A(
@@ -164,7 +165,13 @@ endmodule";
     top.instantiate(&a_mod_def, None, None);
     let b_inst = top.instantiate(&b_mod_def, None, None);
     b_inst.get_port("bi").specify_net_name("custom");
-    top.emit(EmitOptions::default());
+    assert_check(
+        &top,
+        &[
+            (codes::S0402, "TopModule", "A_i.ao", 0, 0),
+            (codes::S0403, "TopModule", "B_i.bi", 0, 0),
+        ],
+    );
 }
 
 #[test]

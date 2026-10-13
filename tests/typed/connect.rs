@@ -88,6 +88,33 @@ fn logic(dims: &[(i64, i64)]) -> PortType {
     }
 }
 
+/// Completes a design: marks every bit of the ports of `insts` outside
+/// `used` unused (outputs) or ties it off (inputs).
+fn complete(insts: &[&ModInst], used: &[impl ConvertibleToPortSlice]) {
+    let used: Vec<PortSlice> = used.iter().map(|u| u.to_port_slice()).collect();
+    for inst in insts {
+        for port in inst.get_ports(None) {
+            let mut taken: Vec<(usize, usize)> = used
+                .iter()
+                .filter(|u| u.get_port() == port)
+                .map(|u| (u.msb(), u.lsb()))
+                .collect();
+            taken.sort_by_key(|&(msb, _)| std::cmp::Reverse(msb));
+            // Bits at and above `next` are used or completed.
+            let mut next = port.io().width();
+            for (msb, lsb) in taken {
+                if msb + 1 < next {
+                    port.slice(next - 1, msb + 1).unused_or_tieoff(0);
+                }
+                next = next.min(lsb);
+            }
+            if next > 0 {
+                port.slice(next - 1, 0).unused_or_tieoff(0);
+            }
+        }
+    }
+}
+
 fn panic_message(f: impl FnOnce()) -> String {
     let payload = catch_unwind(AssertUnwindSafe(f)).expect_err("expected a panic");
     match payload.downcast::<String>() {
@@ -279,11 +306,14 @@ fn mismatch_is_reported_at_the_call_site() {
     // Same width (44), different layout.
     let line = line!() + 1;
     d.get_port("i1").connect(&s.get_port("f"));
+    complete(&[&s, &d], &[d.get_port("i1"), s.get_port("f")]);
 
     let diagnostics = top.check();
     assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
     let diag = &diagnostics.0[0];
     assert_eq!(diag.code, codes::S0201);
+    assert_eq!(diag.object, None);
+    assert_eq!(diagnostics.to_json()[0]["object"], serde_json::Value::Null);
     assert_eq!(
         diag.message,
         "incompatible types `lay_pkg::flit_t` and `lay_pkg::flat_t` in connection"
@@ -319,11 +349,9 @@ fn nested_field_mismatch_names_the_field_path() {
     let s = top.instantiate(&src, Some("s"), None);
     let l = top.instantiate(&lay, Some("l"), None);
     // flat_t vs flit_t again, but through selections on both ends.
-    l.get_port("w")
-        .index(1)
-        .field("flits")
-        .index(0)
-        .connect(&s.get_port("f"));
+    let flit = l.get_port("w").index(1).field("flits").index(0);
+    flit.connect(&s.get_port("f"));
+    complete(&[&s, &l], &[flit, s.get_port("f").to_port_slice()]);
     let diagnostics = top.check();
     assert_eq!(diagnostics.0.len(), 1);
     assert_eq!(
@@ -339,14 +367,22 @@ fn nested_field_mismatch_names_the_field_path() {
     let top = ModDef::new("top2");
     let s = top.instantiate(&src, Some("s"), None);
     let l = top.instantiate(&lay, Some("l"), None);
-    l.get_port("w")
-        .index(0)
-        .field("flits")
-        .index(1)
-        .field("hdr")
-        .connect(&s.get_port("o").field("hdr"));
+    let (w_hdr, o_hdr) = (
+        l.get_port("w")
+            .index(0)
+            .field("flits")
+            .index(1)
+            .field("hdr"),
+        s.get_port("o").field("hdr"),
+    );
+    w_hdr.connect(&o_hdr);
+    complete(&[&s, &l], &[w_hdr, o_hdr]);
     assert!(!top.check().has_errors());
+    let top = ModDef::new("top3");
+    let s = top.instantiate(&src, Some("s"), None);
+    let l = top.instantiate(&lay, Some("l"), None);
     l.get_port("u").connect(&s.get_port("h"));
+    complete(&[&s, &l], &[l.get_port("u"), s.get_port("h")]);
     let diagnostics = top.check();
     assert_eq!(diagnostics.0.len(), 1);
     assert_eq!(
@@ -364,6 +400,15 @@ fn connect_bits_skips_the_type_check_but_not_the_width_check() {
     let d = top.instantiate(&dst, Some("d"), None);
     d.get_port("i1").connect_bits(&s.get_port("f"));
     d.get_port("h").slice(11, 0).connect_bits(&s.get_port("h"));
+    complete(
+        &[&s, &d],
+        &[
+            d.get_port("i1"),
+            s.get_port("f"),
+            d.get_port("h"),
+            s.get_port("h"),
+        ],
+    );
     assert_eq!(top.check(), Diagnostics(vec![]));
 
     let message = panic_message(|| d.get_port("i").connect_bits(&s.get_port("h")));
@@ -383,6 +428,15 @@ fn plain_slices_are_checked_for_width_only() {
     // An untyped port against a typed one.
     let plain = top.add_port("plain", IO::Input(12));
     d.get_port("h").connect(&plain);
+    complete(
+        &[&s, &d],
+        &[
+            d.get_port("i1"),
+            d.get_port("i"),
+            d.get_port("h"),
+            s.get_port("f"),
+        ],
+    );
     assert_eq!(top.check(), Diagnostics(vec![]));
 }
 
@@ -395,6 +449,7 @@ fn jam_connect_streams_bits_without_type_check() {
     let d = top.instantiate(&dst, Some("d"), None);
     // Whole typed ports of equal width but different layouts.
     d.get_port("i1").todo_jam_connect(&s.get_port("f"));
+    complete(&[&s, &d], &[d.get_port("i1"), s.get_port("f")]);
     assert_eq!(top.check(), Diagnostics(vec![]));
 }
 
@@ -406,6 +461,7 @@ fn check_descends_into_instantiated_definitions() {
     let s = mid.instantiate(&src, Some("s"), None);
     let d = mid.instantiate(&dst, Some("d"), None);
     d.get_port("i1").connect(&s.get_port("f"));
+    complete(&[&s, &d], &[d.get_port("i1"), s.get_port("f")]);
     let top = ModDef::new("top");
     top.instantiate(&mid, Some("m0"), None);
     top.instantiate(&mid, Some("m1"), None);
@@ -691,12 +747,14 @@ fn logic_vectors_connect_width_only() {
 }
 
 /// `top` with `src` as `s` and `dst` as `d`; `d.i1` (`flit_t`) and `s.f`
-/// (`flat_t`) are equal-width structs with different layouts.
+/// (`flat_t`) are equal-width structs with different layouts. Every other
+/// port of `s` and `d` is marked unused or tied off.
 fn mismatched_pair(sources: &Sources) -> (ModDef, ModInst, ModInst) {
     let (src, dst) = (sources.import("src"), sources.import("dst"));
     let top = ModDef::new("top");
     let s = top.instantiate(&src, Some("s"), None);
     let d = top.instantiate(&dst, Some("d"), None);
+    complete(&[&s, &d], &[s.get_port("f"), d.get_port("i1")]);
     (top, s, d)
 }
 
@@ -769,6 +827,7 @@ fn intf_connection_of_whole_ports_is_type_checked() {
     let d = top.instantiate(&dst, Some("d"), None);
     let line = line!() + 1;
     s.get_intf("bus").connect(&d.get_intf("bus"), false);
+    complete(&[&s, &d], &[s.get_port("f"), d.get_port("i1")]);
     assert_one_s0201_at(&top, line);
 
     // Through one feedthrough hop, the end-to-end pair is checked.
@@ -780,6 +839,7 @@ fn intf_connection_of_whole_ports_is_type_checked() {
     let (sb, db) = (s.get_intf("bus"), d.get_intf("bus"));
     let line = line!() + 1;
     sb.connect_through(&db, &[&t], "x", false);
+    complete(&[&s, &d], &[s.get_port("f"), d.get_port("i1")]);
     assert_one_s0201_at(&top, line);
 }
 
@@ -819,6 +879,7 @@ fn check_skips_definitions_that_are_not_emitted() {
     let s = mid.instantiate(&src, Some("s"), None);
     let d = mid.instantiate(&dst, Some("d"), None);
     d.get_port("i1").connect(&s.get_port("f"));
+    complete(&[&s, &d], &[d.get_port("i1"), s.get_port("f")]);
     let top = ModDef::new("top");
     top.instantiate(&mid, Some("m"), None);
     for usage in [

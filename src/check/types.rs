@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Type checks of typed connections (S0201).
+//! `ModDef::check`: type checks of typed connections (S0201, S0206) and the
+//! connection errors of the resolved design.
 
 use parking_lot::RwLock;
 use std::collections::HashSet;
@@ -9,13 +10,15 @@ use std::sync::Arc;
 use crate::diagnostic::codes;
 use crate::model::connection::port_slice::ConnectionRecord;
 use crate::model::port_slice::path_string;
+use crate::resolve::design::{DesignResolution, resolve_design};
 use crate::{
     Diagnostic, Diagnostics, Label, ModDef, ModDefCore, PortSlice, PortType, Severity, Span, Usage,
 };
 
 impl ModDef {
-    /// Collects structural diagnostics of this module definition and every
-    /// module definition it instantiates, directly or indirectly.
+    /// Collects the diagnostics of this module definition and every module
+    /// definition it instantiates, directly or indirectly, in the order of
+    /// their primary call sites.
     ///
     /// Reports S0206 for each port of an unpacked struct or union type that
     /// would be emitted other than whole through a net of its type (see
@@ -25,10 +28,27 @@ impl ModDef {
     /// (structs, unions or enums, as whole typed ports, fields or elements)
     /// whose types are not equivalent. Connections with a logic vector or a
     /// plain bit slice on either end, or made with `connect_bits`, are
-    /// checked for width only, when they are made. Only instantiated
-    /// definitions whose internals are emitted (`EmitDefinitionAndDescend`)
-    /// are descended into.
+    /// checked for width only, when they are made.
+    ///
+    /// Resolves the connections of this definition, when its internals are
+    /// emitted, and of every definition emission descends into, and reports
+    /// their errors: S0401 (more than one driver), S0402 (unconnected bits),
+    /// S0403 (no driver), S0404 (conflicting intent), S0405 (tieoff or unused
+    /// on the wrong direction), S0406 (inout conflict) and S0409 (connection
+    /// cycle).
+    ///
+    /// Only instantiated definitions whose internals are emitted
+    /// (`EmitDefinitionAndDescend`) are descended into.
+    ///
+    /// Panics if two distinct definitions that emission would emit share a
+    /// name.
     pub fn check(&self) -> Diagnostics {
+        self.check_design().0
+    }
+
+    /// The diagnostics of [`ModDef::check`] and the resolution of the
+    /// design, from one pass.
+    pub(crate) fn check_design(&self) -> (Diagnostics, DesignResolution) {
         let mut diagnostics = Vec::new();
         let mut visited = HashSet::new();
         let mut stack = vec![self.core.clone()];
@@ -66,11 +86,13 @@ impl ModDef {
             diagnostics.extend(super::unpacked::check_connections(&connections, is_root));
             stack.extend(instances);
         }
+        let design = resolve_design(self);
+        diagnostics.extend(design.diagnostics.iter().cloned());
         // Report in the order of the call sites.
         diagnostics.sort_by(|a: &Diagnostic, b: &Diagnostic| {
             rust_position(&a.primary.span).cmp(&rust_position(&b.primary.span))
         });
-        Diagnostics(diagnostics)
+        (Diagnostics(diagnostics), design)
     }
 }
 

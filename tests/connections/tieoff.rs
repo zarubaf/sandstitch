@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use topstitch::diagnostic::codes;
 use topstitch::*;
+
+use crate::common::assert_check;
 
 #[test]
 fn test_tieoff() {
@@ -87,20 +90,16 @@ fn test_tieoff_moddef_output() {
 }
 
 #[test]
-#[should_panic(expected = "TestMod.in[0:0] has the wrong directionality to be tied off")]
 fn test_invalid_tieoff_moddef_input() {
     let mod_def = ModDef::new("TestMod");
     let in_port = mod_def.add_port("in", IO::Input(1));
 
     in_port.tieoff(0);
 
-    mod_def.emit(EmitOptions::default()); // Should panic
+    assert_check(&mod_def, &[(codes::S0405, "TestMod", "in", 0, 0)]);
 }
 
 #[test]
-#[should_panic(
-    expected = "ParentMod.leaf_inst.out[0:0] has the wrong directionality to be tied off"
-)]
 fn test_invalid_tieoff_modinst_output() {
     let leaf = ModDef::new("LeafMod");
     leaf.set_usage(Usage::EmitStubAndStop);
@@ -111,7 +110,10 @@ fn test_invalid_tieoff_modinst_output() {
 
     inst.get_port("out").tieoff(0);
 
-    parent.emit(EmitOptions::default()); // Should panic
+    assert_check(
+        &parent,
+        &[(codes::S0405, "ParentMod", "leaf_inst.out", 0, 0)],
+    );
 }
 
 #[test]

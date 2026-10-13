@@ -28,3 +28,10 @@ quotes must be in the example (S0206, S0301 and S0302: the whole output).
 | [S0209](S0209.md) | name-based operation on a member in both directions |
 | [S0301](S0301.md) | module defined twice in the build |
 | [S0302](S0302.md) | macro defined differently in the build |
+| [S0401](S0401.md) | multiple drivers |
+| [S0402](S0402.md) | unconnected bits |
+| [S0403](S0403.md) | undriven net |
+| [S0404](S0404.md) | conflicting connection intent |
+| [S0405](S0405.md) | tieoff or unused on the wrong direction |
+| [S0406](S0406.md) | inout conflict |
+| [S0409](S0409.md) | connection cycle |

@@ -9,6 +9,7 @@ mod checker;
 mod constants;
 mod fan_out;
 mod hierarchy;
+mod open;
 
 /// Leaf modules the contract tests instantiate.
 const LEAVES: &str = "\
