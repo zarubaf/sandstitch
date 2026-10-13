@@ -3,8 +3,7 @@
 //! The map checker accepts correct maps and rejects wrong ones with an
 //! elaboration-time assertion naming the end.
 
-use std::path::Path;
-
+use super::{expect, files};
 use crate::common::slang::{Driver, Expect, Sources, check_map};
 
 const SRC: &str = "module src(output [7:0] q); endmodule";
@@ -23,27 +22,17 @@ module t;
 endmodule
 ";
 
-fn exp<'a>(end: &'a str, msb: usize, lsb: usize, driver: Driver<'a>) -> Expect<'a> {
-    Expect {
-        end,
-        msb,
-        lsb,
-        driver,
-    }
-}
-
 fn good_map() -> Vec<Expect<'static>> {
     vec![
-        exp("u.d", 7, 4, Driver::End("a.q", 3, 0)),
-        exp("u.d", 3, 0, Driver::Const(0x5)),
-        exp("a.q", 7, 4, Driver::Unused),
+        expect("u.d", 7, 4, Driver::End("a.q", 3, 0)),
+        expect("u.d", 3, 0, Driver::Const(0x5)),
+        expect("a.q", 7, 4, Driver::Unused),
     ]
 }
 
 fn run(emitted: &str, module: &str, ends: &[(&str, usize)], map: &[Expect]) -> Result<(), String> {
     let sources = Sources::new(&[SRC, SNK, PSNK]);
-    let files: Vec<&Path> = sources.files.iter().map(|f| f.path()).collect();
-    check_map(&files, emitted, module, ends, map)
+    check_map(&files(&sources), emitted, module, ends, map)
 }
 
 /// Asserts each culprit is an elaboration-time `$error` and that every
@@ -78,9 +67,9 @@ fn checker_rejects_constant_wired_to_net() {
     let wired = GOOD.replace(".d({a_q[3:0], 4'h5})", ".d({a_q[3:0], a_q[7:4]})");
     assert_ne!(wired, GOOD);
     let map = [
-        exp("u.d", 7, 4, Driver::End("a.q", 3, 0)),
-        exp("u.d", 3, 0, Driver::Const(0x0)),
-        exp("a.q", 7, 4, Driver::Unused),
+        expect("u.d", 7, 4, Driver::End("a.q", 3, 0)),
+        expect("u.d", 3, 0, Driver::Const(0x0)),
+        expect("a.q", 7, 4, Driver::Unused),
     ];
     let err = run(&wired, "t", &ENDS, &map).unwrap_err();
     assert_culprits(&err, &["u.d [3:0] const", "a.q [7:4] unused bit 0"]);
@@ -99,14 +88,14 @@ endmodule
 ";
     let ends = [("x", 8), ("y", 8)];
     let map = [
-        exp("y", 7, 4, Driver::End("x", 3, 0)),
-        exp("y", 3, 0, Driver::End("x", 7, 4)),
+        expect("y", 7, 4, Driver::End("x", 3, 0)),
+        expect("y", 3, 0, Driver::End("x", 7, 4)),
     ];
     run(text, "t", &ends, &map).unwrap_or_else(|e| panic!("{e}"));
 
     let swapped = [
-        exp("y", 7, 4, Driver::End("x", 7, 4)),
-        exp("y", 3, 0, Driver::End("x", 3, 0)),
+        expect("y", 7, 4, Driver::End("x", 7, 4)),
+        expect("y", 3, 0, Driver::End("x", 3, 0)),
     ];
     let err = run(text, "t", &ends, &swapped).unwrap_err();
     assert_culprits(&err, &["y [7:4] bit 0", "y [3:0] bit 0"]);
@@ -117,7 +106,7 @@ fn checker_rejects_read_unused() {
     let text = GOOD.replace("endmodule", "  snk w (\n    .d(a_q)\n  );\nendmodule");
     let ends = [("a.q", 8), ("u.d", 8), ("w.d", 8)];
     let mut map = good_map();
-    map.push(exp("w.d", 7, 0, Driver::End("a.q", 7, 0)));
+    map.push(expect("w.d", 7, 0, Driver::End("a.q", 7, 0)));
     let err = run(&text, "t", &ends, &map).unwrap_err();
     assert_culprits(&err, &["a.q [7:4] unused bit 0"]);
 }
@@ -139,7 +128,7 @@ module t(
   assign y = x;
 endmodule
 ";
-    let map = [exp("x", 7, 0, Driver::Unused)];
+    let map = [expect("x", 7, 0, Driver::Unused)];
     let err = run(text, "t", &[("x", 8)], &map).unwrap_err();
     assert_eq!(err, "end y missing from ends");
 }
@@ -154,7 +143,7 @@ fn checker_does_not_count_parameters_as_ends() {
 #[test]
 fn checker_rejects_mapped_twice() {
     let mut map = good_map();
-    map.push(exp("u.d", 3, 0, Driver::Const(0x5)));
+    map.push(expect("u.d", 3, 0, Driver::Const(0x5)));
     let err = run(GOOD, "t", &ENDS, &map).unwrap_err();
     assert_eq!(err, "u.d bit 0 mapped twice");
 }
@@ -162,8 +151,8 @@ fn checker_rejects_mapped_twice() {
 #[test]
 fn checker_rejects_uncovered_bits() {
     let map = [
-        exp("u.d", 7, 4, Driver::End("a.q", 3, 0)),
-        exp("u.d", 3, 0, Driver::Const(0x5)),
+        expect("u.d", 7, 4, Driver::End("a.q", 3, 0)),
+        expect("u.d", 3, 0, Driver::Const(0x5)),
     ];
     let err = run(GOOD, "t", &ENDS, &map).unwrap_err();
     assert_eq!(err, "a.q bit 4 not covered by the map");
@@ -182,8 +171,8 @@ module t;
 endmodule
 ";
     let map = [
-        exp("u.d", 7, 0, Driver::Const(0x5)),
-        exp("a.q", 7, 0, Driver::Unused),
+        expect("u.d", 7, 0, Driver::Const(0x5)),
+        expect("a.q", 7, 0, Driver::Unused),
     ];
     run(text, "t", &ENDS, &map).unwrap_or_else(|e| panic!("{e}"));
 }
@@ -200,8 +189,8 @@ module t(
 endmodule
 ";
     let map = [
-        exp("en", 7, 0, Driver::Unused),
-        exp("u.d", 7, 0, Driver::Unused),
+        expect("en", 7, 0, Driver::Unused),
+        expect("u.d", 7, 0, Driver::Unused),
     ];
     let err = run(text, "t", &[("en", 8), ("u.d", 8)], &map).unwrap_err();
     assert_culprits(&err, &["en [7:0] unused bit 0"]);

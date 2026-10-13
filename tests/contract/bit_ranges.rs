@@ -2,11 +2,9 @@
 
 //! Concatenations keep their bit order in the emitted RTL.
 
-use std::path::Path;
-
 use topstitch::*;
 
-use super::LEAVES;
+use super::{LEAVES, expect, files};
 use crate::common::slang::{Driver, Expect, Sources, check_map};
 
 fn design(sources: &Sources) -> ModDef {
@@ -29,23 +27,16 @@ fn design(sources: &Sources) -> ModDef {
 const ENDS: [(&str, usize); 3] = [("a.o", 8), ("b.o", 8), ("u.dst", 8)];
 
 fn map() -> Vec<Expect<'static>> {
-    let e = |end, msb, lsb, driver| Expect {
-        end,
-        msb,
-        lsb,
-        driver,
-    };
     vec![
-        e("u.dst", 7, 4, Driver::End("a.o", 3, 0)),
-        e("u.dst", 3, 0, Driver::End("b.o", 7, 4)),
-        e("a.o", 7, 4, Driver::Unused),
-        e("b.o", 3, 0, Driver::Unused),
+        expect("u.dst", 7, 4, Driver::End("a.o", 3, 0)),
+        expect("u.dst", 3, 0, Driver::End("b.o", 7, 4)),
+        expect("a.o", 7, 4, Driver::Unused),
+        expect("b.o", 3, 0, Driver::Unused),
     ]
 }
 
 fn check(sources: &Sources, emitted: &str) -> Result<(), String> {
-    let files: Vec<&Path> = sources.files.iter().map(|f| f.path()).collect();
-    check_map(&files, emitted, "t", &ENDS, &map())
+    check_map(&files(sources), emitted, "t", &ENDS, &map())
 }
 
 #[test]
@@ -63,5 +54,8 @@ fn swapped_concatenation_is_caught() {
     assert!(emitted.contains(operands), "{emitted}");
     let swapped = emitted.replace(operands, ".dst({b_o[7:4], a_o[3:0]})");
     let err = check(&sources, &swapped).unwrap_err();
-    assert!(err.contains("u.dst"), "{err}");
+    assert!(
+        err.contains("$error encountered: u.dst [7:4] bit 0"),
+        "{err}"
+    );
 }

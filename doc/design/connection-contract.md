@@ -8,7 +8,7 @@ Resolve the connectivity of a composition once, in one place, and give every con
 
 ## Decisions
 
-1. **One design pass.** `resolve_design(top)` (crate-internal) visits the reachable definitions once and returns their resolutions and the diagnostics (and, from step 3, their keys). `check()`, `emit()` and `elaborate()` consume one such pass each; no consumer resolves a definition itself.
+1. **One design pass.** `resolve_design(top)` (crate-internal) visits the reachable definitions once and returns their resolutions and, from step 2, the diagnostics (and, from step 3, their keys). `emit()` consumes one such pass today, `check()` from step 2 and `elaborate()` from step 3; no consumer resolves a definition itself.
 1. **Nets and segments.** Within a definition, a net is a signal the RTL declares: a definition port, a wire named after an instance port, or a `specify_net_name` wire, indexed by its own bits. Each end (a port of the definition or of one of its instances) is a sequence of MSB-first segments, each mapping a bit range of the end to a range of a net, a constant or `Unused`. Each net range has a driver, kept apart from the net's name. Vectors stay ranges; nothing is bit-blasted.
 1. **Errors are diagnostics.** Every connection error is an S04xx diagnostic, reported once per component, not once per end.
 1. **Snapshot is a lowering.** `ModDef::elaborate()` lowers the pass into a read-only `Snapshot` keyed by `DefKey`. Nothing mutates it.
@@ -24,8 +24,8 @@ The cases below are executable tests in `tests/contract/`.
 | Bit ranges and concatenation | Segments keep explicit bit order. With instance input `u.dst` connected `u.dst[7:4]` to instance output `a.o[3:0]` and `u.dst[3:0]` to instance output `b.o[7:4]`, `u.dst` has two segments whose drivers are `a.o[3:0]` and `b.o[7:4]`. |
 | Fan-out and net membership | One driver range may reach several sinks, each taking its own sub-range. All of them are on one net, and the driver of every bit they take is the same. |
 | Constants | A tieoff is the constant driver of the bits it covers, with its value and width on the exact range; a partly tied-off end has constant segments beside its other segments. A constant and a port driving the same bits is S0401. |
-| Open and unused | `unused()` marks bits intentionally unconnected; it is allowed on definition inputs, instance outputs and inouts, and resolves to an `Unused` segment. Bits of an end neither connected, tied off nor marked unused are S0402. |
-| Hierarchy boundaries | An exposed port (`export`, `export_as`) is a definition port on the net of the instance port it exposes. Tracing follows a net out through the definition's ports and into instances of descended definitions, and stops at ports of opaque definitions and of the top. |
+| Open and unused (from step 2) | `unused()` marks bits intentionally unconnected; it is allowed on definition inputs, instance outputs and inouts, and resolves to an `Unused` segment. Bits of an end neither connected, tied off nor marked unused are S0402. |
+| Hierarchy boundaries | An exposed port (`export`, `export_as`) is a definition port on the net of the instance port it exposes. Tracing (from step 3) follows a net out through the definition's ports and into instances of descended definitions, and stops at ports of opaque definitions and of the top. |
 
 Opaque definitions (any `Usage` other than `EmitDefinitionAndDescend`) are boundaries: their ports are endpoints, and no path through them is inferred.
 
