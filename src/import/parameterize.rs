@@ -244,7 +244,7 @@ fn parameter_specs(
         .collect()
 }
 
-/// The parameters of a plain import of top `module` from `value`, elaborated
+/// The parameters of a plain import of top `module` from `design`, elaborated
 /// with Slang `-G` `parameters`: the `-G` values the module declares, so that
 /// its instances are emitted with the overrides its ports were resolved
 /// with. Errors as for [`slang_parameter_overrides`], [`specialize::validate`]
@@ -252,22 +252,18 @@ fn parameter_specs(
 pub(crate) fn plain_import_parameters(
     module: &str,
     parameters: &[(String, String)],
-    value: &serde_json::Value,
+    design: &slang_rs::Design,
     caller: &Span,
 ) -> Result<IndexMap<String, ParameterSpec>, ImportError> {
     if parameters.is_empty() {
         return Ok(IndexMap::new());
     }
-    let declared = slang_rs::extract_overridable_parameters_from_value(value)
-        .remove(module)
-        .unwrap_or_default();
+    let declared = design.overridable_parameters(module).unwrap_or_default();
     let overrides =
         slang_parameter_overrides(module, parameters, &declared, &IndexMap::new(), caller)?;
     specialize::validate(module, &overrides, caller)?;
-    let definitions = slang_rs::extract_parameter_defs_from_value(value, true)
-        .remove(module)
-        .unwrap_or_default();
-    let types = specialize::integer_parameter_types(module, &overrides, &definitions, caller)?;
+    let definitions = design.parameters(module).unwrap_or_default();
+    let types = specialize::integer_parameter_types(module, &overrides, definitions, caller)?;
     Ok(parameter_specs(overrides, &types))
 }
 

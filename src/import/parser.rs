@@ -345,7 +345,7 @@ impl ModDef {
         };
         let imported_ports = imported_ports?;
         let parameters =
-            plain_import_parameters(name, &owned_pairs(cfg.parameters), &output.ast, &caller)?;
+            plain_import_parameters(name, &owned_pairs(cfg.parameters), &output.design, &caller)?;
 
         let mod_def = Self::mod_def_from_imported_ports(name, &imported_ports, parameters, cfg);
 
@@ -381,8 +381,9 @@ impl ModDef {
                     typed::import_top_ports(&output.design, &name, cfg.skip_unsupported)
                         .expect("listed as a top-level module")
                         .unwrap_or_else(|e| panic!("{e}"));
-                let parameters = plain_import_parameters(&name, &parameters, &output.ast, &caller)
-                    .unwrap_or_else(|e| panic!("{e}"));
+                let parameters =
+                    plain_import_parameters(&name, &parameters, &output.design, &caller)
+                        .unwrap_or_else(|e| panic!("{e}"));
                 Self::mod_def_from_imported_ports(&name, &imported_ports, parameters, cfg)
             })
             .collect();

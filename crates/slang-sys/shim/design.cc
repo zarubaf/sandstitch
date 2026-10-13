@@ -47,6 +47,10 @@ constexpr uint8_t DATA_PORT = 0;
 constexpr uint8_t INTERFACE_PORT = 1;
 constexpr uint8_t UNSUPPORTED_PORT = 2;
 
+// `FfiParameter::kind`.
+constexpr uint8_t VALUE_PARAMETER = 0;
+constexpr uint8_t TYPE_PARAMETER = 1;
+
 constexpr std::string_view TYPE_ERROR = "only integral (bit-vector) types are supported";
 constexpr std::string_view XZ_ERROR = "enum values with X or Z bits are not supported";
 constexpr std::string_view REF_ERROR = "`ref` ports are not supported";
@@ -191,6 +195,12 @@ private:
                     break;
             }
         }
+        for (auto& member : symbol.members()) {
+            if (member.kind == SymbolKind::Parameter)
+                body.parameters.push_back(valueParameter(member.as<ParameterSymbol>()));
+            else if (member.kind == SymbolKind::TypeParameter)
+                body.parameters.push_back(typeParameter(member.as<TypeParameterSymbol>()));
+        }
         addChildren(symbol, "", body);
         auto index = uint32_t(out.bodies.size());
         out.bodies.push_back(std::move(body));
@@ -276,6 +286,23 @@ private:
         child.has_body = true;
         child.body = bodyOf(instance);
         body.children.push_back(std::move(child));
+    }
+
+    FfiParameter valueParameter(const ParameterSymbol& symbol) {
+        FfiParameter parameter{};
+        parameter.name = str(symbol.name);
+        parameter.kind = VALUE_PARAMETER;
+        parameter.is_local = symbol.isLocalParam();
+        parameter.ty = intern(symbol.getType(), "");
+        return parameter;
+    }
+
+    FfiParameter typeParameter(const TypeParameterSymbol& symbol) {
+        FfiParameter parameter{};
+        parameter.name = str(symbol.name);
+        parameter.kind = TYPE_PARAMETER;
+        parameter.is_local = symbol.isLocalParam();
+        return parameter;
     }
 
     FfiPort port(const PortSymbol& symbol) {
@@ -489,7 +516,8 @@ private:
 
 void walkDesign(Compilation& compilation, const SourceManager& sourceManager, bool signals,
                 FfiDesign& out) {
-    // Bodies carry ports and children only, whatever `signals` asks.
+    // Bodies carry ports, parameters and children only, whatever `signals`
+    // asks.
     (void)signals;
     Walker walker(compilation, sourceManager, out);
     for (auto instance : compilation.getRoot().topInstances)

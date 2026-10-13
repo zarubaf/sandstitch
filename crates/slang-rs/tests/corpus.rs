@@ -77,6 +77,35 @@ fn modules_of(files: &[PathBuf]) -> BTreeMap<String, String> {
     modules
 }
 
+/// Checks that `ty` has a positive width, or unpacked dimensions (which have
+/// none); `what` names it in the failure.
+fn assert_sized(ty: &Type, what: &str) {
+    let unpacked = match ty {
+        Type::Logic {
+            unpacked_dimensions,
+            ..
+        }
+        | Type::Struct {
+            unpacked_dimensions,
+            ..
+        }
+        | Type::Union {
+            unpacked_dimensions,
+            ..
+        }
+        | Type::Enum {
+            unpacked_dimensions,
+            ..
+        } => !unpacked_dimensions.is_empty(),
+    };
+    if !unpacked {
+        let width = ty
+            .width()
+            .unwrap_or_else(|e| panic!("{what} has no width: {e}"));
+        assert!(width > 0, "{what} has width 0");
+    }
+}
+
 /// Answers every query at `path`, checks invariants of any valid design, and
 /// returns the number of instances answered at and below it.
 fn answer_all(design: &Design, path: &str) -> usize {
@@ -98,31 +127,37 @@ fn answer_all(design: &Design, path: &str) -> usize {
         assert!(names.insert(name), "duplicate port {name} at {path}");
     }
     for port in ports.iter().flatten() {
-        let unpacked = match &port.ty {
-            Type::Logic {
-                unpacked_dimensions,
-                ..
-            }
-            | Type::Struct {
-                unpacked_dimensions,
-                ..
-            }
-            | Type::Union {
-                unpacked_dimensions,
-                ..
-            }
-            | Type::Enum {
-                unpacked_dimensions,
-                ..
-            } => !unpacked_dimensions.is_empty(),
-        };
-        if !unpacked {
-            let width = port
-                .ty
-                .width()
-                .unwrap_or_else(|e| panic!("port {} at {path} has no width: {e}", port.name));
-            assert!(width > 0, "port {} at {path} has width 0", port.name);
-        }
+        assert_sized(&port.ty, &format!("port {} at {path}", port.name));
+    }
+    let parameters = design
+        .parameters(path)
+        .unwrap_or_else(|| panic!("no parameters at {path}"));
+    let overridable = design
+        .overridable_parameters(path)
+        .unwrap_or_else(|| panic!("no overridable parameters at {path}"));
+    let mut parameter_names = BTreeSet::new();
+    for parameter in parameters {
+        assert!(
+            parameter_names.insert(parameter.name.as_str()),
+            "duplicate parameter {} at {path}",
+            parameter.name
+        );
+        assert_sized(
+            &parameter.ty,
+            &format!("parameter {} at {path}", parameter.name),
+        );
+    }
+    let mut overridable_names = BTreeSet::new();
+    for (name, kind) in &overridable {
+        assert!(
+            overridable_names.insert(name.as_str()),
+            "duplicate overridable parameter {name} at {path}"
+        );
+        // Type parameters are not value parameters.
+        assert!(
+            *kind == ParameterKind::Value || !parameter_names.contains(name.as_str()),
+            "type parameter {name} listed as a value parameter at {path}"
+        );
     }
     let children = design
         .child_instances(path)

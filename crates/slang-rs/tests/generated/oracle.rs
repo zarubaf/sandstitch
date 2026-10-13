@@ -11,7 +11,9 @@
 //! consistent renaming.
 
 use num_bigint::BigInt;
-use slang_rs::{Field, Port, PortDir, Range, Type, UnsupportedPort, Variant};
+use slang_rs::{
+    Field, ParameterDef, ParameterKind, Port, PortDir, Range, Type, UnsupportedPort, Variant,
+};
 
 use crate::model::{Base, DataType, Design, Dim, Dir, EnumBase, Expr, IntKind, Module, TypeRef};
 
@@ -44,6 +46,62 @@ pub fn ports(design: &Design, path: &str) -> Vec<Result<Port, UnsupportedPort>> 
                     })
                 })
                 .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The value parameters of the instance at `path`, localparams included, in
+/// declaration order: each header parameter is an `int`, each localparam a
+/// `logic` vector as wide as its parameter's value. Type parameters, of
+/// either kind, are not value parameters. Empty if the model has no such
+/// instance.
+pub fn parameters(design: &Design, path: &str) -> Vec<ParameterDef> {
+    instances(design)
+        .into_iter()
+        .find(|(p, _)| p == path)
+        .map(|(_, env)| {
+            let module = &design.modules[env.module];
+            let header = module.params.iter().map(|param| ParameterDef {
+                name: param.name.clone(),
+                ty: Type::Logic {
+                    signed: true,
+                    packed_dimensions: vec![Range { msb: 31, lsb: 0 }],
+                    unpacked_dimensions: vec![],
+                },
+            });
+            let locals = module.local_params.iter().map(|local| ParameterDef {
+                name: local.name.clone(),
+                ty: Type::Logic {
+                    signed: false,
+                    packed_dimensions: vec![Range {
+                        msb: env.params[local.param] as i32 - 1,
+                        lsb: 0,
+                    }],
+                    unpacked_dimensions: vec![],
+                },
+            });
+            header.chain(locals).collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The overridable parameters of the instance at `path`: the header's value
+/// parameters, then its type parameters; localparams are not overridable.
+pub fn overridable_parameters(design: &Design, path: &str) -> Vec<(String, ParameterKind)> {
+    instances(design)
+        .into_iter()
+        .find(|(p, _)| p == path)
+        .map(|(_, env)| {
+            let module = &design.modules[env.module];
+            let values = module
+                .params
+                .iter()
+                .map(|param| (param.name.clone(), ParameterKind::Value));
+            let types = module
+                .type_params
+                .iter()
+                .map(|param| (param.name.clone(), ParameterKind::Type));
+            values.chain(types).collect()
         })
         .unwrap_or_default()
 }

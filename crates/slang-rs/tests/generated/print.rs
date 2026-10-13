@@ -67,6 +67,22 @@ fn module_sv(design: &Design, module: &Module, out: &mut String) {
         write!(out, " ({})", ports.join(", ")).unwrap();
     }
     writeln!(out, ";").unwrap();
+    for local in &module.local_params {
+        writeln!(
+            out,
+            "  localparam logic [{}-1:0] {} = '0;",
+            module.params[local.param].name, local.name
+        )
+        .unwrap();
+    }
+    for local in &module.local_type_params {
+        writeln!(
+            out,
+            "  localparam type {} = {};",
+            local.name, module.type_params[local.type_param].name
+        )
+        .unwrap();
+    }
     for typedef in &module.typedefs {
         writeln!(
             out,

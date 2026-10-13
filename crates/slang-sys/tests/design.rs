@@ -6,8 +6,8 @@ use std::io::Write as _;
 
 use num_bigint::BigInt;
 use slang_sys::{
-    AstJson, DesignQuery, Field, Port, PortDir, Range, Request, Stage, Type, UnsupportedPort,
-    Variant, run,
+    AstJson, DesignQuery, Field, ParameterDef, ParameterKind, Port, PortDir, Range, Request, Stage,
+    Type, UnsupportedPort, Variant, run,
 };
 
 /// The ports of top `top` in a design made of `text`.
@@ -562,5 +562,87 @@ fn anonymous_enum_name() {
     assert!(
         !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()),
         "{name}"
+    );
+}
+
+fn def(name: &str, ty: Type) -> ParameterDef {
+    ParameterDef {
+        name: name.to_string(),
+        ty,
+    }
+}
+
+#[test]
+fn parameters_include_localparams_with_overrides() {
+    let design = design(
+        "module m #(parameter int W = 4, parameter logic [W-1:0] P = 0, parameter type T = logic) ();\n\
+         localparam logic [7:0] L = 1;\nendmodule\n",
+        "m",
+        &["-G", "W=8"],
+    );
+    assert_eq!(
+        design.parameters("m").unwrap(),
+        [
+            def("W", logic(true, &[range(31, 0)], &[])),
+            def("P", logic(false, &[range(7, 0)], &[])),
+            def("L", logic(false, &[range(7, 0)], &[])),
+        ]
+    );
+    assert!(design.parameters("nope").is_none());
+}
+
+#[test]
+fn overridable_parameters_value_and_type() {
+    let design = design(
+        "module m #(parameter int W = 4, parameter logic [W-1:0] P = 0, parameter type T = logic, localparam int X = 1, localparam type U = int) ();\n\
+         endmodule\n",
+        "m",
+        &[],
+    );
+    assert_eq!(
+        design.overridable_parameters("m").unwrap(),
+        [
+            ("W".to_string(), ParameterKind::Value),
+            ("P".to_string(), ParameterKind::Value),
+            ("T".to_string(), ParameterKind::Type),
+        ]
+    );
+    assert!(design.overridable_parameters("nope").is_none());
+}
+
+#[test]
+fn real_parameter_left_out() {
+    let design = design(
+        "module m #(parameter real R = 1.0, parameter int N = 2) ();\nendmodule\n",
+        "m",
+        &[],
+    );
+    assert_eq!(
+        design.parameters("m").unwrap(),
+        [def("N", logic(true, &[range(31, 0)], &[]))]
+    );
+    assert_eq!(
+        design.overridable_parameters("m").unwrap(),
+        [
+            ("R".to_string(), ParameterKind::Value),
+            ("N".to_string(), ParameterKind::Value),
+        ]
+    );
+}
+
+#[test]
+fn macro_parameter() {
+    let design = design(
+        "`define PARAM parameter int M = 3\nmodule m #(`PARAM) ();\nendmodule\n",
+        "m",
+        &[],
+    );
+    assert_eq!(
+        design.parameters("m").unwrap(),
+        [def("M", logic(true, &[range(31, 0)], &[]))]
+    );
+    assert_eq!(
+        design.overridable_parameters("m").unwrap(),
+        [("M".to_string(), ParameterKind::Value)]
     );
 }

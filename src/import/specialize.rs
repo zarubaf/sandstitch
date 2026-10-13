@@ -525,8 +525,9 @@ fn definition(
             .interface_ports(module)
             .map(|interface_ports| Definition {
                 interface_ports: interface_ports.to_vec(),
-                parameters: slang_rs::extract_overridable_parameters_from_value(&output.ast)
-                    .remove(module)
+                parameters: output
+                    .design
+                    .overridable_parameters(module)
                     .unwrap_or_default(),
             });
         Some((definition, output.ok, output.deps))
@@ -777,9 +778,11 @@ fn elaborate(
         typed::import_instance_ports(&output.design, &instance, module, import.skip_unsupported)
             .ok_or_else(|| module_not_found(module, caller))??;
 
-    let definitions = slang_rs::extract_instance_parameter_defs_from_value(&output.ast, &instance)
+    let definitions = output
+        .design
+        .parameters(&instance)
         .expect("the instance exists");
-    let integer_parameter_types = integer_parameter_types(module, overrides, &definitions, caller)?;
+    let integer_parameter_types = integer_parameter_types(module, overrides, definitions, caller)?;
     Ok((dependencies, ports, integer_parameter_types))
 }
 

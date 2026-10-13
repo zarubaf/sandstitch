@@ -16,10 +16,12 @@ use regex::Regex;
 use slang_sys::{Design, Response};
 
 use crate::extract::{
-    TypeResolver, extract_instance_interface_ports_with, extract_instance_ports_checked_with,
-    instance_child_names_with, instance_has_ref_port_with, top_names_with,
+    TypeResolver, extract_instance_interface_ports_with,
+    extract_instance_overridable_parameters_with, extract_instance_parameter_defs_with,
+    extract_instance_ports_checked_with, instance_child_names_with, instance_has_ref_port_with,
+    instance_unparsed_parameters_with, top_names_with,
 };
-use crate::{Ast, Field, Port, Type, UnsupportedPort};
+use crate::{Ast, Field, ParameterDef, Port, Type, UnsupportedPort};
 
 /// The snapshot's error text for a port that connects several signals; the
 /// JSON extractors drop such ports.
@@ -174,6 +176,7 @@ impl Checker<'_> {
         if !has_ref {
             self.ports(path);
         }
+        self.parameters(path);
         self.children(path);
     }
 
@@ -205,6 +208,55 @@ impl Checker<'_> {
         if !self.same_ports(&json, &typed) {
             self.report(path, "ports differ", &json, &typed);
         }
+    }
+
+    fn parameters(&mut self, path: &str) {
+        let json = extract_instance_parameter_defs_with(&self.resolver, self.value, path)
+            .expect("the instance exists");
+        let json_overridable =
+            extract_instance_overridable_parameters_with(&self.resolver, self.value, path)
+                .expect("the instance exists");
+        let (Some(typed), Some(typed_overridable)) = (
+            self.design.parameters(path),
+            self.design.overridable_parameters(path),
+        ) else {
+            self.report(path, "instance missing from the design", &(), &());
+            return;
+        };
+        if json_overridable != typed_overridable {
+            self.report(
+                path,
+                "overridable parameters differ",
+                &json_overridable,
+                &typed_overridable,
+            );
+        }
+        // A parameter typed by a typedef of a type parameter the JSON path
+        // could not resolve (its text still has the link) is skipped there
+        // and listed by the design.
+        let unresolved: HashSet<_> =
+            instance_unparsed_parameters_with(&self.resolver, self.value, path)
+                .expect("the instance exists")
+                .into_iter()
+                .filter(|(_, type_text)| self.link.is_match(type_text))
+                .map(|(name, _)| name)
+                .collect();
+        let typed: Vec<_> = typed
+            .iter()
+            .filter(|parameter| !unresolved.contains(&parameter.name))
+            .cloned()
+            .collect();
+        if !self.same_parameters(&json, &typed) {
+            self.report(path, "parameters differ", &json, &typed);
+        }
+    }
+
+    fn same_parameters(&self, json: &[ParameterDef], typed: &[ParameterDef]) -> bool {
+        json.len() == typed.len()
+            && json
+                .iter()
+                .zip(typed)
+                .all(|(json, typed)| json.name == typed.name && self.same_type(&json.ty, &typed.ty))
     }
 
     fn same_ports(&self, json: &Ports, typed: &Ports) -> bool {

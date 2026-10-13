@@ -158,6 +158,20 @@ mod ffi {
         loc: FfiLoc,
     }
 
+    /// A parameter of a body, in declaration order, localparams included.
+    ///
+    /// `kind`: 0 value parameter, 1 type parameter. For a value parameter
+    /// `ty` indexes `types`; the entry may be kind 4 (unsupported), which
+    /// leaves the parameter out of the typed definitions but not out of the
+    /// overridable ones. `ty` is ignored for a type parameter.
+    #[derive(Default)]
+    struct FfiParameter {
+        name: String,
+        kind: u8,
+        is_local: bool,
+        ty: u32,
+    }
+
     /// An instance inside a body.
     ///
     /// `name` is the instance name; an element of an instance array is one
@@ -182,11 +196,12 @@ mod ffi {
     }
 
     /// An instance body, numbered after every body it refers to
-    /// (post-order). Parameters, signals and packages join these tables
-    /// as further `Vec` fields.
+    /// (post-order). Signals and packages join these tables as further
+    /// `Vec` fields.
     #[derive(Default)]
     struct FfiBody {
         ports: Vec<FfiPort>,
+        parameters: Vec<FfiParameter>,
         children: Vec<FfiChild>,
     }
 
