@@ -562,8 +562,8 @@ fn check_extra_arguments(
     import: &VerilogImport,
     caller: &Span,
 ) -> Result<(), ImportError> {
-    // `--Mall` is no longer passed, but it is rejected as before: it writes
-    // a file the caller did not ask for.
+    // `--Mall` is no longer passed, and the library rejects it: Sandstitch
+    // records dependencies itself and never writes dependency files.
     let conflicting = import.extra_arguments.iter().find_map(|argument| {
         slang_rs::BINARY_ONLY_OPTIONS
             .iter()
@@ -584,9 +584,13 @@ fn check_extra_arguments(
         caller,
         "specialized here",
     );
+    let reason = if *option == "--Mall" {
+        "which would write a dependency file; Sandstitch never writes dependency files"
+    } else {
+        "which specialization passes to Slang itself or which only the slang binary understands"
+    };
     d.notes.push(format!(
-        "the import configuration's extra arguments contain `{option}`, which specialization \
-         passes to Slang itself or which only the slang binary understands"
+        "the import configuration's extra arguments contain `{option}`, {reason}"
     ));
     d.helps.push(format!(
         "remove `{option}` from `ParserConfig::extra_arguments`"

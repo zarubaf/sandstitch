@@ -105,7 +105,7 @@ pub const BINARY_ONLY_OPTIONS: [&str; 5] = [
 /// Slang's AST as JSON. It dereferences to [`Value`]. Dropping it is
 /// iterative: a plain `Value` frees nested objects recursively, which
 /// overflows the stack of a small thread for a deeply nested design.
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct Ast(Value);
 
 impl std::ops::Deref for Ast {

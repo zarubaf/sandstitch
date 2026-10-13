@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The library must stay generic: no vendor-specific names in `src/` or `crates/*/src/`.
+//!
+//! It also enforces the `slang-sys` layering rule: only `crates/slang-rs`
+//! depends on `slang-sys`, and nothing under `src/` names `slang_sys` or
+//! `slang_rs::sys`.
 
 use regex::Regex;
 use std::path::{Path, PathBuf};

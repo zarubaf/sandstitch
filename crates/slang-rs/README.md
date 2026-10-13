@@ -6,19 +6,14 @@ Note: the API is currently under development and is subject to frequent changes.
 
 ## Slang version compatibility
 
-Slang 11.0 is the currently supported release and the version used by this
-project's CI and installation instructions.
-
-Older Slang releases may continue to work, but are considered deprecated and
-are not guaranteed to remain compatible in future `slang-rs` releases. Slang
-7.0 has been tested with the current compatibility layer; other older versions
-have not been validated.
+Slang v11.0 is vendored and linked in-process through the `slang-sys` crate.
+No other Slang version is supported.
 
 ## Prerequisite
 
 Slang v11.0 is built from the vendored source by the `slang-sys` crate and
-called in-process, so no `slang` binary and no `SLANG_PATH` are needed. A
-C++20 compiler and CMake are required; `ccache`, if installed, speeds up
+called in-process, so no `slang` binary and no `SLANG_PATH` are needed. Building
+needs GCC 11+ or Clang 17+, CMake 3.20+ and Python 3; `ccache`, if installed, speeds up
 rebuilds.
 
 ## Installation
