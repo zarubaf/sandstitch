@@ -44,22 +44,34 @@ constexpr uint8_t FATAL = 3;
 /// `Driver::reportDiagnostics`, which the shim never calls: they would
 /// silently do nothing, so they are rejected.
 std::vector<FfiDiag> unsupportedOptions(const driver::Driver::Options& options) {
+    struct Rejected {
+        bool set;
+        std::vector<std::string_view> names;
+    };
+    const Rejected table[] = {
+        {options.allDepfile.has_value(), {"--Mall", "--all-deps"}},
+        {options.includeDepfile.has_value(), {"--Minclude", "--include-deps"}},
+        {options.moduleDepfile.has_value(), {"--Mmodule", "--module-deps"}},
+        {options.depfileTarget.has_value(), {"--depfile-target"}},
+        {options.diagJson.has_value(), {"--diag-json"}},
+    };
     std::vector<FfiDiag> out;
-    auto reject = [&](bool set, std::string_view names) {
-        if (!set)
-            return;
+    for (auto& entry : table) {
+        if (!entry.set)
+            continue;
+        std::string names;
+        for (auto name : entry.names) {
+            if (!names.empty())
+                names += "`/`";
+            names += name;
+        }
         FfiDiag d{};
         d.severity = FATAL;
-        d.message = str("`" + std::string(names) +
+        d.message = str("`" + names +
                         "` is not supported in-process: Sandstitch does not write dependency "
                         "or diagnostic files; use the dependency list Sandstitch records");
         out.push_back(std::move(d));
-    };
-    reject(options.allDepfile.has_value(), "--Mall`/`--all-deps");
-    reject(options.includeDepfile.has_value(), "--Minclude`/`--include-deps");
-    reject(options.moduleDepfile.has_value(), "--Mmodule`/`--module-deps");
-    reject(options.depfileTarget.has_value(), "--depfile-target");
-    reject(options.diagJson.has_value(), "--diag-json");
+    }
     return out;
 }
 

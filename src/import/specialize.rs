@@ -116,17 +116,12 @@ impl KeyHasher {
         self.str(timescale.as_deref().unwrap_or_default());
         self.bool(*skip_unsupported);
         self.strs(extra_arguments);
-        self.str(&slang_version());
+        self.str(slang_rs::slang_version());
     }
 
     fn finish(self) -> [u8; 32] {
         self.0.finalize().into()
     }
-}
-
-/// The Slang library version, which is part of every cache key.
-fn slang_version() -> String {
-    slang_rs::slang_version()
 }
 
 /// The part of a key known before elaboration: everything but the files

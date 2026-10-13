@@ -15,8 +15,18 @@ pub use types::{
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
+/// The vendored Slang release number, the one place it is written.
+macro_rules! release {
+    () => {
+        "11.0"
+    };
+}
+
 /// The vendored Slang release.
-pub const SLANG_VERSION: &str = "11.0";
+pub const SLANG_VERSION: &str = release!();
+
+/// The vendored Slang release, named, for example `slang 11.0`.
+pub const SLANG_VERSION_LABEL: &str = concat!("slang ", release!());
 
 /// Stack of the thread each [`run`] executes on: deep nesting in a design
 /// does not depend on the caller's stack.

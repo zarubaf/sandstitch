@@ -163,7 +163,7 @@ endmodule
     }
 
     #[test]
-    #[should_panic(expected = "error: ")]
+    #[should_panic(expected = "error: expected ';'")]
     fn test_extract_hierarchy_error() {
         let verilog = str2tmpfile(
             "

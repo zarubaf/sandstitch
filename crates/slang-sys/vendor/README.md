@@ -11,4 +11,4 @@ Kept from Slang: `CMakeLists.txt`, `cmake/`, `external/`, `include/`, `scripts/`
 
 Kept from fmt: `CMakeLists.txt`, `include/`, `src/`, `support/cmake/`, `LICENSE`, `README.md` and `ChangeLog.md` (fmt's CMake lists the last two as module sources). Dropped: `doc/`, `test/`, the rest of `support/` and `CONTRIBUTING.md`.
 
-To update, download the new tarball into an empty directory, check its sha256, copy the same subsets over the old ones, update this table and `SLANG_VERSION` in `../src/lib.rs`, and record the change in `doc/fork.md`.
+To update, download the new tarball into an empty directory, check its sha256, copy the same subsets over the old ones, update this table and the `release!` macro in `../src/lib.rs`, and record the change in `doc/fork.md`.

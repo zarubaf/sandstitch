@@ -4,13 +4,17 @@
 //! mesh of each, alone and both in one design, emits RTL that Slang
 //! elaborates with the build manifest and strict width warnings.
 
-use std::io::Write as _;
-
 use floonoc::*;
-use slang_rs::sys::{self, Request, Severity, Stage};
 use std::path::Path;
 
-use topstitch::{EmitOptions, IO, Manifest, ModDef, ModInst};
+use topstitch::{EmitOptions, IO, ModDef, ModInst};
+
+// The workspace's shared strict-elaboration helper; this design's tests use
+// only `elaborate_manifest`.
+#[path = "../../../tests/common/slang.rs"]
+#[allow(dead_code)]
+mod slang;
+use slang::elaborate_manifest;
 
 /// Narrow 32-bit and wide 64-bit data, 1-bit coordinates, one shared wide
 /// link.
@@ -29,58 +33,6 @@ fn small() -> FlooConfig {
 /// Exactly `floo_synth_nw_pkg`: narrow 64-bit and wide 512-bit data.
 fn big() -> FlooConfig {
     FlooConfig::synth("big")
-}
-
-/// Elaborates the manifest's build plus `emitted` under `top`, with width
-/// and multiple-driver warnings on; Slang's output unless it reports no
-/// errors and no warnings.
-fn elaborate_manifest(manifest: &Manifest, emitted: &str, top: &str) -> Result<(), String> {
-    let mut rtl = tempfile::Builder::new().suffix(".sv").tempfile().unwrap();
-    rtl.write_all(emitted.as_bytes()).unwrap();
-    let mut args: Vec<String> = Vec::new();
-    for incdir in &manifest.incdirs {
-        args.extend(["-I".into(), incdir.to_str().unwrap().into()]);
-    }
-    for (name, value) in &manifest.defines {
-        args.extend(["-D".into(), format!("{name}={value}")]);
-    }
-    for (flag, paths) in [("-v", &manifest.libfiles), ("-y", &manifest.libdirs)] {
-        for path in paths {
-            args.extend([flag.into(), path.to_str().unwrap().into()]);
-        }
-    }
-    for libext in &manifest.libexts {
-        args.extend(["-Y".into(), libext.clone()]);
-    }
-    args.extend(manifest.sources.iter().map(|s| s.to_str().unwrap().into()));
-    args.push(rtl.path().to_str().unwrap().into());
-    for arg in [
-        "--top",
-        top,
-        "-Wport-width-trunc",
-        "-Wport-width-expand",
-        "-Wwidth-trunc",
-        "-Wwidth-expand",
-        "-Wmultiple-cont-assigns",
-    ] {
-        args.push(arg.into());
-    }
-    let response = sys::run(&Request {
-        args,
-        stage: Stage::Elaborate,
-        design: sys::DesignQuery::None,
-    })
-    .unwrap_or_else(|e| panic!("running Slang: {e}"));
-    if response.ok
-        && response
-            .diagnostics
-            .iter()
-            .all(|d| d.severity < Severity::Warning)
-    {
-        Ok(())
-    } else {
-        Err(response.rendered)
-    }
 }
 
 /// The expression connected to `.port(...)` of instance `inst` in `emitted`.

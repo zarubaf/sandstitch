@@ -102,6 +102,9 @@ Typed specialization (#4, [design](design/typed-specialization.md)):
   emitted as `#(...)` overrides of its instances (upstream emitted none, so
   the instances took the defaults while the ports had the `-G` widths) and
   are base overrides of its specializations.
+- `Parameter::calc_type_width` is an error for an unpacked struct or union
+  (upstream summed its fields); the expectations of upstream's `test_struct`
+  and `test_union` changed accordingly.
 - Typed connections: `field`, `index` and `Select` on port slices
   (S0202 to S0205), `connect_bits`, and `ModDef::check` (S0201 for
   non-equivalent aggregate ends, S0206 for unpacked aggregates that would be
@@ -144,13 +147,15 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
 - Divergences: runs Slang in-process through `slang-sys` and reads the
   elaborated design from its typed snapshot (no JSON AST, `serde`, `pest` or
   `regex`); upstream changes to the subprocess and the JSON extractors cannot
-  be applied and are reimplemented by hand. `tests/spdx_test.rs` scans only the crate directory
-  (`CARGO_MANIFEST_DIR`) instead of the whole workspace root;
-  `tests/version_test.rs` is deleted (it compared the root package version with
-  crates.io and needed network) together with the dev-dependencies only it
-  used (`curl`, `toml`, `semver`, `cargo_metadata`, `log`, `env_logger`);
-  `[lints.clippy]` allows `collapsible_if`, `unneeded_wildcard_pattern` and
-  `while_let_loop` for pre-existing upstream code.
+  be applied and are reimplemented by hand. `tests/spdx_test.rs` scans only
+  the crate directory (`CARGO_MANIFEST_DIR`) instead of the whole workspace
+  root; `tests/version_test.rs` is deleted (it compared the root package
+  version with crates.io and needed network) together with the
+  dev-dependencies only it used (`curl`, `toml`, `semver`, `cargo_metadata`,
+  `log`, `env_logger`); `[lints.clippy]` allows `collapsible_if`,
+  `unneeded_wildcard_pattern` and `while_let_loop` for pre-existing upstream
+  code; `Cargo.lock` is dropped, as for xlsynth-vast (the workspace lock is
+  authoritative), and a subtree pull brings it back.
 - Sandstitch extensions: replaced by the typed design, see
   `doc/design/slang-in-process.md`.
 

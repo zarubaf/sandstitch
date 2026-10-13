@@ -475,7 +475,11 @@ fn missing_source_reports_s0102_with_slang_text() {
     assert_eq!(d.primary.span, Span::None);
     assert_eq!(d.notes.len(), 1, "{d:?}");
     assert!(d.notes[0].contains(missing), "{}", d.notes[0]);
-    assert!(d.notes[0].contains("error"), "{}", d.notes[0]);
+    assert!(
+        d.notes[0].contains(&format!("'{missing}': ")),
+        "{}",
+        d.notes[0]
+    );
 }
 
 #[test]

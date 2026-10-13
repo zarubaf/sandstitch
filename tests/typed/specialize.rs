@@ -482,8 +482,8 @@ fn binary_only_extra_arguments_are_rejected() {
             ..Default::default()
         };
         let overrides: [(&str, ParameterValue); 1] = [("N", 3.into())];
-        let result = ModDef::try_from_verilog_parameterized("child", &cfg, &overrides);
-        let line = line!() - 1;
+        let call = ModDef::try_from_verilog_parameterized;
+        let (result, line) = (call("child", &cfg, &overrides), line!());
         let e = result.err().unwrap();
         assert_eq!(e.diagnostics.0.len(), 1, "{extra:?}");
         let d = &e.diagnostics.0[0];
