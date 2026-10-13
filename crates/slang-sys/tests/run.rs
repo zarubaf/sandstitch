@@ -54,7 +54,15 @@ fn elaborates_and_lists_deps() {
     req.design = DesignQuery::Structure;
     let r = run(&req).unwrap();
     assert!(r.ok, "{}", r.rendered);
-    assert!(r.design.is_some());
+    let design = r.design.as_ref().expect("a design");
+    assert_eq!(design.tops().collect::<Vec<_>>(), ["uses_header"]);
+    let ports = design.ports("uses_header").expect("the top's ports");
+    let a = ports
+        .iter()
+        .flatten()
+        .find(|p| p.name == "a")
+        .expect("port a");
+    assert_eq!(a.ty.width(), Ok(8), "`WIDTH from the header");
     assert!(r.deps.contains(&uses), "{:?}", r.deps);
     assert!(r.deps.contains(&fixture("inc/defs.svh")), "{:?}", r.deps);
     let unique: HashSet<&String> = r.deps.iter().collect();

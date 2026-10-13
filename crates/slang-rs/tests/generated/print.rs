@@ -162,6 +162,15 @@ fn module_sv(design: &Design, module: &Module, out: &mut String) {
             connections.join(", ")
         )
         .unwrap();
+        if let Some(element) = &instance.element_param {
+            let indices: String = element.element.iter().map(|i| format!("[{i}]")).collect();
+            writeln!(
+                out,
+                "  defparam {}{indices}.{} = {};",
+                instance.name, child.params[element.param].name, element.value
+            )
+            .unwrap();
+        }
     }
     writeln!(out, "endmodule").unwrap();
 }

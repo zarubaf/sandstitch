@@ -149,6 +149,20 @@ pub struct Instance {
     /// Overridden type parameters: index into the child's `type_params`,
     /// type written in the instantiating module.
     pub type_params: Vec<(usize, DataType)>,
+    /// `defparam name[k]...[l].P = v;` after the instance: one element of an
+    /// instance array gets a value of its own for a parameter the instance
+    /// does not override.
+    pub element_param: Option<ElementParam>,
+}
+
+/// A `defparam` on one element of an instance array.
+#[derive(Clone, Debug)]
+pub struct ElementParam {
+    /// The element's index in each dimension of the array, outermost first.
+    pub element: Vec<i32>,
+    /// Index into the child's `params`.
+    pub param: usize,
+    pub value: i32,
 }
 
 /// `for (genvar i = start; i < start + count; i++) begin : name`, or
@@ -301,6 +315,24 @@ pub enum TypeRef {
 pub enum Dim {
     Range(Expr, Expr),
     Size(u32),
+}
+
+impl Dim {
+    /// The bounds of a constant instance array dimension, `[a:b]`.
+    pub fn bounds(&self) -> (i32, i32) {
+        match self {
+            Dim::Range(Expr::Const(a), Expr::Const(b)) => (*a, *b),
+            Dim::Size(n) => (0, *n as i32 - 1),
+            other => panic!("instance array dimension {other:?} is not constant"),
+        }
+    }
+
+    /// The indices of a constant instance array dimension, in ascending
+    /// order whichever way the range runs.
+    pub fn indices(&self) -> Vec<i32> {
+        let (a, b) = self.bounds();
+        (a.min(b)..=a.max(b)).collect()
+    }
 }
 
 /// A constant, or a value parameter of the enclosing module plus an offset.
