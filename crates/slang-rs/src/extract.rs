@@ -32,81 +32,11 @@ use std::hash::Hash;
 use std::str::FromStr;
 
 mod type_extract;
-pub use type_extract::{Field, Range, Type, Variant, parse_type_definition};
-
-#[derive(Debug, PartialEq)]
-pub enum PortDir {
-    Input,
-    Output,
-    InOut,
-}
-
-/// A declaration's position in the source, as reported by Slang's
-/// `--ast-json-source-info` (`source_file`, `source_line`, `source_column`).
-///
-/// `file` is the path in the JSON. Slang writes paths relative to the
-/// directory it ran in; [`crate::run_slang`] rewrites them to absolute paths.
-/// `line` is 1-based. `column` is 1-based, or `None` when Slang reports no
-/// column (column 0), as for declarations produced by a macro expansion,
-/// where `line` is the line of the macro use.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SourceLoc {
-    pub file: String,
-    pub line: u32,
-    pub column: Option<u32>,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Port {
-    pub dir: PortDir,
-    pub name: String,
-    pub ty: Type,
-    /// Where the port is declared, if Slang reported source information.
-    pub loc: Option<SourceLoc>,
-}
-
-/// A port whose type is an interface (`bus_if.mst m_if` or `bus_if s_if`).
-///
-/// Interface-array dimensions (`bus_if m_if [2]`) are not reported: Slang's
-/// JSON for an `InterfacePort` does not include them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InterfacePort {
-    pub name: String,
-    /// The interface definition name; empty for generic (`interface`) ports.
-    pub interface: String,
-    pub modport: Option<String>,
-    pub loc: Option<SourceLoc>,
-}
-
-/// A port whose type could not be parsed (for example `real`, `string` or
-/// `event`), as listed by [`extract_instance_ports_checked_from_value`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UnsupportedPort {
-    pub name: String,
-    /// The port's type text, after type-parameter and alias resolution.
-    pub type_text: String,
-    /// Why the type could not be parsed.
-    pub error: String,
-    pub loc: Option<SourceLoc>,
-}
-
-pub struct ParameterDef {
-    pub name: String,
-    pub ty: Type,
-}
-
-impl FromStr for PortDir {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "In" => Ok(PortDir::Input),
-            "Out" => Ok(PortDir::Output),
-            "InOut" => Ok(PortDir::InOut),
-            _ => Err(format!("Unsupported I/O direction: {}", s)),
-        }
-    }
-}
+pub use slang_sys::{
+    Field, InterfacePort, ParameterDef, ParameterKind, Port, PortDir, Range, SourceLoc, Type,
+    UnsupportedPort, Variant,
+};
+pub use type_extract::parse_type_definition;
 
 pub fn extract_ports(
     cfg: &crate::SlangConfig,
@@ -385,13 +315,6 @@ pub fn extract_type_parameter_names_from_value(value: &Value) -> HashMap<String,
             (module_name.to_string(), names)
         })
         .collect()
-}
-
-/// Whether a parameter takes a value or a type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ParameterKind {
-    Value,
-    Type,
 }
 
 /// Lists the overridable parameters (`parameter` and `parameter type`, not

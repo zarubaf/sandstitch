@@ -4,6 +4,12 @@
 //! through a narrow C++ shim (`shim/`). See
 //! `doc/design/slang-in-process.md`, "Step 1".
 
+mod types;
+pub use types::{
+    Field, InterfacePort, ParameterDef, ParameterKind, Port, PortDir, Range, SourceLoc, Type,
+    UnsupportedPort, Variant,
+};
+
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
