@@ -20,6 +20,13 @@ num-bigint = "0.4.3"
 num-traits = "0.2"
 slang-sys = { path = "../slang-sys" }
 
+[features]
+# Test-only: compares the typed design with the JSON extractors on every run.
+differential = []
+
+[dev-dependencies]
+slang-rs = { path = ".", features = ["differential"] }
+
 
 # Pre-existing upstream style, kept to stay close to upstream.
 [lints.clippy]

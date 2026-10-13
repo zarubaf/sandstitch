@@ -76,7 +76,7 @@ pub const SLANG_VERSION: &str = "11.0";                // the vendored release
 1. Process options and load and parse all sources. Option, file and parse errors are recorded. With `Stage::ParseOnly`, stop here.
 1. Create the compilation and elaborate.
 1. Run analysis, as the binary does without `--disable-analysis`.
-1. If requested, serialize the AST with Slang's `ASTSerializer` and `JsonWriter` (the code behind `--ast-json`), including after errors, so that `run_slang_keep_ast` keeps working.
+1. If requested, serialize the AST with Slang's `ASTSerializer` and `JsonWriter` (the code behind `--ast-json`), including after errors, so that `run_slang_keep_design` keeps working.
 
 **Diagnostics.** `Driver` prints some problems directly instead of reporting them as diagnostics: unknown options, missing source files, a bad `--timescale` and unreadable `-f` files as errors; a missing include directory or `--suppress-warnings` path as warnings; and parse progress to stdout. These are captured: constructing the `Driver`, turning colors off, option processing and stage 1 run under one process-wide mutex with `OS::captureOutput` on, and both captured streams are drained before the mutex is released. The captured stderr is split at the `error: `, `warning: ` and `note: ` prefixes `Driver` writes; errors become `Fatal` diagnostics without a file, warnings and notes keep their severity, so an import that the binary accepts with a warning still succeeds. Diagnostics reach the shim through Slang's diagnostic engine, so `-W…`, `-Werror`, `--suppress-warnings`, pragmas and the error limit apply: the shim replaces the driver's text client with a recording client and an uncolored text client of its own, issues the syntax trees' diagnostics itself for `ParseOnly`, and the compilation's (which include the parse diagnostics) for `Elaborate`. Command line errors become `Fatal`. A source that fails to load is `Fatal` but, as in `slang`, the run elaborates the rest; only failed option processing skips elaboration. Elaboration, analysis and serialization run outside the mutex, in parallel; this is sound only because nothing after stage 1 prints, so the shim never calls Slang's reporting functions (`reportParseDiags`, `reportCompilation`, `reportDiagnostics`, `runFullCompilation`, `optionallyWriteDepFiles`), whose output would land in another call's capture. The mutex serializes parsing across concurrent imports. Locations are mapped to where the text is written (inside a macro, its definition; `rendered` keeps Slang's use-site context), and file names are made absolute lexically by the Rust side of `slang-sys` (`absolute_path`, without resolving symbolic links), the same function `slang-rs` applies to AST source paths, so all three agree. Options whose effect lives only in those functions (`--Mall`, `--Minclude`, `--Mmodule`, `--depfile-target`, `--diag-json`, in either spelling) would silently do nothing, so the shim reports each as `Fatal`, in `diagnostics` and in `rendered`, after option processing and skips elaboration. All text fields cross the boundary with `rust::String::lossy`, so invalid UTF-8 in a diagnostic becomes U+FFFD instead of failing the run. `rendered` uses Slang's text client with colors forced off; the shim never writes to the process's stdout or stderr.
 
@@ -87,11 +87,11 @@ pub const SLANG_VERSION: &str = "11.0";                // the vendored release
 The run functions return typed results:
 
 ```rust
-pub struct SlangOutput { pub ast: Ast, pub ok: bool, pub deps: Vec<PathBuf> }
+pub struct SlangOutput { pub ast: Ast, pub design: Design, pub ok: bool, pub deps: Vec<PathBuf>, pub diagnostics: Vec<Diag> }
 pub struct SlangError  { pub diagnostics: Vec<Diag>, pub rendered: String, pub deps: Vec<PathBuf> }
 
 pub fn run_slang(cfg: &SlangConfig) -> Result<SlangOutput, SlangError>;           // ok is true
-pub fn run_slang_keep_ast(cfg: &SlangConfig) -> Result<SlangOutput, SlangError>; // ok may be false
+pub fn run_slang_keep_design(cfg: &SlangConfig) -> Result<SlangOutput, SlangError>; // ok may be false
 pub fn check_slang(cfg: &SlangConfig) -> Result<(), SlangError>;                 // Stage::ParseOnly
 ```
 
@@ -188,6 +188,7 @@ impl Design {
     pub fn tops(&self) -> impl Iterator<Item = &str>;
     pub fn ports(&self, path: &str) -> Option<&[Result<Port, UnsupportedPort>]>;
     pub fn interface_ports(&self, path: &str) -> Option<&[InterfacePort]>;
+    pub fn child_instances(&self, path: &str) -> Option<Vec<&str>>;
     pub fn parameters(&self, path: &str) -> Option<&[ParameterDef]>;
     pub fn overridable_parameters(&self, path: &str) -> Option<Vec<(String, ParameterKind)>>;
     pub fn signals(&self, path: &str) -> Option<&[Signal]>;
@@ -196,7 +197,7 @@ impl Design {
 }
 ```
 
-`path` is a top-level module name or a dot-separated path of instance names through child instances that are not inside generate blocks; an instance array element is named as in the hierarchy (`top.u[3]`). `ports` excludes interface ports, which `interface_ports` returns. `parameters` includes localparams and leaves out parameters whose type is unsupported, which callers report as having no integer literal form (S0105); `overridable_parameters` lists the non-local value and type parameters, whatever their types. `Type`, `Field`, `Range`, `Variant`, `Port`, `PortDir`, `InterfacePort`, `UnsupportedPort`, `ParameterDef`, `ParameterKind`, `SourceLoc` and `Instance` keep their current shape. A package `Parameter` has `name`, `value` (the constant, or the alias as printed above; `logic[33:22]` for a plain vector) and `ty: Option<Type>`, set for aliases. Sandstitch's own `Parameter` (`src/import/package.rs`) keeps `slang-rs` types out of its API (decision 2): it stores the width of an alias's type in a private field at import, `calc_type_width` returns it, and `Parameter::new(name, value)` builds a parameter without one.
+`child_instances` lists the instantiated children outside generate blocks (array elements as `u[3]`), which the differential comparison uses to walk the hierarchy. `path` is a top-level module name or a dot-separated path of instance names through child instances that are not inside generate blocks; an instance array element is named as in the hierarchy (`top.u[3]`). `ports` excludes interface ports, which `interface_ports` returns. `parameters` includes localparams and leaves out parameters whose type is unsupported, which callers report as having no integer literal form (S0105); `overridable_parameters` lists the non-local value and type parameters, whatever their types. `Type`, `Field`, `Range`, `Variant`, `Port`, `PortDir`, `InterfacePort`, `UnsupportedPort`, `ParameterDef`, `ParameterKind`, `SourceLoc` and `Instance` keep their current shape. A package `Parameter` has `name`, `value` (the constant, or the alias as printed above; `logic[33:22]` for a plain vector) and `ty: Option<Type>`, set for aliases. Sandstitch's own `Parameter` (`src/import/package.rs`) keeps `slang-rs` types out of its API (decision 2): it stores the width of an alias's type in a private field at import, `calc_type_width` returns it, and `Parameter::new(name, value)` builds a parameter without one.
 
 ### `slang-rs`
 

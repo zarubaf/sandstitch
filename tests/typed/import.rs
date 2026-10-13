@@ -819,3 +819,30 @@ fn struct_and_union_signing_is_compared() {
         "struct packed signed {logic [1:0] x;}"
     );
 }
+
+#[test]
+fn keep_design_keeps_error_typed_ports() {
+    let sv_src = "
+module s (
+  input missing_pkg::t_t x,
+  input logic y
+);
+endmodule
+";
+    let sources = Sources::new(&[sv_src]);
+    let paths = sources.paths();
+    let cfg = slang_rs::SlangConfig {
+        sources: &paths,
+        tops: &["s"],
+        ..Default::default()
+    };
+    let output = slang_rs::run_slang_keep_design(&cfg).unwrap();
+    assert!(!output.ok);
+    let ports = output.design.ports("s").unwrap();
+    assert_eq!(ports.len(), 2);
+    assert!(matches!(&ports[0], Err(p) if p.name == "x"), "{ports:?}");
+    assert!(matches!(&ports[1], Ok(p) if p.name == "y"), "{ports:?}");
+
+    let err = sources.import("s").err().unwrap();
+    assert_eq!(err.diagnostics.0[0].code, codes::S0102);
+}

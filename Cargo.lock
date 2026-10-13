@@ -1217,6 +1217,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_stacker",
+ "slang-rs",
  "slang-sys",
  "tempfile",
 ]

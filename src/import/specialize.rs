@@ -293,7 +293,7 @@ struct Definition {
     parameters: Vec<(String, ParameterKind)>,
 }
 
-/// `None` if the sources do not parse or Slang dumped no AST of the
+/// `None` if the sources do not parse or Slang created no compilation of the
 /// definition alone.
 static DEFINITIONS: DependencyCache<Option<Definition>> = DependencyCache::new();
 
@@ -508,7 +508,7 @@ fn scratch_dir(module: &str, caller: &Span) -> Result<tempfile::TempDir, ImportE
 }
 
 /// The definition of `module` elaborated alone; `Ok(None)` if the sources do
-/// not parse or Slang dumped no AST of it.
+/// not parse or Slang created no compilation of it.
 fn definition(
     module: &str,
     import: &VerilogImport,
@@ -520,17 +520,18 @@ fn definition(
     }
     let elaborated = import.with_config(&[], &[], &[], |cfg| {
         let output = typed::elaborate_definition(module, cfg)?;
-        let definition = slang_rs::extract_interface_ports_from_value(&output.ast)
-            .remove(module)
+        let definition = output
+            .design
+            .interface_ports(module)
             .map(|interface_ports| Definition {
-                interface_ports,
+                interface_ports: interface_ports.to_vec(),
                 parameters: slang_rs::extract_overridable_parameters_from_value(&output.ast)
                     .remove(module)
                     .unwrap_or_default(),
             });
         Some((definition, output.ok, output.deps))
     });
-    // No AST at all: nothing is known, and nothing is cached.
+    // No compilation at all: nothing is known, and nothing is cached.
     let Some((definition, succeeded, loaded)) = elaborated else {
         return Ok(None);
     };
@@ -768,15 +769,15 @@ fn elaborate(
                 caller,
             )
         })?;
-    let value = output.ast;
     let dependencies = dependencies(&output.deps, import, Some(&file_name))
         .map_err(|e| elaboration_io_failure(module, caller, e))?;
 
     let instance = format!("{top}.{INSTANCE}");
-    let ports = typed::import_instance_ports(&value, &instance, module, import.skip_unsupported)
-        .ok_or_else(|| module_not_found(module, caller))??;
+    let ports =
+        typed::import_instance_ports(&output.design, &instance, module, import.skip_unsupported)
+            .ok_or_else(|| module_not_found(module, caller))??;
 
-    let definitions = slang_rs::extract_instance_parameter_defs_from_value(&value, &instance)
+    let definitions = slang_rs::extract_instance_parameter_defs_from_value(&output.ast, &instance)
         .expect("the instance exists");
     let integer_parameter_types = integer_parameter_types(module, overrides, &definitions, caller)?;
     Ok((dependencies, ports, integer_parameter_types))

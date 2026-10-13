@@ -240,7 +240,7 @@ pub(crate) fn import_ports(
                     ),
                     Label {
                         span: sv_span(unsupported.loc.as_ref(), &unsupported.name),
-                        text: "only integral (bit-vector) types are supported".into(),
+                        text: unsupported.error.clone(),
                     },
                 );
                 d.helps.push(
@@ -312,27 +312,27 @@ pub(crate) fn import_ports(
 /// for ports that cannot be represented (see [`import_ports`]). Returns
 /// `None` if `module` is not a top-level instance.
 pub(crate) fn import_top_ports(
-    value: &serde_json::Value,
+    design: &slang_rs::Design,
     module: &str,
     skip_unsupported: bool,
 ) -> Option<Result<Vec<ImportedPort>, ImportError>> {
-    import_instance_ports(value, module, module, skip_unsupported)
+    import_instance_ports(design, module, module, skip_unsupported)
 }
 
 /// Like [`import_top_ports`], for the instance of `module` at the
 /// hierarchical `path` (e.g. `"top.u_child"`).
 pub(crate) fn import_instance_ports(
-    value: &serde_json::Value,
+    design: &slang_rs::Design,
     path: &str,
     module: &str,
     skip_unsupported: bool,
 ) -> Option<Result<Vec<ImportedPort>, ImportError>> {
-    let interface_ports = slang_rs::extract_instance_interface_ports_from_value(value, path)?;
+    let interface_ports = design.interface_ports(path)?;
     if !interface_ports.is_empty() && !skip_unsupported {
-        return Some(Err(interface_port_error(module, &interface_ports)));
+        return Some(Err(interface_port_error(module, interface_ports)));
     }
-    let ports = slang_rs::extract_instance_ports_checked_from_value(value, path)?;
-    Some(import_ports(module, &ports, skip_unsupported))
+    let ports = design.ports(path)?;
+    Some(import_ports(module, ports, skip_unsupported))
 }
 
 /// S0104 for each interface port of `module`.
@@ -377,15 +377,15 @@ pub(crate) fn interface_ports_of_definition(
     if !output.ok {
         return None;
     }
-    slang_rs::extract_interface_ports_from_value(&output.ast).remove(module)
+    output.design.interface_ports(module).map(<[_]>::to_vec)
 }
 
 /// Elaborates the definition of `module` as the only top, with
 /// `--allow-toplevel-iface-ports` so that interface ports do not prevent
-/// elaboration. Returns the AST Slang dumped and whether elaboration
-/// succeeded (`ok`); a definition whose default parameters do not elaborate still
-/// shows its parameter and port declarations. Returns `None` if Slang dumped
-/// no AST.
+/// elaboration. Returns the design and AST Slang produced and whether
+/// elaboration succeeded (`ok`); a definition whose default parameters do not
+/// elaborate still shows its parameter and port declarations. Returns `None`
+/// if Slang created no compilation.
 pub(crate) fn elaborate_definition(
     module: &str,
     cfg: &ParserConfig,
@@ -401,7 +401,7 @@ pub(crate) fn elaborate_definition(
         extra_arguments: &extra_arguments,
         ..*cfg
     };
-    slang_rs::run_slang_keep_ast(&cfg.to_slang_config()).ok()
+    slang_rs::run_slang_keep_design(&cfg.to_slang_config()).ok()
 }
 
 /// A located error in Slang's diagnostics.

@@ -408,6 +408,26 @@ fn overridden_type_parameter() {
 }
 
 #[test]
+fn child_instances_lists_instantiated_children_outside_generate_blocks() {
+    let design = design(
+        "module leaf; endmodule\n\
+         module top;\n\
+           leaf a(); leaf arr[1:0](); missing m();\n\
+           if (1) begin : g leaf in_g(); end\n\
+         endmodule\n",
+        "top",
+        &["--ignore-unknown-modules"],
+    );
+    assert_eq!(
+        design.child_instances("top"),
+        Some(vec!["a", "arr[0]", "arr[1]"])
+    );
+    assert_eq!(design.child_instances("top.a"), Some(vec![]));
+    assert_eq!(design.child_instances("top.m"), None);
+    assert_eq!(design.child_instances("nope"), None);
+}
+
+#[test]
 fn shared_body_answers_both_paths() {
     let design = design(
         "module leaf(input logic [1:0] a); endmodule\n\

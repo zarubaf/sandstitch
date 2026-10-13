@@ -9,8 +9,10 @@ use std::path::{Path, PathBuf};
 
 /// Slang itself, for tests and tools. Topstitch's `src/` must not use it.
 pub use slang_sys as sys;
-pub use slang_sys::{Diag, Severity};
+pub use slang_sys::{Design, Diag, Severity};
 
+#[cfg(feature = "differential")]
+mod differential;
 mod extract;
 pub use extract::{
     Field, InterfacePort, ParameterDef, Port, PortDir, Range, SourceLoc, Type, UnsupportedPort,
@@ -134,10 +136,14 @@ impl Drop for Ast {
 pub struct SlangOutput {
     /// Slang's AST, with absolute source paths.
     pub ast: Ast,
+    /// The elaborated design: instances and their ports.
+    pub design: Design,
     /// No error or fatal diagnostics.
     pub ok: bool,
     /// Every file Slang loaded, headers included; absolute.
     pub deps: Vec<PathBuf>,
+    /// Slang's diagnostics of every severity, in order.
+    pub diagnostics: Vec<Diag>,
 }
 
 /// A failed Slang run.
@@ -212,16 +218,15 @@ pub fn run_slang(cfg: &SlangConfig) -> Result<SlangOutput, SlangError> {
     output(response)
 }
 
-/// Like [`run_slang`], but a run that fails still returns the AST Slang
-/// dumped, with `ok` false. Slang dumps the AST of a design that did not
-/// elaborate cleanly; members it could not resolve are `Invalid` nodes,
-/// while declarations such as parameters and ports are kept. After a syntax
-/// error the AST is Slang's recovery and may not match the source. Returns
-/// the failure only if Slang dumped no AST (a missing source, an unknown
-/// option).
-pub fn run_slang_keep_ast(cfg: &SlangConfig) -> Result<SlangOutput, SlangError> {
+/// Like [`run_slang`], but a run that fails still returns the design, with
+/// `ok` false, whenever Slang created a compilation. Every declared member
+/// is kept; a port whose type Slang could not resolve is unsupported. After
+/// a syntax error the design is Slang's recovery and may not match the
+/// source. Returns the failure only if Slang created no compilation (a
+/// missing source, an unknown option).
+pub fn run_slang_keep_design(cfg: &SlangConfig) -> Result<SlangOutput, SlangError> {
     let response = request(cfg, Stage::Elaborate, source_info())?;
-    if response.ast_json.is_empty() {
+    if response.design.is_none() {
         return Err(SlangError::from_response(response));
     }
     output(response)
@@ -245,12 +250,18 @@ fn source_info() -> AstJson {
 }
 
 fn request(cfg: &SlangConfig, stage: Stage, ast_json: AstJson) -> Result<Response, SlangError> {
-    Ok(slang_sys::run(&Request {
+    let response = slang_sys::run(&Request {
         args: arguments(cfg),
         stage,
         ast_json,
-        design: slang_sys::DesignQuery::None,
-    })?)
+        design: match stage {
+            Stage::Elaborate => slang_sys::DesignQuery::Structure,
+            Stage::ParseOnly => slang_sys::DesignQuery::None,
+        },
+    })?;
+    #[cfg(feature = "differential")]
+    differential::check_agreement(&response);
+    Ok(response)
 }
 
 fn arguments(cfg: &SlangConfig) -> Vec<String> {
@@ -310,19 +321,30 @@ fn arguments(cfg: &SlangConfig) -> Vec<String> {
     args
 }
 
-/// Turns a response that carries an AST into the output.
-fn output(response: Response) -> Result<SlangOutput, SlangError> {
+/// Turns a response that carries an AST and a design into the output.
+fn output(mut response: Response) -> Result<SlangOutput, SlangError> {
+    let Some(design) = response.design.take() else {
+        return Err(SlangError::fatal(
+            "Slang returned no design for an elaborated run".to_string(),
+        ));
+    };
     // Slang reports source paths relative to its working directory, which is
     // this process's; capture it so they can be made absolute.
     let ast = std::env::current_dir()
         .map_err(|e| e.to_string())
         .and_then(|dir| parse_ast(&response.ast_json, &dir).map_err(|e| e.to_string()));
     match ast {
-        Ok(ast) => Ok(SlangOutput {
-            ast,
-            ok: response.ok,
-            deps: paths(response.deps),
-        }),
+        Ok(ast) => {
+            #[cfg(feature = "differential")]
+            differential::check(&ast, &design);
+            Ok(SlangOutput {
+                ast,
+                design,
+                ok: response.ok,
+                deps: paths(response.deps),
+                diagnostics: response.diagnostics,
+            })
+        }
         Err(message) => Err(SlangError::fatal(format!("reading Slang's AST: {message}"))),
     }
 }

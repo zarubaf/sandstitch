@@ -224,3 +224,39 @@ endmodule
 
     assert_eq!(emitted_in_order, expected_in_order);
 }
+
+#[test]
+fn parallel_imports_match_sequential_imports() {
+    const MODULES: &[(&str, &str)] = &[
+        (
+            "A",
+            "module A(input logic [7:0] a_i, output logic [3:0] a_o); endmodule",
+        ),
+        (
+            "B",
+            "module B #(parameter int W = 5)(input logic [W-1:0] b_i, inout wire b_io); endmodule",
+        ),
+    ];
+    type Ports = HashMap<String, Vec<(String, String)>>;
+    let ports_of = |parsed: HashMap<String, ModDef>| -> Ports {
+        parsed
+            .into_iter()
+            .map(|(name, mod_def)| {
+                let mut ports: Vec<_> = mod_def
+                    .get_ports(None)
+                    .iter()
+                    .map(|port| (port.name().to_string(), format!("{:?}", port.io())))
+                    .collect();
+                ports.sort();
+                (name, ports)
+            })
+            .collect()
+    };
+
+    let sequential = ports_of(parse_jobs_in_pool(MODULES.to_vec(), 1));
+    let parallel = ports_of(parse_jobs_in_pool(MODULES.to_vec(), 2));
+
+    assert_eq!(sequential["A"].len(), 2);
+    assert_eq!(sequential["B"].len(), 2);
+    assert_eq!(sequential, parallel);
+}

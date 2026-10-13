@@ -31,6 +31,7 @@ sha2 = "0.10.8"
 tempfile = "3"
 
 [dev-dependencies]
+slang-rs = { path = "crates/slang-rs", version = "=0.22.0", features = ["differential"] }
 cargo_metadata = "0.18"
 log = "0.4"
 env_logger = "0.11"
