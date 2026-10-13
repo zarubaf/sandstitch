@@ -16,32 +16,10 @@ have not been validated.
 
 ## Prerequisite
 
-First install the Slang parser. We recommend building it from source.
-
-```shell
-curl --fail --location --proto '=https' --tlsv1.2 -o v11.0.tar.gz \
-  "https://github.com/MikePopoloski/slang/archive/refs/tags/v11.0.tar.gz"
-echo "50676d5a9adbefb97d266a4b174e6b0513901afd5ac57a6cdfea0a61149c3704  v11.0.tar.gz" | sha256sum -c -
-tar xzvf v11.0.tar.gz
-```
-
-```shell
-cd slang-11.0
-```
-
-```shell
-cmake -B build
-```
-
-```shell
-cmake --build build -j8
-```
-
-This will take a few minutes. Then set an environment variable to specify the location of the Slang binary:
-
-```shell
-export SLANG_PATH=`realpath build/bin/slang`
-```
+Slang v11.0 is built from the vendored source by the `slang-sys` crate and
+called in-process, so no `slang` binary and no `SLANG_PATH` are needed. A
+C++20 compiler and CMake are required; `ccache`, if installed, speeds up
+rebuilds.
 
 ## Installation
 

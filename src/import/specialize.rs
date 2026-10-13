@@ -12,8 +12,8 @@ use parking_lot::RwLock;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::{LazyLock, OnceLock};
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use crate::diagnostic::codes;
 use crate::import::parser::{VerilogImport, parser_param_to_param};
@@ -116,7 +116,7 @@ impl KeyHasher {
         self.str(timescale.as_deref().unwrap_or_default());
         self.bool(*skip_unsupported);
         self.strs(extra_arguments);
-        self.str(slang_version());
+        self.str(&slang_version());
     }
 
     fn finish(self) -> [u8; 32] {
@@ -124,12 +124,9 @@ impl KeyHasher {
     }
 }
 
-/// `slang --version`, run once per process.
-fn slang_version() -> &'static str {
-    static VERSION: OnceLock<String> = OnceLock::new();
-    VERSION.get_or_init(|| {
-        slang_rs::slang_version().unwrap_or_else(|e| format!("unknown slang version: {e}"))
-    })
+/// The Slang library version, which is part of every cache key.
+fn slang_version() -> String {
+    slang_rs::slang_version()
 }
 
 /// The part of a key known before elaboration: everything but the files
@@ -169,25 +166,20 @@ fn file_digest(path: &str) -> Option<[u8; 32]> {
     std::fs::read(path).ok().map(|c| Sha256::digest(&c).into())
 }
 
-/// The dependency list Slang wrote with `--Mall` (paths relative to this
-/// process's working directory), plus the configured sources and library
-/// files, without the generated elaboration top. Fails if Slang wrote no
-/// list.
+/// The files Slang loaded (absolute, headers included), plus the configured
+/// sources and library files, without the generated elaboration top.
 fn dependencies(
-    mall: &Path,
+    loaded: &[PathBuf],
     import: &VerilogImport,
     generated: Option<&str>,
 ) -> Result<Dependencies, String> {
     let cwd = std::env::current_dir().map_err(|e| format!("working directory: {e}"))?;
-    let listed = std::fs::read_to_string(mall)
-        .map_err(|e| format!("Slang's dependency list {}: {e}", mall.display()))?;
-    let mut paths: Vec<String> = listed
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .chain(import.sources.iter().map(String::as_str))
-        .chain(import.libfiles.iter().map(String::as_str))
-        .map(|path| slang_rs::absolute_path(&cwd, path))
+    let mut paths: Vec<String> = loaded
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .chain(import.sources.iter().cloned())
+        .chain(import.libfiles.iter().cloned())
+        .map(|path| slang_rs::absolute_path(&cwd, &path))
         .filter(|path| {
             generated.is_none_or(|name| Path::new(path).file_name().is_none_or(|file| file != name))
         })
@@ -501,12 +493,8 @@ fn check_against_definition(
     }
 }
 
-/// A temporary directory for one Slang run, and the path of the `--Mall`
-/// dependency list in it.
-fn scratch_dir(
-    module: &str,
-    caller: &Span,
-) -> Result<(tempfile::TempDir, std::path::PathBuf), ImportError> {
+/// A temporary directory for the generated elaboration top.
+fn scratch_dir(module: &str, caller: &Span) -> Result<tempfile::TempDir, ImportError> {
     let dir = tempfile::tempdir()
         .map_err(|e| elaboration_io_failure(module, caller, format!("temporary directory: {e}")))?;
     if dir.path().to_str().is_none() {
@@ -516,8 +504,7 @@ fn scratch_dir(
             format!("{} is not valid UTF-8", dir.path().display()),
         ));
     }
-    let mall = dir.path().join("deps.txt");
-    Ok((dir, mall))
+    Ok(dir)
 }
 
 /// The definition of `module` elaborated alone; `Ok(None)` if the sources do
@@ -531,36 +518,31 @@ fn definition(
     if let Some(definition) = DEFINITIONS.get(&pre_key) {
         return Ok(definition);
     }
-    let (_dir, mall) = scratch_dir(module, caller)?;
-    let mall_arg = mall.to_str().expect("checked by scratch_dir");
-    let definition = import.with_config(&[], &[], &["--Mall", mall_arg], |cfg| {
-        let (value, succeeded) = typed::elaborate_definition(module, cfg)?;
-        let interface_ports =
-            slang_rs::extract_interface_ports_from_value(&value).remove(module)?;
-        let parameters = slang_rs::extract_overridable_parameters_from_value(&value)
+    let elaborated = import.with_config(&[], &[], &[], |cfg| {
+        let output = typed::elaborate_definition(module, cfg)?;
+        let definition = slang_rs::extract_interface_ports_from_value(&output.ast)
             .remove(module)
-            .unwrap_or_default();
-        Some((
-            Definition {
+            .map(|interface_ports| Definition {
                 interface_ports,
-                parameters,
-            },
-            succeeded,
-        ))
+                parameters: slang_rs::extract_overridable_parameters_from_value(&output.ast)
+                    .remove(module)
+                    .unwrap_or_default(),
+            });
+        Some((definition, output.ok, output.deps))
     });
+    // No AST at all: nothing is known, and nothing is cached.
+    let Some((definition, succeeded, loaded)) = elaborated else {
+        return Ok(None);
+    };
     // After a syntax error the AST is Slang's recovery, which can differ
     // from the source (a parameter port list cut short at a typo makes the
     // following parameters local): it is used only if the sources parse.
     let definition = match definition {
-        Some((definition, true)) => Some(definition),
-        Some((definition, false)) if parses(import) => Some(definition),
+        Some(definition) if succeeded || parses(import) => Some(definition),
         _ => None,
     };
-    match dependencies(&mall, import, None) {
+    match dependencies(&loaded, import, None) {
         Ok(dependencies) => DEFINITIONS.insert(pre_key, dependencies, definition.clone()),
-        // A failed run may write no list: the failure is reported by the
-        // specialization's own run, and nothing is cached.
-        Err(_) if definition.is_none() => {}
         Err(e) => return Err(elaboration_io_failure(module, caller, e)),
     }
     Ok(definition)
@@ -568,7 +550,7 @@ fn definition(
 
 /// Whether Slang parses the sources of `import` without errors.
 fn parses(import: &VerilogImport) -> bool {
-    import.with_config(&[], &[], &["--parse-only"], |cfg| {
+    import.with_config(&[], &[], &[], |cfg| {
         slang_rs::check_slang(&cfg.to_slang_config()).is_ok()
     })
 }
@@ -580,14 +562,22 @@ fn check_extra_arguments(
     import: &VerilogImport,
     caller: &Span,
 ) -> Result<(), ImportError> {
-    let conflicting: Vec<&String> = import
-        .extra_arguments
-        .iter()
-        .filter(|a| *a == "--Mall" || a.starts_with("--Mall="))
-        .collect();
-    if conflicting.is_empty() {
+    // `--Mall` is no longer passed, but it is rejected as before: it writes
+    // a file the caller did not ask for.
+    let conflicting = import.extra_arguments.iter().find_map(|argument| {
+        slang_rs::BINARY_ONLY_OPTIONS
+            .iter()
+            .chain(&["--Mall"])
+            .find(|option| {
+                argument == *option
+                    || argument
+                        .strip_prefix(**option)
+                        .is_some_and(|rest| rest.starts_with('='))
+            })
+    });
+    let Some(option) = conflicting else {
         return Ok(());
-    }
+    };
     let mut d = error_at(
         codes::S0102,
         format!("cannot elaborate `{module}`"),
@@ -595,12 +585,12 @@ fn check_extra_arguments(
         "specialized here",
     );
     d.notes.push(format!(
-        "the import configuration's extra arguments contain `{}`, which specialization \
-         passes to Slang itself to list the files it reads",
-        conflicting[0]
+        "the import configuration's extra arguments contain `{option}`, which specialization \
+         passes to Slang itself or which only the slang binary understands"
     ));
-    d.helps
-        .push("remove `--Mall` from `ParserConfig::extra_arguments`".to_string());
+    d.helps.push(format!(
+        "remove `{option}` from `ParserConfig::extra_arguments`"
+    ));
     Err(import_error(vec![d]))
 }
 
@@ -742,32 +732,31 @@ fn elaborate(
 ) -> Result<Elaborated, ImportError> {
     let top = format!("__sandstitch_elab_{}", short_hash(pre_key));
     let (text, override_lines) = elaboration_top(&top, module, overrides);
-    let (dir, mall) = scratch_dir(module, caller)?;
+    let dir = scratch_dir(module, caller)?;
     let file_name = format!("{top}.sv");
     let path = dir.path().join(&file_name);
     std::fs::write(&path, &text)
         .map_err(|e| elaboration_io_failure(module, caller, format!("{}: {e}", path.display())))?;
     let path = path.to_str().expect("checked by scratch_dir");
-    let mall_arg = mall.to_str().expect("checked by scratch_dir");
 
     // The generated top leaves every port unconnected; its warnings must not
     // fail a `-Werror` configuration. A module with `timescale needs one on
     // the generated top too.
-    let mut extra_arguments = vec!["--Mall", mall_arg, "--suppress-warnings", path];
+    let mut extra_arguments = vec!["--suppress-warnings", path];
     if import.timescale.is_none() && !sets_timescale(&import.extra_arguments) {
         extra_arguments.extend(["--timescale", "1ns/1ns"]);
     }
 
     #[cfg(test)]
     ELABORATIONS.with(|count| count.set(count.get() + 1));
-    let value = import
+    let output = import
         .with_config(&[&top], &[path], &extra_arguments, |cfg| {
             slang_rs::run_slang(&cfg.to_slang_config())
         })
         .map_err(|e| {
             slang_failure(
                 module,
-                &typed::slang_output(e.as_ref()),
+                &e,
                 &file_name,
                 &override_lines,
                 overrides,
@@ -775,7 +764,8 @@ fn elaborate(
                 caller,
             )
         })?;
-    let dependencies = dependencies(&mall, import, Some(&file_name))
+    let value = output.ast;
+    let dependencies = dependencies(&output.deps, import, Some(&file_name))
         .map_err(|e| elaboration_io_failure(module, caller, e))?;
 
     let instance = format!("{top}.{INSTANCE}");
@@ -873,7 +863,7 @@ fn module_not_found(module: &str, caller: &Span) -> ImportError {
 /// overrides are consequences. Errors in the sources are secondary labels.
 fn slang_failure(
     module: &str,
-    output: &str,
+    err: &slang_rs::SlangError,
     top_file_name: &str,
     override_lines: &HashMap<u32, String>,
     overrides: &IndexMap<String, ParameterValue>,
@@ -886,9 +876,9 @@ fn slang_failure(
         caller,
         "specialized here",
     );
-    let errors = typed::slang_errors(output);
+    let errors = typed::slang_errors(err);
     if errors.is_empty() {
-        d.notes.push(output.trim().to_string());
+        d.notes.push(err.rendered.trim().to_string());
     }
     let mut bare_name_undeclared = false;
     for error in errors {
@@ -944,8 +934,7 @@ fn slang_failure(
 
 #[cfg(test)]
 mod tests {
-    use super::{SPECIALIZATIONS, dependencies, elaborations, pre_key};
-    use crate::import::parser::VerilogImport;
+    use super::{SPECIALIZATIONS, elaborations, pre_key};
     use crate::model::parameter::ParameterValue;
     use crate::{ModDef, ParserConfig};
     use indexmap::IndexMap;
@@ -1083,15 +1072,6 @@ mod tests {
         let again = first.try_parameterize(&overrides).unwrap();
         assert_eq!(elaborations(), before + 1);
         assert_eq!(again.specialization_key(), first.specialization_key());
-    }
-
-    #[test]
-    fn missing_dependency_list_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let import = VerilogImport::new(&ParserConfig::default());
-        let missing = dir.path().join("deps.txt");
-        let e = dependencies(&missing, &import, None).unwrap_err();
-        assert!(e.starts_with("Slang's dependency list "), "{e}");
     }
 
     #[test]

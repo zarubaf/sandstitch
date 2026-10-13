@@ -112,7 +112,7 @@ pub fn extract_ports(
     cfg: &crate::SlangConfig,
     skip_unsupported: bool,
 ) -> HashMap<String, Vec<Port>> {
-    let result = crate::run_slang(cfg).unwrap();
+    let result = crate::run_slang(cfg).unwrap().ast;
     extract_ports_from_value(&result, skip_unsupported)
 }
 
@@ -490,7 +490,7 @@ pub fn extract_parameter_defs(
     cfg: &crate::SlangConfig,
     skip_unsupported: bool,
 ) -> HashMap<String, Vec<ParameterDef>> {
-    let result = crate::run_slang(cfg).unwrap();
+    let result = crate::run_slang(cfg).unwrap().ast;
     extract_parameter_defs_from_value(&result, skip_unsupported)
 }
 
@@ -516,7 +516,7 @@ pub fn extract_modules_from_value(value: &Value) -> Result<Vec<String>, Box<dyn 
 }
 
 pub fn extract_modules(cfg: &crate::SlangConfig) -> Result<Vec<String>, Box<dyn Error>> {
-    let result = crate::run_slang(cfg)?;
+    let result = crate::run_slang(cfg)?.ast;
     extract_modules_from_value(&result)
 }
 
@@ -574,24 +574,22 @@ impl<'a> TypeResolver<'a> {
         self.by_address.get(&address).copied().unwrap_or(value)
     }
 
-    /// Recursively records addressable objects without making assumptions about
-    /// which AST scopes can contain type definitions.
-    fn index(value: &'a Value, by_address: &mut HashMap<u64, &'a Value>) {
-        match value {
-            Value::Object(object) => {
-                if let Some(address) = object.get("addr").and_then(Value::as_u64) {
-                    by_address.insert(address, value);
+    /// Records addressable objects without making assumptions about which AST
+    /// scopes can contain type definitions. Iterative: the AST can be nested
+    /// deeper than the caller's stack allows.
+    fn index(root: &'a Value, by_address: &mut HashMap<u64, &'a Value>) {
+        let mut stack = vec![root];
+        while let Some(value) = stack.pop() {
+            match value {
+                Value::Object(object) => {
+                    if let Some(address) = object.get("addr").and_then(Value::as_u64) {
+                        by_address.insert(address, value);
+                    }
+                    stack.extend(object.values());
                 }
-                for child in object.values() {
-                    Self::index(child, by_address);
-                }
+                Value::Array(array) => stack.extend(array),
+                _ => {}
             }
-            Value::Array(array) => {
-                for child in array {
-                    Self::index(child, by_address);
-                }
-            }
-            _ => {}
         }
     }
 

@@ -1216,8 +1216,8 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_stacker",
+ "slang-sys",
  "tempfile",
- "which",
 ]
 
 [[package]]

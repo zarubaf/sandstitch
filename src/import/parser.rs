@@ -330,10 +330,10 @@ impl ModDef {
     ) -> Result<Self, ImportError> {
         let caller = Span::caller();
         let value = match slang_rs::run_slang(&cfg.to_slang_config()) {
-            Ok(value) => value,
+            Ok(output) => output.ast,
             Err(e) => {
                 return Err(interface_port_error_of_definition(name, cfg)
-                    .unwrap_or_else(|| typed::slang_failure(name, e.as_ref())));
+                    .unwrap_or_else(|| typed::slang_failure(name, &e)));
             }
         };
 
@@ -366,7 +366,7 @@ impl ModDef {
     pub fn all_from_verilog_with_config(cfg: &ParserConfig) -> Vec<Self> {
         let caller = Span::caller();
         let parameters = owned_pairs(cfg.parameters);
-        let value = slang_rs::run_slang(&cfg.to_slang_config()).unwrap();
+        let value = slang_rs::run_slang(&cfg.to_slang_config()).unwrap().ast;
         // Every top-level module (with or without interface ports), sorted by
         // name for a deterministic order.
         let mut top_names: Vec<String> = slang_rs::extract_interface_ports_from_value(&value)

@@ -17,7 +17,7 @@ pub struct Instance {
 pub fn extract_hierarchy(
     cfg: &crate::SlangConfig,
 ) -> Result<HashMap<String, Instance>, Box<dyn Error>> {
-    Ok(extract_hierarchy_from_value(&crate::run_slang(cfg)?))
+    Ok(extract_hierarchy_from_value(&crate::run_slang(cfg)?.ast))
 }
 
 pub fn extract_hierarchy_from_value(value: &Value) -> HashMap<String, Instance> {
@@ -166,23 +166,21 @@ impl<'a> AstSymbols<'a> {
         Self { by_address }
     }
 
-    /// Recursively records each object with an `addr` field.
-    fn index(value: &'a Value, by_address: &mut HashMap<u64, &'a Value>) {
-        match value {
-            Value::Object(object) => {
-                if let Some(address) = object.get("addr").and_then(Value::as_u64) {
-                    by_address.insert(address, value);
+    /// Records each object with an `addr` field. Iterative: the AST can be
+    /// nested deeper than the caller's stack allows.
+    fn index(root: &'a Value, by_address: &mut HashMap<u64, &'a Value>) {
+        let mut stack = vec![root];
+        while let Some(value) = stack.pop() {
+            match value {
+                Value::Object(object) => {
+                    if let Some(address) = object.get("addr").and_then(Value::as_u64) {
+                        by_address.insert(address, value);
+                    }
+                    stack.extend(object.values());
                 }
-                for child in object.values() {
-                    Self::index(child, by_address);
-                }
+                Value::Array(array) => stack.extend(array),
+                _ => {}
             }
-            Value::Array(array) => {
-                for child in array {
-                    Self::index(child, by_address);
-                }
-            }
-            _ => {}
         }
     }
 
