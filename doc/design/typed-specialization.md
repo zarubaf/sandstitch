@@ -23,7 +23,7 @@ Let a design package configure an imported SystemVerilog module with value **and
 ```
 /                    library crate (Topstitch fork), workspace root
 crates/slang-rs/     slang-rs subtree (hard fork)
-crates/xlsynth-vast/ xlsynth-vast 0.65.0, vendored (hard fork)
+crates/xlsynth-vast/ vendored from xlsynth-vast 0.65.0 (hard fork)
 designs/floonoc/     FlooNoC design package, publish = false
 third_party/         pinned RTL subtrees (floonoc, common_cells, axi) with licences
 xtask/               cargo xtask: ci, slang, explain
