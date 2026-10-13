@@ -139,8 +139,8 @@ impl Parameter {
     /// # Errors
     ///
     /// Returns an error if the parameter is not a type alias, or its type has
-    /// no bit width (unpacked dimensions, an empty enum, an enum with
-    /// different-sized variants).
+    /// no bit width (unpacked dimensions, an unpacked struct or union, an
+    /// empty enum, an enum with different-sized variants).
     pub fn calc_type_width(&self) -> Result<usize, Box<dyn Error>> {
         self.width
             .ok_or_else(|| format!("`{}` is not a type with a bit width", self.name).into())

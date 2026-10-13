@@ -123,10 +123,14 @@ impl Type {
     }
 
     /// The width in bits; an error for a type without a bit layout (unpacked
-    /// dimensions, an empty enum, or an enum with different-sized variants).
+    /// dimensions, an unpacked struct or union, an empty enum, or an enum with
+    /// different-sized variants).
     pub fn width(&self) -> Result<usize, &'static str> {
         match self {
             Type::Logic { .. } => self.number_of_elements(),
+            Type::Struct { packed: false, .. } | Type::Union { packed: false, .. } => {
+                Err("Unpacked structs and unions have no bit layout")
+            }
             Type::Struct { fields, .. } => {
                 let mut width = 0;
                 for field in fields {
@@ -320,4 +324,58 @@ pub struct Instance {
     /// the genvar's value (`.g[2].h`).
     pub hier_prefix: String,
     pub contents: Vec<Rc<RefCell<Instance>>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn logic(width: i32) -> Type {
+        Type::Logic {
+            signed: false,
+            packed_dimensions: vec![Range {
+                msb: width - 1,
+                lsb: 0,
+            }],
+            unpacked_dimensions: vec![],
+        }
+    }
+
+    fn aggregate(packed: bool, union: bool) -> Type {
+        let fields = vec![Field {
+            name: "f".into(),
+            ty: logic(4),
+        }];
+        if union {
+            Type::Union {
+                name: String::new(),
+                signed: false,
+                packed,
+                fields,
+                packed_dimensions: vec![],
+                unpacked_dimensions: vec![],
+            }
+        } else {
+            Type::Struct {
+                name: String::new(),
+                signed: false,
+                packed,
+                fields,
+                packed_dimensions: vec![],
+                unpacked_dimensions: vec![],
+            }
+        }
+    }
+
+    #[test]
+    fn packed_aggregates_have_a_width() {
+        assert_eq!(aggregate(true, false).width(), Ok(4));
+        assert_eq!(aggregate(true, true).width(), Ok(4));
+    }
+
+    #[test]
+    fn unpacked_aggregates_have_no_width() {
+        assert!(aggregate(false, false).width().is_err());
+        assert!(aggregate(false, true).width().is_err());
+    }
 }

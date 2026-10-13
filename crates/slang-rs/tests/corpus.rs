@@ -87,10 +87,11 @@ fn modules_of(files: &[PathBuf]) -> BTreeMap<String, String> {
     modules
 }
 
-/// Checks that `ty` has a positive width, or unpacked dimensions (which have
-/// none); `what` names it in the failure.
+/// Checks that `ty` has a positive width, or unpacked dimensions or is an
+/// unpacked struct or union (which have none); `what` names it in the failure.
 fn assert_sized(ty: &Type, what: &str) {
     let unpacked = match ty {
+        Type::Struct { packed: false, .. } | Type::Union { packed: false, .. } => true,
         Type::Logic {
             unpacked_dimensions,
             ..
