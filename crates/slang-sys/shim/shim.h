@@ -4,9 +4,18 @@
 
 #pragma once
 
+#include <string_view>
+
 #include "rust/cxx.h"
 
 namespace slang_sys {
+
+/// Every string the shim passes to Rust goes through here: invalid UTF-8 (a
+/// Latin-1 byte in a string literal, say) becomes U+FFFD instead of making
+/// `rust::String` throw and the whole run fail.
+inline rust::String str(std::string_view text) {
+    return rust::String::lossy(text.data(), text.size());
+}
 
 struct FfiRequest;
 struct FfiResponse;
