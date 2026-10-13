@@ -2,7 +2,7 @@
 
 Build a reusable library for constructing hardware modules and complete SoCs from existing RTL/IP and generated components. Running a design package resolves a selected configuration and produces integration SystemVerilog, an interactive structural explorer, and module documentation from the same executable design.
 
-The baseline is a hard fork of Topstitch, Slang for SystemVerilog import, and xlsynth-vast for structured RTL emission. CIRCT and LLVM are outside the baseline. The first release targets one known router and component family, with a short development loop and prebuilt distribution.
+The baseline is a hard fork of Topstitch, Slang for SystemVerilog import, and xlsynth-vast for structured RTL emission. CIRCT and LLVM are outside the baseline. The first release targets one known router and component family, with a short development loop, distributed as a Rust crate with Slang linked in.
 
 Status: implementation handoff, 12 October 2026; implementation has not started. Working name: Topstitch fork. The public product name remains undecided; do not adopt Archstitch, which understates the hardware construction scope. Release dates remain unset.
 
@@ -40,24 +40,24 @@ The first example is a small mesh connecting repeated compute tiles and memory e
 | --- | --- |
 | Composition library | Define, import, instantiate, connect, expose ports, resolve, validate, and export |
 | Generator package | A mesh and a nested compute tile built around one known component family |
-| Command line interface | Build a configuration, check it, emit outputs, and serve the explorer locally |
+| Command line interface | Open (#9): designs build with Cargo; whether serving the explorer needs a small binary is undecided |
 | Explorer | Hierarchy navigation, interface selection, connection tracing, search, and an inspector |
 | Documentation | Module descriptions, parameter values, interface tables, hierarchy views, and diagnostics |
-| Release package | Prebuilt engine, importer support, and browser assets for the initial supported platform |
+| Release package | The library crate with Slang built from vendored source, and browser assets, for the initial supported platform |
 
-The first release is Rust-first: designs and generators are authored in Rust against the library API, and the CLI builds them. Language bindings, including Python, are deferred. When added, a binding is a thin authoring API over native functionality; it must not become a separate model implementation or a broad API-design project before the core workflow works.
+The first release is Rust-first: designs and generators are authored in Rust against the library API and built with Cargo. Language bindings, including Python, are deferred. When added, a binding is a thin authoring API over native functionality; it must not become a separate model implementation or a broad API-design project before the core workflow works.
 
 ## Technology and reuse
 
 | Area | Reuse | Work we own |
 | --- | --- | --- |
 | Composition | Hard-fork Topstitch | Product-facing errors, structural export, and targeted model extensions |
-| RTL import | Slang through a pinned compatible slang-rs integration | Import configuration, caching, source provenance, and supported-type policy |
+| RTL import | Slang, linked in-process from pinned vendored source, under a forked slang-rs | Import configuration, caching, source provenance, supported-type policy, and a narrow C++ shim ([Slang in-process](design/slang-in-process.md)) |
 | RTL output | xlsynth-vast | Mapping the resolved composition to the existing AST emitter |
 | Browser UI | React and TypeScript with React Flow | Hardware blocks, interface views, hierarchy navigation, and inspection |
 | Layout | ELK.js; generator-provided mesh coordinates | Layout settings and hardware-specific presentation |
 | Serialization | Serde and JSON | A small versioned structural snapshot |
-| Distribution | Cargo; prebuilt release binaries | A self-contained CLI with bundled Slang support and explorer assets |
+| Distribution | Cargo | The library crate with vendored Slang, and explorer assets |
 | Language bindings (deferred) | PyO3 and Maturin for Python, when needed | A narrow binding surface over the Rust API |
 | Documentation | Existing Markdown and HTML rendering components | Templates driven by the structural snapshot |
 
@@ -158,11 +158,9 @@ Simulation, lint, CDC/RDC, protocol verification, synthesis, and signoff remain 
 
 ## Distribution and development loop
 
-The proposed first supported target is Linux x86-64. In milestone 1, pin the exact fork, slang-rs and Slang combination, Rust toolchain version, minimum glibc and C++ runtime requirements, and the oldest supported host environment. Run the actual release binary in that clean environment immediately; compatibility with a GitHub runner alone is insufficient. Ship prebuilt CLI binaries containing the engine, compatible Slang support, and built explorer assets. Design authors depend on the library crate through Cargo. A local CLI serves the explorer; no hosted service is required. Other platforms follow explicit release testing.
+The proposed first supported target is Linux x86-64. Sandstitch ships as a Rust crate; language bindings follow later. Slang is compiled from pinned vendored source and linked statically, so the import does not depend on a `slang` binary on the user's `PATH`, and its JSON format, but on the exact version the crate was tested with. Pin the fork, the vendored Slang version, the Rust toolchain version, and the build requirements: GCC 11 or Clang 17, CMake 3.20 and Python 3. The C++ standard library is linked dynamically, so the minimum runtime is the libstdc++ of GCC 11 and the glibc of the oldest supported host. See [Slang in-process](design/slang-in-process.md).
 
-Installing the prebuilt CLI on a supported target must not compile Rust or C++, download toolchain sources, or require Node. Building a Rust design package compiles only the design and links prebuilt native dependencies; it must not rebuild Slang. Unsupported targets should fail clearly rather than unexpectedly starting a source build. Native dependency bundling requires clean-environment verification.
-
-Keep native dependency builds separate from ordinary product CI. First evaluate upstream prebuilt Slang artifacts for the exact pinned integration and runtime baseline. Reuse them when compatible; publish our own pinned artifact or build image only where needed. Features described for a newer slang-rs release must not be assumed to exist in the fork's pinned version. Rebuild native dependencies only when their inputs change. Compile only the fork and affected product code during normal development; build browser assets only for relevant changes or releases.
+The first build of a design compiles Slang once (minutes); Cargo's build cache and, when installed, ccache make later builds reuse it, including across `cargo clean` and other projects. The build never downloads sources. Unsupported compilers fail with a clear message before compiling Slang. Ordinary CI caches the compiler output instead of running a separate native build job. Build browser assets only for relevant changes or releases. Whether serving the explorer needs a small binary is open (#9).
 
 There is no LLVM/CIRCT build in the baseline. Benchmark both repeated identical specializations and unique per-router configurations. Record Slang invocation count, cold and warm import time, construction/check/export time, peak memory, cold and warm CI duration, package size, and browser loading separately. Establish regression budgets from these representative workloads before expanding scope; do not substitute an unmeasured performance promise.
 
@@ -170,11 +168,11 @@ There is no LLVM/CIRCT build in the baseline. Benchmark both repeated identical 
 
 | Milestone | Deliverable | Exit condition |
 | --- | --- | --- |
-| 1 Packaged real IP baseline | Pinned hard fork and dependencies, existing emitter, representative router import, and an actual release binary | Select the router before implementation; import its required types; emit one design containing two parameter specializations and repeated instances of each; elaborate with original RTL and verify widths, overrides, and names; install and run in the oldest supported clean runtime without compilation or runtime downloads |
+| 1 Packaged real IP baseline | Pinned hard fork and dependencies, existing emitter, representative router import, and Slang linked in-process | Select the router before implementation; import its required types; emit one design containing two parameter specializations and repeated instances of each; elaborate with original RTL and verify widths, overrides, and names; import with Slang built from pinned vendored source, without an external `slang` binary |
 | 2 Resolved connection contract | Executable connection examples, read-only snapshot, provenance, and structured diagnostics | Bit mappings, fan-out, constants, open ports, and nested exposed ports have precise semantics; emission and tracing share those mappings; independent expected connections or downstream simulation catch shared normalization mistakes; two differently configured generated components coexist correctly |
 | 3 Working reference NoC | Mesh, nested compute tile, two system configurations, and required routing/configuration artifacts | Original RTL plus wrappers elaborate; end-to-end traffic crosses multiple routers and reaches the intended memory endpoint in both configurations; routing artifacts are recorded in the manifest; repeated and unique parameter workloads are measured |
 | 4 Explorable specification | Browser explorer and generated module documentation | A reviewer can navigate from mesh to tile with breadcrumbs, expand bundled interfaces, trace selected connections, and inspect concrete properties from the same build; both reference configurations render without per-instance manual layout; UI work starts after the connection contract passes |
-| 5 Pilot release | Packaged CLI/API, examples, compatibility policy, and measured regression budgets | The oldest supported clean environment can install, import, build, check, emit, and browse without a development toolchain; representative correctness and performance checks pass |
+| 5 Pilot release | Packaged CLI/API, examples, compatibility policy, and measured regression budgets | The oldest supported clean environment can build a design with the documented toolchain (Rust, C++ compiler, CMake, Python 3), import, check, emit, and browse (packaging revisited in #9); representative correctness and performance checks pass |
 
 Deliver a vertical slice through import, composition, emission, and inspection before broadening component support. Do not make API freeze, general plugin design, or additional output backends prerequisites for that slice.
 
