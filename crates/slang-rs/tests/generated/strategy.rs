@@ -13,8 +13,8 @@ use proptest::prelude::*;
 
 use crate::model::{
     Aggregate, Base, DataType, Design, Dim, Dir, Enum, EnumBase, EnumVariant, Expr, Instance,
-    IntKind, LocalParam, LocalTypeParam, Member, Module, Package, Param, PortDecl, TypeParam,
-    TypeRef, TypedParam, Typedef, VectorKw, enum_base_width, int_width,
+    IntKind, LocalParam, LocalTypeParam, Member, Module, Package, PackageParam, PackageValue,
+    Param, PortDecl, TypeParam, TypeRef, TypedParam, Typedef, VectorKw, enum_base_width, int_width,
 };
 
 /// Instances nest at most this deep, the top included.
@@ -147,8 +147,17 @@ struct RawModule {
 }
 
 #[derive(Clone, Debug)]
+struct RawPackage {
+    typedefs: Vec<RawTypedef>,
+    /// Per parameter: a constant, and an earlier parameter to add it to,
+    /// chosen by the index modulo the number of earlier parameters, with
+    /// whether to use it.
+    params: Vec<(i32, bool, usize)>,
+}
+
+#[derive(Clone, Debug)]
 struct RawDesign {
-    packages: Vec<Vec<RawTypedef>>,
+    packages: Vec<RawPackage>,
     modules: Vec<RawModule>,
 }
 
@@ -332,9 +341,17 @@ fn raw_module() -> impl Strategy<Value = RawModule> {
         )
 }
 
+fn raw_package() -> impl Strategy<Value = RawPackage> {
+    (
+        prop::collection::vec(raw_typedef(), 0..=4),
+        prop::collection::vec((-100i32..=100, any::<bool>(), 0usize..8), 0..=4),
+    )
+        .prop_map(|(typedefs, params)| RawPackage { typedefs, params })
+}
+
 fn raw_design() -> impl Strategy<Value = RawDesign> {
     (
-        prop::collection::vec(prop::collection::vec(raw_typedef(), 0..=4), 1..=2),
+        prop::collection::vec(raw_package(), 1..=2),
         prop::collection::vec(raw_module(), 1..=4),
     )
         .prop_map(|(packages, modules)| RawDesign { packages, modules })
@@ -861,13 +878,41 @@ fn lower(raw: RawDesign) -> Design {
     };
     let mut package_refs: Vec<(TypeRef, Props)> = Vec::new();
     let mut packages = Vec::new();
-    for (p, raw_typedefs) in raw.packages.iter().enumerate() {
+    // The package parameters so far, as (package, index).
+    let mut package_params: Vec<(usize, usize)> = Vec::new();
+    for (p, raw_package) in raw.packages.iter().enumerate() {
         let name = lower.name("pkg");
-        let typedefs = lower.typedefs(raw_typedefs, &mut package_refs, 0, |i| TypeRef::Package {
-            package: p,
-            typedef: i,
+        let params = raw_package
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, &(value, sum, pick))| {
+                let value = match package_params.get(pick % package_params.len().max(1)) {
+                    Some(&(package, param)) if sum => PackageValue::Sum {
+                        package,
+                        param,
+                        offset: value,
+                    },
+                    _ => PackageValue::Const(value),
+                };
+                package_params.push((p, i));
+                PackageParam {
+                    name: lower.name("pp"),
+                    value,
+                }
+            })
+            .collect();
+        let typedefs = lower.typedefs(&raw_package.typedefs, &mut package_refs, 0, |i| {
+            TypeRef::Package {
+                package: p,
+                typedef: i,
+            }
         });
-        packages.push(Package { name, typedefs });
+        packages.push(Package {
+            name,
+            params,
+            typedefs,
+        });
     }
 
     let count = raw.modules.len();

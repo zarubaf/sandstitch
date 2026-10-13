@@ -5,8 +5,8 @@
 use std::fmt::Write;
 
 use crate::model::{
-    Base, DataType, Design, Dim, Dir, EnumBase, Expr, IntKind, Module, PortDecl, TypeRef, VectorKw,
-    enum_base_width,
+    Base, DataType, Design, Dim, Dir, EnumBase, Expr, IntKind, Module, PackageValue, PortDecl,
+    TypeRef, VectorKw, enum_base_width,
 };
 
 /// The source of `design`: its packages, then its modules.
@@ -19,6 +19,23 @@ pub fn sv(design: &Design) -> String {
             module: None,
         };
         writeln!(out, "package {};", package.name).unwrap();
+        for param in &package.params {
+            let value = match param.value {
+                PackageValue::Const(value) => value.to_string(),
+                PackageValue::Sum {
+                    package,
+                    param,
+                    offset,
+                } => {
+                    let package = &design.packages[package];
+                    format!(
+                        "{}::{} + ({offset})",
+                        package.name, package.params[param].name
+                    )
+                }
+            };
+            writeln!(out, "  localparam int {} = {value};", param.name).unwrap();
+        }
         for typedef in &package.typedefs {
             writeln!(
                 out,

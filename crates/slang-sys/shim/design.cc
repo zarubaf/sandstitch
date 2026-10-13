@@ -25,6 +25,7 @@
 #include "slang/ast/symbols/PortSymbols.h"
 #include "slang/ast/symbols/VariableSymbols.h"
 #include "slang/ast/types/AllTypes.h"
+#include "slang/ast/types/TypePrinter.h"
 #include "slang/numeric/SVInt.h"
 #include "slang/text/SourceManager.h"
 
@@ -50,6 +51,10 @@ constexpr uint8_t UNSUPPORTED_PORT = 2;
 // `FfiParameter::kind`.
 constexpr uint8_t VALUE_PARAMETER = 0;
 constexpr uint8_t TYPE_PARAMETER = 1;
+
+// `FfiPackageParameter::kind`.
+constexpr uint8_t PACKAGE_VALUE = 0;
+constexpr uint8_t PACKAGE_ALIAS = 1;
 
 constexpr std::string_view TYPE_ERROR = "only integral (bit-vector) types are supported";
 constexpr std::string_view XZ_ERROR = "enum values with X or Z bits are not supported";
@@ -155,7 +160,7 @@ FfiLoc location(const SourceManager& sourceManager, const Symbol& symbol) {
 
 class Walker {
 public:
-    Walker(const Compilation& compilation, const SourceManager& sourceManager, FfiDesign& out) :
+    Walker(Compilation& compilation, const SourceManager& sourceManager, FfiDesign& out) :
         compilation(compilation), sourceManager(sourceManager), out(out) {}
 
     void top(const InstanceSymbol& instance) {
@@ -167,7 +172,48 @@ public:
         out.tops.push_back(std::move(top));
     }
 
+    /// Adds the packages of the compilation units: their value parameters
+    /// and type aliases.
+    void packages() {
+        for (auto unit : compilation.getRoot().compilationUnits) {
+            for (auto& member : unit->members()) {
+                if (member.kind == SymbolKind::Package)
+                    out.packages.push_back(package(member.as<PackageSymbol>()));
+            }
+        }
+    }
+
 private:
+    FfiPackage package(const PackageSymbol& symbol) {
+        FfiPackage package{};
+        package.name = str(symbol.name);
+        for (auto& member : symbol.members()) {
+            FfiPackageParameter parameter{};
+            parameter.name = str(member.name);
+            if (member.kind == SymbolKind::Parameter) {
+                // The serializer's form of the constant.
+                parameter.kind = PACKAGE_VALUE;
+                parameter.value = str(member.as<ParameterSymbol>().getValue().toString(
+                    SVInt::MAX_BITS, /* exactUnknowns */ true, /* useAssignmentPatterns */ true));
+            }
+            else if (member.kind == SymbolKind::TypeAlias) {
+                // The alias as Slang's type printer expands it, named by its
+                // package.
+                auto& alias = member.as<TypeAliasType>();
+                TypePrinter printer;
+                printer.append(alias);
+                parameter.kind = PACKAGE_ALIAS;
+                parameter.value = str(printer.toString());
+                parameter.ty = intern(alias, "");
+            }
+            else {
+                continue;
+            }
+            package.parameters.push_back(std::move(parameter));
+        }
+        return package;
+    }
+
     /// The index of the body of `instance`: the canonical body it shares
     /// with identical instances when Slang cached it, else its own. Each
     /// body is walked once, children first, so that a body is numbered after
@@ -502,7 +548,7 @@ private:
         return std::nullopt;
     }
 
-    const Compilation& compilation;
+    Compilation& compilation;
     const SourceManager& sourceManager;
     FfiDesign& out;
     std::map<std::pair<const Type*, std::string>, uint32_t> types;
@@ -522,6 +568,7 @@ void walkDesign(Compilation& compilation, const SourceManager& sourceManager, bo
     Walker walker(compilation, sourceManager, out);
     for (auto instance : compilation.getRoot().topInstances)
         walker.top(*instance);
+    walker.packages();
 }
 
 } // namespace slang_sys

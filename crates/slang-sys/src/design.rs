@@ -5,13 +5,14 @@
 //! (`ffi::FfiDesign`) and queried by instance path. See
 //! `doc/design/slang-in-process.md`, "Step 2".
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use num_bigint::{BigInt, BigUint, Sign};
 
 use crate::types::{
-    Field, InterfacePort, ParameterDef, ParameterKind, Port, PortDir, Range, SourceLoc, Type,
-    UnsupportedPort, Variant,
+    Field, InterfacePort, Package, Parameter, ParameterDef, ParameterKind, Port, PortDir, Range,
+    SourceLoc, Type, UnsupportedPort, Variant,
 };
 use crate::{Error, absolute_path, ffi};
 
@@ -32,6 +33,7 @@ pub enum DesignQuery {
 pub struct Design {
     bodies: Vec<Body>,
     tops: Vec<Top>,
+    packages: HashMap<String, Package>,
 }
 
 #[derive(Clone, Debug)]
@@ -83,6 +85,10 @@ const UNSUPPORTED_PORT: u8 = 2;
 // `FfiParameter::kind`.
 const VALUE_PARAMETER: u8 = 0;
 const TYPE_PARAMETER: u8 = 1;
+
+// `FfiPackageParameter::kind`.
+const PACKAGE_VALUE: u8 = 0;
+const PACKAGE_ALIAS: u8 = 1;
 
 impl Design {
     /// The top-level instances' names (their definitions' names), in the
@@ -138,6 +144,12 @@ impl Design {
                 .map(|c| c.name.as_str())
                 .collect()
         })
+    }
+
+    /// The packages of the compilation units by name, each with its value
+    /// parameters and type aliases.
+    pub fn packages(&self) -> HashMap<String, Package> {
+        self.packages.clone()
     }
 
     fn body(&self, path: &str) -> Option<&Body> {
@@ -461,7 +473,56 @@ pub(crate) fn from_ffi(tables: ffi::FfiDesign, cwd: &Path) -> Result<Design, Err
             body,
         });
     }
-    Ok(Design { bodies, tops })
+    let mut packages = HashMap::with_capacity(tables.packages.len());
+    for (at, package) in tables.packages.iter().enumerate() {
+        let mut parameters = HashMap::with_capacity(package.parameters.len());
+        for (i, parameter) in package.parameters.iter().enumerate() {
+            let ty = match parameter.kind {
+                PACKAGE_VALUE => None,
+                PACKAGE_ALIAS => {
+                    let ty = check_index(
+                        "packages",
+                        at,
+                        &format!("parameter {i} type"),
+                        parameter.ty,
+                        types.len(),
+                        None,
+                    )?;
+                    match &types[ty] {
+                        Resolved::Type(ty) => Some(ty.clone()),
+                        Resolved::Unsupported { .. } => None,
+                    }
+                }
+                kind => {
+                    return Err(bad(
+                        "packages",
+                        at,
+                        format!("parameter {i} has unknown kind {kind}"),
+                    ));
+                }
+            };
+            parameters.insert(
+                parameter.name.clone(),
+                Parameter {
+                    name: parameter.name.clone(),
+                    value: parameter.value.clone(),
+                    ty,
+                },
+            );
+        }
+        packages.insert(
+            package.name.clone(),
+            Package {
+                name: package.name.clone(),
+                parameters,
+            },
+        );
+    }
+    Ok(Design {
+        bodies,
+        tops,
+        packages,
+    })
 }
 
 #[cfg(test)]
@@ -514,6 +575,7 @@ mod tests {
                 name: "t".into(),
                 body: 0,
             }],
+            ..Default::default()
         });
         assert!(
             msg.contains("bodies[0]") && msg.contains("type index 1"),
@@ -593,6 +655,57 @@ mod tests {
         );
     }
 
+    fn package(kind: u8, ty: u32) -> ffi::FfiDesign {
+        ffi::FfiDesign {
+            types: vec![logic()],
+            packages: vec![ffi::FfiPackage {
+                name: "p".into(),
+                parameters: vec![ffi::FfiPackageParameter {
+                    name: "m".into(),
+                    kind,
+                    value: "v".into(),
+                    ty,
+                }],
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn rejects_package_alias_type_out_of_range() {
+        let msg = message(package(PACKAGE_ALIAS, 1));
+        assert!(
+            msg.contains("packages[0]") && msg.contains("parameter 0 type index 1"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_package_member_kind() {
+        let msg = message(package(7, 0));
+        assert!(
+            msg.contains("packages[0]") && msg.contains("unknown kind 7"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn package_members_carry_types_of_aliases_only() {
+        // The type of a value parameter is ignored, even out of range.
+        let packages = convert(package(PACKAGE_VALUE, 9)).unwrap().packages();
+        assert_eq!(packages["p"]["m"].ty, None);
+        assert_eq!(packages["p"]["m"].value, "v");
+        let packages = convert(package(PACKAGE_ALIAS, 0)).unwrap().packages();
+        assert!(matches!(packages["p"]["m"].ty, Some(Type::Logic { .. })));
+        // An alias of an unsupported type has none.
+        let mut tables = package(PACKAGE_ALIAS, 0);
+        tables.types = vec![ffi::FfiType {
+            kind: UNSUPPORTED,
+            ..Default::default()
+        }];
+        assert_eq!(convert(tables).unwrap().packages()["p"]["m"].ty, None);
+    }
+
     #[test]
     fn paths_follow_children() {
         let design = convert(ffi::FfiDesign {
@@ -617,6 +730,7 @@ mod tests {
                 name: "t".into(),
                 body: 1,
             }],
+            ..Default::default()
         })
         .unwrap();
         assert_eq!(design.tops().collect::<Vec<_>>(), ["t"]);

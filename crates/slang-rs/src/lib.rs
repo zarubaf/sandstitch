@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 /// Slang itself, for tests and tools. Topstitch's `src/` must not use it.
 pub use slang_sys as sys;
-pub use slang_sys::{Design, Diag, Severity};
+pub use slang_sys::{Design, Diag, Package, Parameter, Severity};
 
 #[cfg(feature = "differential")]
 mod differential;
@@ -31,7 +31,7 @@ mod hierarchy;
 pub use hierarchy::{Instance, extract_hierarchy, extract_hierarchy_from_value};
 
 mod package;
-pub use package::{Package, Parameter, extract_packages, extract_packages_from_value};
+pub use package::extract_packages;
 
 #[derive(Debug)]
 pub struct SlangConfig<'a> {

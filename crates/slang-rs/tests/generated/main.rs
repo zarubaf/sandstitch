@@ -45,6 +45,45 @@ proptest! {
             output.diagnostics
         );
         let mut anonymous = Anonymous::default();
+        let expected = oracle::packages(&design);
+        let actual = output.design.packages();
+        let mut expected_names: Vec<_> = expected.keys().collect();
+        let mut actual_names: Vec<_> = actual.keys().collect();
+        expected_names.sort();
+        actual_names.sort();
+        prop_assert_eq!(expected_names, actual_names, "packages differ
+{}", sv);
+        for (name, expected) in &expected {
+            let Some(actual) = actual.get(name) else {
+                return Err(TestCaseError::fail(format!("no package {name}\n{sv}")));
+            };
+            prop_assert_eq!(
+                actual.parameters.len(),
+                expected.values.len() + expected.aliases.len(),
+                "package {} has other members than the model's\n{}",
+                name,
+                sv
+            );
+            for (param, value) in &expected.values {
+                let found = actual.parameters.get(param);
+                prop_assert!(
+                    found.is_some_and(|p| &p.value == value && p.ty.is_none()),
+                    "{name}::{param} should be {value}, found {found:?}\n{sv}"
+                );
+            }
+            for (alias, ty) in &expected.aliases {
+                let found = actual.parameters.get(alias);
+                prop_assert!(
+                    found.is_some_and(|p| {
+                        !p.value.is_empty()
+                            && p.ty.as_ref().is_some_and(|actual| {
+                                anonymous.same_type(&format!("{name}::{alias}"), ty, actual)
+                            })
+                    }),
+                    "{name}::{alias} should be the type {ty:#?}, found {found:#?}\n{sv}"
+                );
+            }
+        }
         for path in oracle::paths(&design) {
             let expected = oracle::ports(&design, &path);
             let actual = output.design.ports(&path);

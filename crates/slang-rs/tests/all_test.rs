@@ -97,7 +97,7 @@ mod tests {
 
         // check packages
 
-        let packages = extract_packages_from_value(&value);
+        let packages = extract_packages(&cfg).unwrap();
 
         let expected_packages = HashMap::from([(
             "mypkg".to_string(),
@@ -108,6 +108,7 @@ mod tests {
                     Parameter {
                         name: "myparam".to_string(),
                         value: "42".to_string(),
+                        ty: None,
                     },
                 )]),
             },

@@ -47,3 +47,9 @@ fn test_extract_packages_with_typedefs() {
     assert_eq!(pkgs["my_pkg"]["my_enum_t"].calc_type_width().unwrap(), 2);
     assert_eq!(pkgs["my_pkg"]["my_array_t"].calc_type_width().unwrap(), 24);
 }
+
+#[test]
+fn test_calc_type_width_of_a_value_is_an_error() {
+    let error = Parameter::new("x", "1").calc_type_width().unwrap_err();
+    assert_eq!(error.to_string(), "`x` is not a type with a bit width");
+}

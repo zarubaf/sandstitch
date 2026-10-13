@@ -21,9 +21,32 @@ impl std::fmt::Debug for Design {
 #[derive(Clone, Debug)]
 pub struct Package {
     pub name: String,
+    /// `localparam int` declarations, before the typedefs; each refers only
+    /// to earlier ones.
+    pub params: Vec<PackageParam>,
     /// A typedef may refer to earlier typedefs of this package and to those
     /// of earlier packages.
     pub typedefs: Vec<Typedef>,
+}
+
+/// `localparam int NAME = value;`
+#[derive(Clone, Debug)]
+pub struct PackageParam {
+    pub name: String,
+    pub value: PackageValue,
+}
+
+/// The value of a package parameter.
+#[derive(Clone, Copy, Debug)]
+pub enum PackageValue {
+    Const(i32),
+    /// `package::param + offset`, an earlier parameter of this or an earlier
+    /// package.
+    Sum {
+        package: usize,
+        param: usize,
+        offset: i32,
+    },
 }
 
 #[derive(Clone, Debug)]

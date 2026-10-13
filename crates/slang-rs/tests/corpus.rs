@@ -24,6 +24,12 @@ const MIN_COMMON_CELLS_TOPS: usize = 88;
 const MIN_AXI_TOPS: usize = 19;
 const MIN_FLOONOC_TOPS: usize = 6;
 
+// Lower bounds on the packages and on the aliases with a type that the
+// whole FlooNoC run (which includes the other libraries) reports, a few
+// below the first run.
+const MIN_PACKAGES: usize = 4;
+const MIN_ALIASES: usize = 35;
+
 fn third_party(name: &str) -> PathBuf {
     // Canonical, like the absolute paths of the diagnostics.
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -106,6 +112,54 @@ fn assert_sized(ty: &Type, what: &str) {
     }
 }
 
+/// Package names declared in `files`.
+fn package_names_of(files: &[PathBuf]) -> BTreeSet<String> {
+    let package = Regex::new(r"(?m)^\s*package\s+(automatic\s+|static\s+)?(\w+)").unwrap();
+    let mut names = BTreeSet::new();
+    for file in files {
+        let text = std::fs::read_to_string(file).unwrap_or_default();
+        for capture in package.captures_iter(&text) {
+            names.insert(capture[2].to_string());
+        }
+    }
+    names
+}
+
+/// Checks the packages of any valid design: each is keyed by its name and
+/// declared in the sources, its members are keyed by theirs, have a value,
+/// and a type alias with a type has a sized type that its value names. Returns the number of packages and of aliases with a type.
+fn check_packages(design: &Design, declared: &BTreeSet<String>) -> (usize, usize) {
+    let packages = design.packages();
+    let mut aliases = 0;
+    for (name, package) in &packages {
+        assert_eq!(name, &package.name, "package keyed by another name");
+        assert!(
+            declared.contains(name),
+            "package {name} is not declared in the sources"
+        );
+        for (member, parameter) in &package.parameters {
+            let what = format!("{name}::{member}");
+            assert_eq!(member, &parameter.name, "{what} keyed by another name");
+            assert!(!parameter.value.is_empty(), "{what} has no value");
+            if let Some(ty) = &parameter.ty {
+                assert_sized(ty, &what);
+                if let Type::Struct { name, .. }
+                | Type::Union { name, .. }
+                | Type::Enum { name, .. } = ty
+                {
+                    assert!(
+                        parameter.value.contains(name.as_str()),
+                        "{what} does not name {name} in {}",
+                        parameter.value
+                    );
+                }
+                aliases += 1;
+            }
+        }
+    }
+    (packages.len(), aliases)
+}
+
 /// Answers every query at `path`, checks invariants of any valid design, and
 /// returns the number of instances answered at and below it.
 fn answer_all(design: &Design, path: &str) -> usize {
@@ -179,6 +233,8 @@ fn answer_all(design: &Design, path: &str) -> usize {
 }
 
 struct RunResult {
+    packages: usize,
+    aliases: usize,
     /// The files defining the answered tops.
     answered_files: Vec<String>,
     instances: usize,
@@ -217,7 +273,11 @@ fn run_corpus(name: &str, files: &[PathBuf], incdirs: &[PathBuf]) -> RunResult {
         .map(|d| d.file.as_str())
         .collect();
 
+    let declared = package_names_of(files);
+    let (packages, aliases) = check_packages(&output.design, &declared);
     let mut result = RunResult {
+        packages,
+        aliases,
         answered_files: Vec::new(),
         instances: 0,
     };
@@ -232,8 +292,10 @@ fn run_corpus(name: &str, files: &[PathBuf], incdirs: &[PathBuf]) -> RunResult {
         }
     }
     println!(
-        "{name}: {} modules, {} tops elaborated, {} answered ({} instances), {} skipped, \
+        "{name}: {} packages ({} aliases), {} modules, {} tops elaborated, {} answered ({} instances), {} skipped, \
          {} files with errors",
+        result.packages,
+        result.aliases,
         modules.len(),
         output.design.tops().count(),
         result.answered_files.len(),
@@ -278,5 +340,7 @@ fn corpus_answers_every_query() {
     assert!(cc_tops >= MIN_COMMON_CELLS_TOPS);
     assert!(axi_tops >= MIN_AXI_TOPS);
     assert!(floo_tops >= MIN_FLOONOC_TOPS);
+    assert!(floonoc.packages >= MIN_PACKAGES);
+    assert!(floonoc.aliases >= MIN_ALIASES);
     assert!(elapsed < TIME_LIMIT, "corpus took {elapsed:?}");
 }

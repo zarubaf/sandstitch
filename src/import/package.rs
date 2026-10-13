@@ -66,6 +66,7 @@ pub fn extract_packages_with_config(
                                 Parameter {
                                     name: name.clone(),
                                     value: param.value,
+                                    width: param.ty.as_ref().and_then(|ty| ty.width().ok()),
                                 },
                             )
                         })
@@ -80,9 +81,20 @@ pub fn extract_packages_with_config(
 pub struct Parameter {
     pub name: String,
     pub value: String,
+    /// The bit width of a type alias's type, when it has one.
+    width: Option<usize>,
 }
 
 impl Parameter {
+    /// A parameter that is not a type with a bit width.
+    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Parameter {
+            name: name.into(),
+            value: value.into(),
+            width: None,
+        }
+    }
+
     /// Parse the parameter's `value` into any type that implements [`FromStr`].
     ///
     /// # Type Parameters
@@ -103,7 +115,7 @@ impl Parameter {
     /// use std::convert::TryFrom;
     ///
     /// # use topstitch::Parameter;
-    /// let p = Parameter { name: "answer".into(), value: "42".into() };
+    /// let p = Parameter::new("answer", "42");
     ///
     /// // Primitive integer (type inferred)
     /// let n: i32 = p.parse().unwrap();
@@ -122,12 +134,16 @@ impl Parameter {
         self.value.parse()
     }
 
+    /// The bit width of the type alias this parameter declares.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parameter is not a type alias, or its type has
+    /// no bit width (unpacked dimensions, an empty enum, an enum with
+    /// different-sized variants).
     pub fn calc_type_width(&self) -> Result<usize, Box<dyn Error>> {
-        let value = self.parse::<String>()?;
-        match slang_rs::parse_type_definition(&value)?.width() {
-            Ok(width) => Ok(width),
-            Err(e) => Err(e.into()),
-        }
+        self.width
+            .ok_or_else(|| format!("`{}` is not a type with a bit width", self.name).into())
     }
 }
 

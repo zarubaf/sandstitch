@@ -21,6 +21,7 @@ use crate::extract::{
     extract_instance_ports_checked_with, instance_child_names_with, instance_has_ref_port_with,
     instance_unparsed_parameters_with, top_names_with,
 };
+use crate::package::json;
 use crate::{Ast, Field, ParameterDef, Port, Type, UnsupportedPort};
 
 /// The snapshot's error text for a port that connects several signals; the
@@ -131,6 +132,7 @@ fn body_type_parameter_aliases(body: &serde_json::Value, aliases: &mut HashSet<S
 
 impl Checker<'_> {
     fn run(&mut self) {
+        self.packages();
         let json_tops = top_names_with(&self.resolver, self.value);
         let json: BTreeSet<_> = json_tops.iter().map(String::as_str).collect();
         let typed: BTreeSet<_> = self.design.tops().collect();
@@ -139,6 +141,44 @@ impl Checker<'_> {
         }
         for top in json {
             self.instance(top);
+        }
+    }
+
+    /// Compares the packages with their parameters' values. The snapshot
+    /// prints an alias of a struct, union or enum with its package-qualified
+    /// name (`...}my_pkg::my_struct_t`); the JSON path prints the bare name,
+    /// except for an alias of an array, so the qualifier of the alias itself
+    /// is removed from the snapshot's value when that makes them equal.
+    fn packages(&mut self) {
+        let json = json::extract_packages_from_value(self.value, &self.resolver);
+        let typed = self.design.packages();
+        let json_names: BTreeSet<_> = json.keys().map(String::as_str).collect();
+        let typed_names: BTreeSet<_> = typed.keys().map(String::as_str).collect();
+        if !self.same_names("packages", &json_names, &typed_names) {
+            return;
+        }
+        for (name, json) in &json {
+            let typed = &typed[name];
+            let path = format!("package {name}");
+            let json_names: BTreeSet<_> = json.parameters.keys().map(String::as_str).collect();
+            let typed_names: BTreeSet<_> = typed.parameters.keys().map(String::as_str).collect();
+            if !self.same_names(&path, &json_names, &typed_names) {
+                continue;
+            }
+            for (parameter, json) in &json.parameters {
+                let typed = &typed.parameters[parameter];
+                let bare = typed
+                    .value
+                    .replace(&format!("{name}::{parameter}"), parameter);
+                if json.value != typed.value && json.value != bare {
+                    self.report(
+                        &format!("{path}::{parameter}"),
+                        "values differ",
+                        &json.value,
+                        &typed.value,
+                    );
+                }
+            }
         }
     }
 
