@@ -12,9 +12,9 @@
 use proptest::prelude::*;
 
 use crate::model::{
-    Aggregate, Base, DataType, Design, Dim, Dir, Enum, EnumBase, EnumVariant, Expr, GenerateLoop,
-    Instance, IntKind, LocalParam, LocalTypeParam, Member, Module, Package, PackageParam,
-    PackageValue, Param, PortDecl, TypeParam, TypeRef, TypedParam, Typedef, VectorKw,
+    Aggregate, Base, DataType, Design, Dim, Dir, ElementParam, Enum, EnumBase, EnumVariant, Expr,
+    GenerateLoop, Instance, IntKind, LocalParam, LocalTypeParam, Member, Module, Package,
+    PackageParam, PackageValue, Param, PortDecl, TypeParam, TypeRef, TypedParam, Typedef, VectorKw,
     enum_base_width, int_width,
 };
 
@@ -137,6 +137,9 @@ struct RawInstance {
     generate: Option<(i32, u32, bool)>,
     params: Vec<Option<i32>>,
     type_params: Vec<Option<RawType>>,
+    /// A `defparam` on one element of the array: which element, which
+    /// parameter and its value, each chosen modulo what exists.
+    element_param: Option<(usize, usize, i32)>,
 }
 
 #[derive(Clone, Debug)]
@@ -318,14 +321,23 @@ fn raw_module() -> impl Strategy<Value = RawModule> {
         prop::option::weighted(0.3, (-2i32..=3, 1u32..=3, any::<bool>())),
         prop::collection::vec(prop::option::of(PARAM_VALUES.0..=PARAM_VALUES.1), 0..=2),
         prop::collection::vec(prop::option::of(raw_type()), 0..=2),
+        prop::option::weighted(
+            0.5,
+            (
+                any::<usize>(),
+                any::<usize>(),
+                PARAM_VALUES.0..=PARAM_VALUES.1,
+            ),
+        ),
     )
         .prop_map(
-            |(target, array, generate, params, type_params)| RawInstance {
+            |(target, array, generate, params, type_params, element_param)| RawInstance {
                 target,
                 array,
                 generate,
                 params,
                 type_params,
+                element_param,
             },
         );
     (
@@ -1000,6 +1012,7 @@ fn lower(raw: RawDesign) -> Design {
                 generate: None,
                 params: vec![],
                 type_params: vec![],
+                element_param: None,
             });
         }
         let mut refs = package_refs.clone();
@@ -1046,7 +1059,7 @@ fn lower(raw: RawDesign) -> Design {
                     inline: false,
                 };
                 let array = lower.unpacked_dims(&raw_instance.array, &array_ctx);
-                let param_overrides = raw_instance
+                let param_overrides: Vec<(usize, i32)> = raw_instance
                     .params
                     .iter()
                     .enumerate()
@@ -1080,6 +1093,43 @@ fn lower(raw: RawDesign) -> Design {
                             count,
                             descending,
                         });
+                // A `defparam` reaches an element of an array outside a
+                // generate loop, for a parameter the instance leaves alone.
+                // Only in the top: Slang ignores a `defparam` in a module
+                // that is itself, or sits below, an element of an instance
+                // array.
+                let free: Vec<usize> = (0..modules[target].params.len())
+                    .filter(|i| !param_overrides.iter().any(|(j, _)| j == i))
+                    .collect();
+                let element_param = match raw_instance.element_param {
+                    Some((pick, param, value))
+                        if m == 0
+                            && !array.is_empty()
+                            && generate.is_none()
+                            && !free.is_empty() =>
+                    {
+                        let mut rest = pick;
+                        let element = array
+                            .iter()
+                            .rev()
+                            .map(|dim| {
+                                let indices = dim.indices();
+                                let index = indices[rest % indices.len()];
+                                rest /= indices.len();
+                                index
+                            })
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect();
+                        Some(ElementParam {
+                            element,
+                            param: free[param % free.len()],
+                            value,
+                        })
+                    }
+                    _ => None,
+                };
                 instances.push(Instance {
                     name: lower.name("u"),
                     module: target,
@@ -1087,6 +1137,7 @@ fn lower(raw: RawDesign) -> Design {
                     generate,
                     params: param_overrides,
                     type_params: type_overrides,
+                    element_param,
                 });
             }
         }

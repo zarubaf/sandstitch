@@ -200,23 +200,33 @@ struct Env {
 
 fn instances(design: &Design) -> Vec<(String, Env)> {
     let mut out = Vec::new();
-    let top = env(design, 0, None);
+    let top = env(design, 0, None, &[]);
     walk(design, design.modules[0].name.clone(), top, &mut out);
     out
 }
 
 /// The environment of an instance of `module`, with the overrides of
-/// `instance` written in the instantiating module's environment `parent`.
-fn env(design: &Design, module: usize, instance: Option<(&crate::model::Instance, &Env)>) -> Env {
+/// `instance` written in the instantiating module's environment `parent`,
+/// and those of its `defparam` if `element` is the array element it names.
+fn env(
+    design: &Design,
+    module: usize,
+    instance: Option<(&crate::model::Instance, &Env)>,
+    element: &[i32],
+) -> Env {
     let def: &Module = &design.modules[module];
     let params: Vec<i64> = def
         .params
         .iter()
         .enumerate()
         .map(|(i, param)| {
-            instance
+            let value = instance
                 .and_then(|(inst, _)| inst.params.iter().find(|(j, _)| *j == i))
-                .map_or(i64::from(param.default), |(_, v)| i64::from(*v))
+                .map_or(i64::from(param.default), |(_, v)| i64::from(*v));
+            let defparam = instance
+                .and_then(|(inst, _)| inst.element_param.as_ref())
+                .filter(|d| d.param == i && d.element == element);
+            defparam.map_or(value, |d| i64::from(d.value))
         })
         .collect();
     let defaults = Env {
@@ -256,15 +266,6 @@ fn env(design: &Design, module: usize, instance: Option<(&crate::model::Instance
     }
 }
 
-/// The bounds of a constant instance array dimension, `[a:b]`.
-fn bounds(dim: &Dim) -> (i32, i32) {
-    match dim {
-        Dim::Range(Expr::Const(a), Expr::Const(b)) => (*a, *b),
-        Dim::Size(n) => (0, *n as i32 - 1),
-        other => panic!("instance array dimension {other:?} is not constant"),
-    }
-}
-
 /// The instance tree of the top, as `Design::hierarchy` must report it:
 /// children in declaration order, a generate loop's elements in iteration
 /// order named by the genvar's value, an array's elements from the left
@@ -279,7 +280,7 @@ fn tree(design: &Design, module: usize, name: String, prefix: String) -> Instanc
     for instance in &def.instances {
         let mut names = vec![instance.name.clone()];
         for dim in &instance.array {
-            let (a, b) = bounds(dim);
+            let (a, b) = dim.bounds();
             let indices: Vec<i32> = if a <= b {
                 (a..=b).collect()
             } else {
@@ -324,16 +325,22 @@ fn walk(design: &Design, path: String, env: Env, out: &mut Vec<(String, Env)>) {
         if instance.generate.is_some() {
             continue;
         }
-        let mut names = vec![instance.name.clone()];
+        let mut names = vec![(instance.name.clone(), vec![])];
         for dim in &instance.array {
-            let (a, b) = bounds(dim);
+            let indices = dim.indices();
             names = names
                 .iter()
-                .flat_map(|name| (a.min(b)..=a.max(b)).map(move |i| format!("{name}[{i}]")))
+                .flat_map(|(name, element)| {
+                    indices.iter().map(move |&i| {
+                        let mut element = element.clone();
+                        element.push(i);
+                        (format!("{name}[{i}]"), element)
+                    })
+                })
                 .collect();
         }
-        for name in names {
-            let child = self::env(design, instance.module, Some((instance, &env)));
+        for (name, element) in names {
+            let child = self::env(design, instance.module, Some((instance, &env)), &element);
             children.push((format!("{path}.{name}"), child));
         }
     }
