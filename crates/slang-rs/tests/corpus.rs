@@ -2,7 +2,8 @@
 
 //! The vendored real-world SystemVerilog (`common_cells`, `axi`, FlooNoC)
 //! elaborated through `run_slang_keep_design`, with every query answered on
-//! every top and instance. Under the `differential` feature each run also
+//! every top and on every instance reachable by path (instances inside
+//! generate blocks are not). Under the `differential` feature each run also
 //! compares the typed design with the JSON extractors.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,10 +18,11 @@ const EXCLUDED_DIRS: &[&str] = &["deprecated", "test", "tb", "formal", "synth"];
 /// Elaboration budget of the whole test; the spec's is 30 s.
 const TIME_LIMIT: Duration = Duration::from_secs(60);
 
-// Lower bounds on the answered tops of each run, a few below the first run.
+// Lower bounds on the answered tops defined in each library's own
+// directory, a few below the first run.
 const MIN_COMMON_CELLS_TOPS: usize = 88;
-const MIN_AXI_TOPS: usize = 109;
-const MIN_FLOONOC_TOPS: usize = 118;
+const MIN_AXI_TOPS: usize = 19;
+const MIN_FLOONOC_TOPS: usize = 6;
 
 fn third_party(name: &str) -> PathBuf {
     // Canonical, like the absolute paths of the diagnostics.
@@ -75,17 +77,58 @@ fn modules_of(files: &[PathBuf]) -> BTreeMap<String, String> {
     modules
 }
 
-/// Answers every query at `path` and returns the number of instances
-/// answered at and below it.
+/// Answers every query at `path`, checks invariants of any valid design, and
+/// returns the number of instances answered at and below it.
 fn answer_all(design: &Design, path: &str) -> usize {
-    assert!(design.ports(path).is_some(), "no ports at {path}");
-    assert!(
-        design.interface_ports(path).is_some(),
-        "no interface ports at {path}"
-    );
+    let ports = design
+        .ports(path)
+        .unwrap_or_else(|| panic!("no ports at {path}"));
+    let interface_ports = design
+        .interface_ports(path)
+        .unwrap_or_else(|| panic!("no interface ports at {path}"));
+    let mut names = BTreeSet::new();
+    let port_names = ports
+        .iter()
+        .map(|p| match p {
+            Ok(port) => port.name.as_str(),
+            Err(unsupported) => unsupported.name.as_str(),
+        })
+        .chain(interface_ports.iter().map(|p| p.name.as_str()));
+    for name in port_names {
+        assert!(names.insert(name), "duplicate port {name} at {path}");
+    }
+    for port in ports.iter().flatten() {
+        let unpacked = match &port.ty {
+            Type::Logic {
+                unpacked_dimensions,
+                ..
+            }
+            | Type::Struct {
+                unpacked_dimensions,
+                ..
+            }
+            | Type::Union {
+                unpacked_dimensions,
+                ..
+            }
+            | Type::Enum {
+                unpacked_dimensions,
+                ..
+            } => !unpacked_dimensions.is_empty(),
+        };
+        if !unpacked {
+            let width = port
+                .ty
+                .width()
+                .unwrap_or_else(|e| panic!("port {} at {path} has no width: {e}", port.name));
+            assert!(width > 0, "port {} at {path} has width 0", port.name);
+        }
+    }
     let children = design
         .child_instances(path)
         .unwrap_or_else(|| panic!("no children at {path}"));
+    let unique: BTreeSet<&str> = children.iter().copied().collect();
+    assert_eq!(unique.len(), children.len(), "duplicate children at {path}");
     1 + children
         .iter()
         .map(|child| answer_all(design, &format!("{path}.{child}")))
@@ -93,8 +136,20 @@ fn answer_all(design: &Design, path: &str) -> usize {
 }
 
 struct RunResult {
-    answered_tops: usize,
+    /// The files defining the answered tops.
+    answered_files: Vec<String>,
     instances: usize,
+}
+
+impl RunResult {
+    /// The answered tops defined under `dir`.
+    fn answered_under(&self, dir: &Path) -> usize {
+        let dir = dir.to_str().unwrap();
+        self.answered_files
+            .iter()
+            .filter(|f| Path::new(f).starts_with(dir))
+            .count()
+    }
 }
 
 /// Elaborates every module of `files` as a top and answers every query on
@@ -120,7 +175,7 @@ fn run_corpus(name: &str, files: &[PathBuf], incdirs: &[PathBuf]) -> RunResult {
         .collect();
 
     let mut result = RunResult {
-        answered_tops: 0,
+        answered_files: Vec::new(),
         instances: 0,
     };
     let mut skipped = Vec::new();
@@ -128,7 +183,7 @@ fn run_corpus(name: &str, files: &[PathBuf], incdirs: &[PathBuf]) -> RunResult {
         match modules.get(top) {
             Some(file) if !bad_files.contains(file.as_str()) => {
                 result.instances += answer_all(&output.design, top);
-                result.answered_tops += 1;
+                result.answered_files.push(file.clone());
             }
             _ => skipped.push(top),
         }
@@ -138,7 +193,7 @@ fn run_corpus(name: &str, files: &[PathBuf], incdirs: &[PathBuf]) -> RunResult {
          {} files with errors",
         modules.len(),
         output.design.tops().count(),
-        result.answered_tops,
+        result.answered_files.len(),
         result.instances,
         skipped.len(),
         bad_files.len(),
@@ -171,8 +226,14 @@ fn corpus_answers_every_query() {
 
     let elapsed = start.elapsed();
     println!("corpus: {elapsed:?}");
-    assert!(common_cells.answered_tops >= MIN_COMMON_CELLS_TOPS);
-    assert!(axi_run.answered_tops >= MIN_AXI_TOPS);
-    assert!(floonoc.answered_tops >= MIN_FLOONOC_TOPS);
+    let cc_tops = common_cells.answered_under(&third_party("common_cells"));
+    let axi_tops = axi_run.answered_under(&third_party("axi"));
+    let floo_tops = floonoc.answered_under(&third_party("floonoc"));
+    println!(
+        "answered in own library: common_cells {cc_tops}, axi {axi_tops}, floonoc {floo_tops}"
+    );
+    assert!(cc_tops >= MIN_COMMON_CELLS_TOPS);
+    assert!(axi_tops >= MIN_AXI_TOPS);
+    assert!(floo_tops >= MIN_FLOONOC_TOPS);
     assert!(elapsed < TIME_LIMIT, "corpus took {elapsed:?}");
 }
