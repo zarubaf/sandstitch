@@ -7,6 +7,7 @@ use crate::{ConvertibleToPortSlice, Port};
 impl Port {
     /// Ties off this port to the given constant value, specified as a `BigInt`
     /// or type that can be converted to a `BigInt`.
+    #[track_caller]
     pub fn tieoff<T: Into<BigInt>>(&self, value: T) {
         self.to_port_slice().tieoff(value);
     }
@@ -15,6 +16,7 @@ impl Port {
     /// output or module definition input, validation will not fail if the port
     /// drives nothing. In fact, validation will fail if the port drives
     /// anything.
+    #[track_caller]
     pub fn unused(&self) {
         self.to_port_slice().unused();
     }
@@ -23,6 +25,7 @@ impl Port {
     /// on the directionality of the port. ModDef Input and InOut ports are
     /// marked as unused, as well as ModInst Output and InOut ports. ModDef
     /// Output and ModInst Input ports are tied off.
+    #[track_caller]
     pub fn unused_or_tieoff<T: Into<BigInt>>(&self, value: T) {
         self.to_port_slice().unused_or_tieoff(value);
     }

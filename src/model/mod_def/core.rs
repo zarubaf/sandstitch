@@ -25,6 +25,9 @@ type MaxDistanceMap = IndexMap<String, Vec<Option<i64>>>;
 /// this struct.
 pub struct ModDefCore {
     pub(crate) name: String,
+    /// Where the module definition was created in Rust; [`Span::None`] for
+    /// imported and specialized definitions.
+    pub(crate) span: Span,
     pub(crate) ports: IndexMap<String, IO>,
     /// Resolved types of typed ports, keyed like `ports`: ports imported
     /// from SystemVerilog and ports created by exporting a typed port

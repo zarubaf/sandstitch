@@ -9,6 +9,7 @@ impl Intf {
     /// "driven signal" is an input of a module instance or an output of a
     /// module definition; it's a signal that would appear on the left hand side
     /// of a Verilog `assign` statement.
+    #[track_caller]
     pub fn tieoff<T: Into<BigInt> + Clone>(&self, value: T) {
         for (_, port_slice) in self.members() {
             match port_slice {
@@ -36,6 +37,7 @@ impl Intf {
     /// output of a module instance or an input of a module definition; it's a
     /// signal that would appear on the right hand side of a Verilog `assign`
     /// statement.
+    #[track_caller]
     pub fn unused(&self) {
         for (_, port_slice) in self.members() {
             match port_slice {
@@ -59,6 +61,7 @@ impl Intf {
         }
     }
 
+    #[track_caller]
     pub fn unused_and_tieoff<T: Into<BigInt> + Clone>(&self, value: T) {
         self.unused();
         self.tieoff(value);

@@ -163,11 +163,11 @@ impl Intf {
 
         // The ends are connected through feedthroughs only; record each
         // end-to-end pair so that their types are still checked.
-        let location = std::panic::Location::caller();
+        let span = Span::caller();
         let other_ports = other.get_port_slices();
         for (func_name, self_port) in self.get_port_slices() {
             if let Some(other_port) = other_ports.get(&func_name) {
-                self_port.store_record(other_port, location, false);
+                self_port.store_record(other_port, span.clone(), false);
             }
         }
 

@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::{Intf, MetadataKey, MetadataValue, Port, Usage};
+use crate::{Intf, MetadataKey, MetadataValue, Port, Span, Usage};
 
 mod core;
 pub use core::ModDefCore;
@@ -28,10 +28,12 @@ pub struct ModDef {
 
 impl ModDef {
     /// Creates a new module definition with the given name.
+    #[track_caller]
     pub fn new(name: impl AsRef<str>) -> ModDef {
         ModDef {
             core: Arc::new(RwLock::new(ModDefCore {
                 name: name.as_ref().to_string(),
+                span: Span::caller(),
                 ports: IndexMap::new(),
                 port_types: IndexMap::new(),
                 port_spans: IndexMap::new(),

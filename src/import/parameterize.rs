@@ -173,6 +173,7 @@ impl ModDef {
         let mod_def = ModDef {
             core: Arc::new(RwLock::new(ModDefCore {
                 name: name.to_string(),
+                span: Span::None,
                 ports: IndexMap::new(),
                 port_types: IndexMap::new(),
                 port_spans: IndexMap::new(),

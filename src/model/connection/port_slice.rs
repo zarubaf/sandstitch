@@ -3,6 +3,7 @@
 use crate::{PortSlice, Span};
 use std::collections::HashSet;
 use std::ops::Index;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::connected_item::ConnectedItem;
 
@@ -10,10 +11,40 @@ use super::connected_item::ConnectedItem;
 /// PortSlice, a tieoff, etc.). Does not convey the directionality of the
 /// connection, i.e. `this`` may drive `other`, `other` may drive `this`, or the
 /// connection may be bidirectional.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct PortSliceConnection {
     pub(crate) this: PortSlice,
     pub(crate) other: ConnectedItem,
+    /// Where the user made the connection. Not part of equality.
+    pub(crate) site: CallSite,
+}
+
+impl PartialEq for PortSliceConnection {
+    fn eq(&self, other: &Self) -> bool {
+        self.this == other.this && self.other == other.other
+    }
+}
+
+/// Where, and in which order, a connection was made.
+#[derive(Clone, Debug)]
+pub(crate) struct CallSite {
+    pub(crate) span: Span,
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by the component pass"))]
+    pub(crate) seq: u64,
+}
+
+static NEXT_SEQ: AtomicU64 = AtomicU64::new(0);
+
+impl CallSite {
+    /// The caller's location, numbered after every earlier call site
+    /// (requires `#[track_caller]` up the chain).
+    #[track_caller]
+    pub(crate) fn here() -> CallSite {
+        CallSite {
+            span: Span::caller(),
+            seq: NEXT_SEQ.fetch_add(1, Ordering::Relaxed),
+        }
+    }
 }
 
 /// A connection as the user made it: both ends with their typed selections,
@@ -28,6 +59,14 @@ pub(crate) struct ConnectionRecord {
     pub(crate) span: Span,
     /// Made with `connect_bits`: an intentional width-only reinterpretation.
     pub(crate) bits: bool,
+}
+
+impl ConnectionRecord {
+    /// Whether `other` connects the same ends, ranges and kind; the call
+    /// sites may differ.
+    fn same_connection(&self, other: &ConnectionRecord) -> bool {
+        self.this == other.this && self.other == other.other && self.bits == other.bits
+    }
 }
 
 /// PortSliceConnection collection. This is used within ModDefCore to track
@@ -65,20 +104,50 @@ impl PortSliceConnections {
         }
     }
 
+    /// Adds a record unless an equal one exists.
     pub(crate) fn add_record(&mut self, record: ConnectionRecord) {
-        self.records.push(record);
+        if !self.records.iter().any(|r| r.same_connection(&record)) {
+            self.records.push(record);
+        }
+    }
+
+    /// Whether a record connects the same ends as `record`, from the other
+    /// side (`this` and `other` swapped), with the same `bits` flag.
+    pub(crate) fn has_swapped_record(&self, record: &ConnectionRecord) -> bool {
+        self.records
+            .iter()
+            .any(|r| r.this == record.other && r.other == record.this && r.bits == record.bits)
     }
 
     pub(crate) fn records(&self) -> &[ConnectionRecord] {
         &self.records
     }
 
-    /// Adds a new connection between `this` and `other`
-    pub fn add(&mut self, this: PortSlice, other: impl Into<ConnectedItem>) {
+    /// Adds a new connection between `this` and `other`.
+    pub(crate) fn add(&mut self, this: PortSlice, other: impl Into<ConnectedItem>, site: CallSite) {
         self.connections.push(PortSliceConnection {
             this,
             other: other.into(),
+            site,
         });
+    }
+
+    /// Adds a connection the user made, unless an identical one (same
+    /// `this` and `other`) is already stored.
+    pub(crate) fn add_user(
+        &mut self,
+        this: PortSlice,
+        other: impl Into<ConnectedItem>,
+        site: CallSite,
+    ) {
+        let other = other.into();
+        if !self
+            .connections
+            .iter()
+            .any(|c| c.this == this && c.other == other)
+        {
+            self.add(this, other, site);
+        }
     }
 
     /// Returns a new `PortSliceConnections` that is a single-bit slice of this one.
@@ -109,7 +178,7 @@ impl PortSliceConnections {
                 this_lsb_clipped - connection.this.lsb,
                 this_msb_clipped - this_lsb_clipped + 1,
             );
-            result.add(this_slice, other_sliced);
+            result.add(this_slice, other_sliced, connection.site.clone());
         }
 
         result
@@ -213,7 +282,7 @@ impl PortSliceConnection {
         // When recursively tracing port connections, offsets are relative to
         // the original port. This is why "origin" is tracked and updated in
         // each recursive call.
-        result.add(origin.clone(), self.other.clone());
+        result.add(origin.clone(), self.other.clone(), self.site.clone());
 
         // Recursively trace PortSlice connections
         if let ConnectedItem::PortSlice(port_slice) = &self.other {
@@ -256,10 +325,159 @@ impl PortSliceConnection {
 #[cfg(test)]
 mod tests {
     use crate::{
-        IO, ModDef,
+        Dim, Funnel, IO, ModDef, PipelineConfig, Port, PortField, PortType, QualifiedName, Span,
         model::connection::connected_item::{ConnectedItem, Tieoff, Unused, Wire},
-        model::connection::port_slice::PortSliceConnections,
+        model::connection::port_slice::{CallSite, PortSliceConnections},
     };
+
+    fn assert_site(site: &CallSite, line: u32) {
+        match &site.span {
+            Span::Rust { file, line: l, .. } => {
+                assert_eq!(file, file!());
+                assert_eq!(*l, line);
+            }
+            other => panic!("expected a Rust span, got {other:?}"),
+        }
+    }
+
+    fn connections_of(port: &Port) -> PortSliceConnections {
+        port.get_port_connections().unwrap().read().clone()
+    }
+
+    #[test]
+    fn tieoff_and_unused_record_the_caller() {
+        let m = ModDef::new("M");
+        let p = m.add_port("p", IO::Output(8));
+        let q = m.add_port("q", IO::Input(4));
+        let tieoff_line = line!() + 1;
+        p.slice(3, 0).tieoff(5);
+        let unused_line = line!() + 1;
+        q.unused();
+        assert_site(&connections_of(&p)[0].site, tieoff_line);
+        assert_site(&connections_of(&q)[0].site, unused_line);
+    }
+
+    #[test]
+    fn helpers_record_the_caller() {
+        let m = ModDef::new("M");
+        m.add_port("x_v", IO::Output(2));
+        let intf = m.def_intf_from_name_underscore("x");
+        let line = line!() + 1;
+        intf.tieoff(0);
+        assert_site(&connections_of(&m.get_port("x_v"))[0].site, line);
+
+        let leaf = ModDef::new("Leaf");
+        leaf.add_port("i", IO::Input(1));
+        leaf.add_port("o", IO::Output(1));
+        leaf.add_port("io", IO::InOut(1));
+        let top = ModDef::new("Top");
+        let inst = top.instantiate(&leaf, Some("l"), None);
+        let line = line!() + 1;
+        inst.unused_and_tieoff(0);
+        for name in ["i", "o", "io"] {
+            assert_site(&connections_of(&inst.get_port(name))[0].site, line);
+        }
+
+        let ch = ModDef::new("Ch");
+        ch.add_port("x_in", IO::Input(4));
+        ch.add_port("x_out", IO::Output(4));
+        let fa = top.instantiate(&ch, Some("fa"), None);
+        let fb = top.instantiate(&ch, Some("fb"), None);
+        let mut funnel = Funnel::new(
+            (fa.get_port("x_in"), fa.get_port("x_out")),
+            (fb.get_port("x_in"), fb.get_port("x_out")),
+        );
+        let line = line!() + 1;
+        funnel.tieoff_remaining();
+        assert_site(&connections_of(&fa.get_port("x_in"))[0].site, line);
+        assert_site(&connections_of(&fb.get_port("x_out"))[0].site, line);
+
+        let net = inst.get_port("io");
+        let line = line!() + 1;
+        net.specify_net_name("n");
+        assert_site(&connections_of(&net)[1].site, line);
+    }
+
+    #[test]
+    fn calls_are_ordered() {
+        let m = ModDef::new("M");
+        let p = m.add_port("p", IO::Output(8));
+        p.slice(3, 0).tieoff(1);
+        p.slice(7, 4).tieoff(2);
+        let connections = connections_of(&p);
+        assert!(connections[0].site.seq < connections[1].site.seq);
+    }
+
+    #[test]
+    fn identical_repeat_is_ignored() {
+        let a = ModDef::new("A");
+        a.add_port("o", IO::Output(4));
+        let b = ModDef::new("B");
+        b.add_port("i", IO::Input(4));
+        let top = ModDef::new("Top");
+        let a = top.instantiate(&a, Some("a"), None);
+        let b = top.instantiate(&b, Some("b"), None);
+        a.get_port("o").connect(&b.get_port("i"));
+        a.get_port("o").connect(&b.get_port("i"));
+        assert_eq!(connections_of(&a.get_port("o")).len(), 1);
+        assert_eq!(connections_of(&b.get_port("i")).len(), 1);
+        b.get_port("i").connect(&a.get_port("o"));
+        assert_eq!(connections_of(&a.get_port("o")).len(), 1);
+        assert_eq!(connections_of(&b.get_port("i")).len(), 1);
+
+        let m = ModDef::new("M");
+        let p = m.add_port("p", IO::Output(4));
+        let q = m.add_port("q", IO::Input(4));
+        p.tieoff(5);
+        p.tieoff(5);
+        q.unused();
+        q.unused();
+        assert_eq!(connections_of(&p).len(), 1);
+        assert_eq!(connections_of(&q).len(), 1);
+        p.tieoff(6);
+        assert_eq!(connections_of(&p).len(), 2);
+    }
+
+    #[test]
+    fn overlapping_repeat_is_not_ignored() {
+        let m = ModDef::new("M");
+        let p = m.add_port("p", IO::Output(8));
+        p.tieoff(0);
+        p.slice(3, 0).tieoff(0);
+        assert_eq!(connections_of(&p).len(), 2);
+        let q = m.add_port("q", IO::Output(8));
+        q.slice(3, 0).tieoff(0);
+        q.slice(7, 0).tieoff(0);
+        assert_eq!(connections_of(&q).len(), 2);
+    }
+
+    #[test]
+    fn repeated_typed_connection_records_once() {
+        let ty = || PortType::Logic {
+            signed: false,
+            packed: vec![Dim { msb: 3, lsb: 0 }],
+        };
+        let typed = |m: &ModDef, name: &str, io: fn(usize) -> IO| {
+            m.core
+                .write()
+                .insert_typed_port(name.into(), io, ty(), Span::None);
+            m.get_port(name)
+        };
+        let m = ModDef::new("M");
+        let (a, b) = (typed(&m, "a", IO::Input), typed(&m, "b", IO::Output));
+        a.connect(&b);
+        a.connect(&b);
+        assert_eq!(connections_of(&a).records().len(), 1);
+        assert_eq!(connections_of(&a).len(), 1);
+
+        let (c, d) = (typed(&m, "c", IO::Input), typed(&m, "d", IO::Output));
+        c.connect_bits(&d);
+        c.connect(&d);
+        assert_eq!(connections_of(&c).records().len(), 2);
+        c.connect(&d);
+        c.connect_bits(&d);
+        assert_eq!(connections_of(&c).records().len(), 2);
+    }
 
     // Deterministic order for PortSliceConnections for the purpose of test
     // comparisons.
@@ -273,6 +491,112 @@ mod tests {
                 format!("{:?}", a.other),
             )
         });
+    }
+
+    #[test]
+    fn autoconnect_records_the_caller() {
+        let leaf = ModDef::new("Leaf");
+        leaf.add_port("clk", IO::Input(1));
+        let top = ModDef::new("Top");
+        let line = line!() + 1;
+        let inst = top.instantiate(&leaf, Some("l"), Some(&["clk"]));
+        assert_site(&connections_of(&top.get_port("clk"))[0].site, line);
+        assert_site(&connections_of(&inst.get_port("clk"))[0].site, line);
+    }
+
+    #[test]
+    fn reversed_typed_repeat_records_once() {
+        let strukt = |name: &str, field: &str| PortType::Struct {
+            name: Some(QualifiedName {
+                package: None,
+                name: name.into(),
+            }),
+            signed: false,
+            is_packed: true,
+            packed: vec![],
+            fields: vec![PortField {
+                name: field.into(),
+                ty: PortType::Logic {
+                    signed: false,
+                    packed: vec![Dim { msb: 3, lsb: 0 }],
+                },
+            }],
+        };
+        let m = ModDef::new("M");
+        {
+            let mut core = m.core.write();
+            core.insert_typed_port("a".into(), IO::Input, strukt("s_t", "x"), Span::None);
+            core.insert_typed_port("b".into(), IO::Output, strukt("t_t", "y"), Span::None);
+        }
+        let (a, b) = (m.get_port("a"), m.get_port("b"));
+        a.connect(&b);
+        b.connect(&a);
+        let records = connections_of(&a).records().len() + connections_of(&b).records().len();
+        assert_eq!(records, 1);
+        let diagnostics = m.check();
+        assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
+    }
+
+    #[test]
+    fn connection_helpers_record_the_caller() {
+        // connect_pipeline: the repeater's connections and its unused stages.
+        let leaf = ModDef::new("Leaf");
+        leaf.add_port("o", IO::Output(4));
+        leaf.add_port("i", IO::Input(4));
+        let top = ModDef::new("Top");
+        let a = top.instantiate(&leaf, Some("a"), None);
+        let b = top.instantiate(&leaf, Some("b"), None);
+        let line = line!() + 1;
+        a.get_port("o").connect_pipeline(
+            &b.get_port("i"),
+            PipelineConfig {
+                depth: 1,
+                ..PipelineConfig::default()
+            },
+        );
+        let repeater = top.get_instances().into_iter().last().unwrap();
+        let mut seen = 0;
+        for port in repeater.get_ports(None) {
+            for connection in &connections_of(&port) {
+                assert_site(&connection.site, line);
+                seen += 1;
+            }
+        }
+        assert!(seen >= 4, "{seen}");
+        assert_site(&connections_of(&top.get_port("clk"))[0].site, line);
+
+        // feedthrough
+        let ft = ModDef::new("Ft");
+        let line = line!() + 1;
+        ft.feedthrough("fi", "fo", 4);
+        assert_site(&connections_of(&ft.get_port("fi"))[0].site, line);
+
+        // todo_jam_connect and its remainder
+        let jam = ModDef::new("Jam");
+        let wide = jam.add_port("wide", IO::Input(4));
+        let narrow = jam.add_port("narrow", IO::Output(2));
+        let line = line!() + 1;
+        narrow.todo_jam_connect(&wide);
+        let wide_connections = connections_of(&wide);
+        assert_eq!(wide_connections.len(), 2);
+        for connection in &wide_connections {
+            assert_site(&connection.site, line);
+        }
+
+        // Intf::connect
+        let src = ModDef::new("Src");
+        src.add_port("x_v", IO::Output(2));
+        src.def_intf_from_name_underscore("x");
+        let dst = ModDef::new("Dst");
+        dst.add_port("x_v", IO::Input(2));
+        dst.def_intf_from_name_underscore("x");
+        let t = ModDef::new("T");
+        let s = t.instantiate(&src, Some("s"), None);
+        let d = t.instantiate(&dst, Some("d"), None);
+        let line = line!() + 1;
+        s.get_intf("x").connect(&d.get_intf("x"), false);
+        assert_site(&connections_of(&s.get_port("x_v"))[0].site, line);
+        assert_site(&connections_of(&d.get_port("x_v"))[0].site, line);
     }
 
     #[test]

@@ -51,6 +51,7 @@ impl ModDef {
     /// It's OK if some or all of the `autoconnect` names do not exist in
     /// the parent module and/or instantiated module; TopStitch will not panic
     /// in this case.
+    #[track_caller]
     pub fn instantiate(
         &self,
         moddef: &ModDef,
@@ -134,6 +135,7 @@ impl ModDef {
     /// has a port named `clk` and the instantiated module has a port named
     /// `clk`, passing `Some(&["clk"])` will automatically connect the two
     /// ports.
+    #[track_caller]
     pub fn instantiate_array(
         &self,
         moddef: &ModDef,
