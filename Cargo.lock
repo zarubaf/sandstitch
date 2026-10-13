@@ -1314,7 +1314,6 @@ name = "slang-rs"
 version = "0.22.0"
 dependencies = [
  "num-bigint",
- "num-traits",
  "proptest",
  "regex",
  "slang-sys",

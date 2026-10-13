@@ -217,6 +217,39 @@ pub(crate) fn error(code: crate::Code, message: String, primary: Label) -> Diagn
     }
 }
 
+/// The S0103 message and help for `port`, by the reason Slang's walk gave
+/// (`UnsupportedPort::error`).
+fn unsupported_port_text(module: &str, port: &slang_rs::UnsupportedPort) -> (String, &'static str) {
+    let name = &port.name;
+    if port.error.starts_with("`ref`") {
+        (
+            format!("port `{name}` of `{module}` is a `ref` port"),
+            "use an `input`, `output` or `inout` port",
+        )
+    } else if port.error.starts_with("ports that connect several") {
+        (
+            format!("port `{name}` of `{module}` connects several signals"),
+            "declare one port per signal",
+        )
+    } else if port.error.starts_with("enum values") {
+        (
+            format!(
+                "port `{name}` of `{module}` has enum type `{}` with unsupported values",
+                port.type_text
+            ),
+            "give every enum value a constant integer without X or Z bits",
+        )
+    } else {
+        (
+            format!(
+                "port `{name}` of `{module}` has unsupported type `{}`",
+                port.type_text
+            ),
+            "use a packed integral type (logic, bit, int, packed struct, enum)",
+        )
+    }
+}
+
 /// Converts the ports of module `module`, given in declaration order. Ports
 /// that cannot be represented (unpacked dimensions, or a type that is not
 /// integral) are skipped when `skip_unsupported` is set and reported (S0103)
@@ -232,20 +265,16 @@ pub(crate) fn import_ports(
         let port = match port {
             Ok(port) => port,
             Err(unsupported) => {
+                let (message, help) = unsupported_port_text(module, unsupported);
                 let mut d = error(
                     codes::S0103,
-                    format!(
-                        "port `{}` of `{module}` has unsupported type `{}`",
-                        unsupported.name, unsupported.type_text
-                    ),
+                    message,
                     Label {
                         span: sv_span(unsupported.loc.as_ref(), &unsupported.name),
                         text: unsupported.error.clone(),
                     },
                 );
-                d.helps.push(
-                    "use a packed integral type (logic, bit, int, packed struct, enum)".into(),
-                );
+                d.helps.push(help.into());
                 diagnostics.push(d);
                 continue;
             }
@@ -382,7 +411,7 @@ pub(crate) fn interface_ports_of_definition(
 
 /// Elaborates the definition of `module` as the only top, with
 /// `--allow-toplevel-iface-ports` so that interface ports do not prevent
-/// elaboration. Returns the design and AST Slang produced and whether
+/// elaboration. Returns the design Slang produced and whether
 /// elaboration succeeded (`ok`); a definition whose default parameters do not
 /// elaborate still shows its parameter and port declarations. Returns `None`
 /// if Slang created no compilation.
@@ -485,5 +514,66 @@ pub(crate) fn module_not_found(module: &str) -> ImportError {
     ));
     ImportError {
         diagnostics: Diagnostics(vec![d]),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unsupported(name: &str, type_text: &str, error: &str) -> slang_rs::UnsupportedPort {
+        slang_rs::UnsupportedPort {
+            name: name.into(),
+            type_text: type_text.into(),
+            error: error.into(),
+            loc: None,
+        }
+    }
+
+    /// The S0103 message, label text and helps for one unsupported port.
+    fn reported(port: slang_rs::UnsupportedPort) -> (String, String, Vec<String>) {
+        let err = import_ports("m", &[Err(port)], false).err().unwrap();
+        let d = &err.diagnostics.0[0];
+        assert_eq!(d.code, codes::S0103);
+        (d.message.clone(), d.primary.text.clone(), d.helps.clone())
+    }
+
+    #[test]
+    fn ref_port_says_ref_not_type() {
+        // A top-level module cannot have a `ref` port, so the walk's result
+        // is given directly.
+        let (message, label, helps) =
+            reported(unsupported("r", "logic", "`ref` ports are not supported"));
+        assert_eq!(message, "port `r` of `m` is a `ref` port");
+        assert_eq!(label, "`ref` ports are not supported");
+        assert_eq!(helps, ["use an `input`, `output` or `inout` port"]);
+    }
+
+    #[test]
+    fn multi_port_says_signals_not_type() {
+        let (message, _, helps) = reported(unsupported(
+            "p",
+            "logic",
+            "ports that connect several signals are not supported",
+        ));
+        assert_eq!(message, "port `p` of `m` connects several signals");
+        assert_eq!(helps, ["declare one port per signal"]);
+    }
+
+    #[test]
+    fn enum_value_reason_names_the_values() {
+        let (message, _, helps) = reported(unsupported(
+            "e",
+            "e_t",
+            "enum values with X or Z bits are not supported",
+        ));
+        assert_eq!(
+            message,
+            "port `e` of `m` has enum type `e_t` with unsupported values"
+        );
+        assert_eq!(
+            helps,
+            ["give every enum value a constant integer without X or Z bits"]
+        );
     }
 }

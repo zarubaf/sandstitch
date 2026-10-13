@@ -67,8 +67,7 @@ pub struct Variant {
     pub name: String,
     pub width: usize,
     pub value: BigInt,
-    /// Whether the value is a signed literal (`'sd`), i.e. the enum's base
-    /// type is signed.
+    /// Whether the enum's base type is signed.
     pub signed: bool,
 }
 
@@ -165,20 +164,6 @@ pub enum PortDir {
     Input,
     Output,
     InOut,
-}
-
-impl FromStr for PortDir {
-    type Err = String;
-
-    /// Parses Slang's direction names: `In`, `Out` and `InOut`.
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "In" => Ok(PortDir::Input),
-            "Out" => Ok(PortDir::Output),
-            "InOut" => Ok(PortDir::InOut),
-            _ => Err(format!("Unsupported I/O direction: {}", s)),
-        }
-    }
 }
 
 /// A declaration's position in the source.

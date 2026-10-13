@@ -282,8 +282,8 @@ pub(crate) struct Specialized {
 static SPECIALIZATIONS: DependencyCache<Specialized> = DependencyCache::new();
 
 /// What elaborating a module's definition as the top shows. The definition
-/// need not elaborate cleanly: the declarations are read from the AST Slang
-/// dumps even when its default parameters do not elaborate (a type parameter
+/// need not elaborate cleanly: the declarations are read from the design Slang
+/// built even when its default parameters do not elaborate (a type parameter
 /// defaulting to `logic` used as a struct), as long as the sources parse, so
 /// overrides are checked before the specialization is elaborated.
 #[derive(Clone, Debug)]
@@ -536,7 +536,7 @@ fn definition(
     let Some((definition, succeeded, loaded)) = elaborated else {
         return Ok(None);
     };
-    // After a syntax error the AST is Slang's recovery, which can differ
+    // After a syntax error the design is Slang's recovery, which can differ
     // from the source (a parameter port list cut short at a typo makes the
     // following parameters local): it is used only if the sources parse.
     let definition = match definition {
