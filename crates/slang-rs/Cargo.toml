@@ -26,6 +26,7 @@ differential = []
 
 [dev-dependencies]
 slang-rs = { path = ".", features = ["differential"] }
+proptest = "1"
 
 
 # Pre-existing upstream style, kept to stay close to upstream.
