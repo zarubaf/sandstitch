@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Generated designs: random packages and module hierarchies are printed as
-//! SystemVerilog, elaborated, and every instance's ports and parameters compared
-//! with what the model says they are.
+//! SystemVerilog, elaborated, and every instance's ports and parameters, and
+//! the instance hierarchy, compared with what the model says they are.
 
 mod model;
 mod oracle;
@@ -84,6 +84,12 @@ proptest! {
                 );
             }
         }
+        let expected = oracle::hierarchy(&design);
+        let actual = output.design.hierarchy();
+        prop_assert!(
+            actual.len() == 1 && actual.get("top") == Some(&expected),
+            "hierarchy differs\nexpected: {expected:#?}\nactual: {actual:#?}\n{sv}"
+        );
         for path in oracle::paths(&design) {
             let expected = oracle::ports(&design, &path);
             let actual = output.design.ports(&path);

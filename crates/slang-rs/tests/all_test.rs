@@ -76,7 +76,7 @@ mod tests {
 
         // check hierarchy
 
-        let hierarchy = extract_hierarchy_from_value(&value);
+        let hierarchy = extract_hierarchy(&cfg).unwrap();
 
         let expected_hierarchy = HashMap::from([(
             "A".to_string(),

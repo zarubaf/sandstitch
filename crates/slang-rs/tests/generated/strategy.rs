@@ -12,9 +12,10 @@
 use proptest::prelude::*;
 
 use crate::model::{
-    Aggregate, Base, DataType, Design, Dim, Dir, Enum, EnumBase, EnumVariant, Expr, Instance,
-    IntKind, LocalParam, LocalTypeParam, Member, Module, Package, PackageParam, PackageValue,
-    Param, PortDecl, TypeParam, TypeRef, TypedParam, Typedef, VectorKw, enum_base_width, int_width,
+    Aggregate, Base, DataType, Design, Dim, Dir, Enum, EnumBase, EnumVariant, Expr, GenerateLoop,
+    Instance, IntKind, LocalParam, LocalTypeParam, Member, Module, Package, PackageParam,
+    PackageValue, Param, PortDecl, TypeParam, TypeRef, TypedParam, Typedef, VectorKw,
+    enum_base_width, int_width,
 };
 
 /// Instances nest at most this deep, the top included.
@@ -132,6 +133,8 @@ struct RawTypeParam {
 struct RawInstance {
     target: usize,
     array: Vec<RawDim>,
+    /// A generate loop: the start, the count and whether it counts down.
+    generate: Option<(i32, u32, bool)>,
     params: Vec<Option<i32>>,
     type_params: Vec<Option<RawType>>,
 }
@@ -312,15 +315,19 @@ fn raw_module() -> impl Strategy<Value = RawModule> {
     let instance = (
         any::<usize>(),
         prop::collection::vec(array_dim, 0..=2),
+        prop::option::weighted(0.3, (-2i32..=3, 1u32..=3, any::<bool>())),
         prop::collection::vec(prop::option::of(PARAM_VALUES.0..=PARAM_VALUES.1), 0..=2),
         prop::collection::vec(prop::option::of(raw_type()), 0..=2),
     )
-        .prop_map(|(target, array, params, type_params)| RawInstance {
-            target,
-            array,
-            params,
-            type_params,
-        });
+        .prop_map(
+            |(target, array, generate, params, type_params)| RawInstance {
+                target,
+                array,
+                generate,
+                params,
+                type_params,
+            },
+        );
     (
         any::<bool>(),
         prop::collection::vec(PARAM_VALUES.0..=PARAM_VALUES.1, 0..=2),
@@ -1000,6 +1007,7 @@ fn lower(raw: RawDesign) -> Design {
                 name,
                 module: m,
                 array: vec![],
+                generate: None,
                 params: vec![],
                 type_params: vec![],
             });
@@ -1076,10 +1084,20 @@ fn lower(raw: RawDesign) -> Design {
                     };
                     type_overrides.push((i, lower.type_value(raw_ty, &ctx)));
                 }
+                let generate =
+                    raw_instance
+                        .generate
+                        .map(|(start, count, descending)| GenerateLoop {
+                            name: lower.name("g"),
+                            start,
+                            count,
+                            descending,
+                        });
                 instances.push(Instance {
                     name: lower.name("u"),
                     module: target,
                     array,
+                    generate,
                     params: param_overrides,
                     type_params: type_overrides,
                 });

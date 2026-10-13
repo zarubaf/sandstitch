@@ -420,7 +420,7 @@ fn child_instances_lists_instantiated_children_outside_generate_blocks() {
     );
     assert_eq!(
         design.child_instances("top"),
-        Some(vec!["a", "arr[0]", "arr[1]"])
+        Some(vec!["a", "arr[1]", "arr[0]"])
     );
     assert_eq!(design.child_instances("top.a"), Some(vec![]));
     assert_eq!(design.child_instances("top.m"), None);

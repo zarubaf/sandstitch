@@ -11,10 +11,13 @@
 //! consistent renaming.
 
 use num_bigint::BigInt;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use slang_rs::{
-    Field, ParameterDef, ParameterKind, Port, PortDir, Range, Type, UnsupportedPort, Variant,
+    Field, Instance, ParameterDef, ParameterKind, Port, PortDir, Range, Type, UnsupportedPort,
+    Variant,
 };
 
 use crate::model::{
@@ -176,8 +179,10 @@ pub fn overridable_parameters(design: &Design, path: &str) -> Vec<(String, Param
         .unwrap_or_default()
 }
 
-/// The path of every instance: the top, then the instances below it, an
-/// array instance once per element (`u[-1]`, `u[1][0]`).
+/// The path of every instance reachable by path: the top, then the
+/// instances below it, an array instance once per element (`u[-1]`,
+/// `u[1][0]`). An instance in a generate loop has none, nor do its
+/// descendants.
 pub fn paths(design: &Design) -> Vec<String> {
     instances(design)
         .into_iter()
@@ -251,17 +256,77 @@ fn env(design: &Design, module: usize, instance: Option<(&crate::model::Instance
     }
 }
 
+/// The bounds of a constant instance array dimension, `[a:b]`.
+fn bounds(dim: &Dim) -> (i32, i32) {
+    match dim {
+        Dim::Range(Expr::Const(a), Expr::Const(b)) => (*a, *b),
+        Dim::Size(n) => (0, *n as i32 - 1),
+        other => panic!("instance array dimension {other:?} is not constant"),
+    }
+}
+
+/// The instance tree of the top, as `Design::hierarchy` must report it:
+/// children in declaration order, a generate loop's elements in iteration
+/// order named by the genvar's value, an array's elements from the left
+/// bound of each dimension to the right, the outermost dimension first.
+pub fn hierarchy(design: &Design) -> Instance {
+    tree(design, 0, design.modules[0].name.clone(), String::new())
+}
+
+fn tree(design: &Design, module: usize, name: String, prefix: String) -> Instance {
+    let def = &design.modules[module];
+    let mut contents = Vec::new();
+    for instance in &def.instances {
+        let mut names = vec![instance.name.clone()];
+        for dim in &instance.array {
+            let (a, b) = bounds(dim);
+            let indices: Vec<i32> = if a <= b {
+                (a..=b).collect()
+            } else {
+                (b..=a).rev().collect()
+            };
+            names = names
+                .iter()
+                .flat_map(|name| indices.iter().map(move |i| format!("{name}[{i}]")))
+                .collect();
+        }
+        let prefixes: Vec<String> = match &instance.generate {
+            Some(generate) => generate
+                .values()
+                .into_iter()
+                .map(|value| format!(".{}[{value}]", generate.name))
+                .collect(),
+            None => vec![String::new()],
+        };
+        for prefix in prefixes {
+            for name in &names {
+                contents.push(Rc::new(RefCell::new(tree(
+                    design,
+                    instance.module,
+                    name.clone(),
+                    prefix.clone(),
+                ))));
+            }
+        }
+    }
+    Instance {
+        def_name: def.name.clone(),
+        inst_name: name,
+        hier_prefix: prefix,
+        contents,
+    }
+}
+
 fn walk(design: &Design, path: String, env: Env, out: &mut Vec<(String, Env)>) {
     let module = &design.modules[env.module];
     let mut children = Vec::new();
     for instance in &module.instances {
+        if instance.generate.is_some() {
+            continue;
+        }
         let mut names = vec![instance.name.clone()];
         for dim in &instance.array {
-            let (a, b) = match dim {
-                Dim::Range(Expr::Const(a), Expr::Const(b)) => (*a, *b),
-                Dim::Size(n) => (0, *n as i32 - 1),
-                other => panic!("instance array dimension {other:?} is not constant"),
-            };
+            let (a, b) = bounds(dim);
             names = names
                 .iter()
                 .flat_map(|name| (a.min(b)..=a.max(b)).map(move |i| format!("{name}[{i}]")))

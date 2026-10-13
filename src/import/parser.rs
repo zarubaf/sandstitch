@@ -351,7 +351,7 @@ impl ModDef {
 
         if cfg.include_hierarchy {
             let mod_def_with_hierarchy = mod_def.stub(name);
-            let hierarchy = slang_rs::extract_hierarchy_from_value(&output.ast);
+            let hierarchy = output.design.hierarchy();
             if let Some(inst) = hierarchy.get(name) {
                 crate::import::hierarchy::populate_hierarchy(&mod_def_with_hierarchy, inst);
             }
@@ -390,7 +390,7 @@ impl ModDef {
 
         if cfg.include_hierarchy {
             let mut mod_defs_with_hierarchy = Vec::new();
-            let hierarchy = slang_rs::extract_hierarchy_from_value(&output.ast);
+            let hierarchy = output.design.hierarchy();
             for mod_def in mod_defs.iter() {
                 let mod_def_name = mod_def.get_name();
                 if let Some(inst) = hierarchy.get(&mod_def_name) {

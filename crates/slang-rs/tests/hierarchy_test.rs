@@ -238,4 +238,220 @@ endmodule
 
         assert_eq!(hierarchy, expected);
     }
+
+    /// (instance name, definition, prefix) of the children of `top`.
+    fn children(source: &str, top: &str) -> Vec<(String, String, String)> {
+        let verilog = str2tmpfile(source).unwrap();
+        let cfg = SlangConfig {
+            sources: &[verilog.path().to_str().unwrap()],
+            ..Default::default()
+        };
+        let hierarchy = extract_hierarchy(&cfg).unwrap();
+        hierarchy[top]
+            .contents
+            .iter()
+            .map(|c| {
+                let c = c.borrow();
+                (
+                    c.inst_name.clone(),
+                    c.def_name.clone(),
+                    c.hier_prefix.clone(),
+                )
+            })
+            .collect()
+    }
+
+    fn child(name: &str, def: &str, prefix: &str) -> (String, String, String) {
+        (name.to_string(), def.to_string(), prefix.to_string())
+    }
+
+    #[test]
+    fn genvar_prefix_uses_value() {
+        let got = children(
+            "module sub; endmodule
+             module top;
+               for (genvar i = 2; i < 4; i++) begin : g sub u(); end
+             endmodule",
+            "top",
+        );
+        assert_eq!(
+            got,
+            [child("u", "sub", ".g[2]"), child("u", "sub", ".g[3]")]
+        );
+    }
+
+    #[test]
+    fn genvar_prefix_descending_and_nested() {
+        let got = children(
+            "module sub; endmodule
+             module top;
+               for (genvar i = 5; i > 3; i--) begin : g
+                 for (genvar j = 1; j < 3; j++) begin : h sub u(); end
+               end
+             endmodule",
+            "top",
+        );
+        assert_eq!(
+            got,
+            [
+                child("u", "sub", ".g[5].h[1]"),
+                child("u", "sub", ".g[5].h[2]"),
+                child("u", "sub", ".g[4].h[1]"),
+                child("u", "sub", ".g[4].h[2]"),
+            ]
+        );
+    }
+
+    #[test]
+    fn genvar_prefix_skips_elements_without_instances() {
+        let got = children(
+            "module sub; endmodule
+             module top;
+               for (genvar i = 2; i < 6; i++) begin : g
+                 if (i % 2 == 1) begin : h sub u(); end
+               end
+             endmodule",
+            "top",
+        );
+        assert_eq!(
+            got,
+            [child("u", "sub", ".g[3].h"), child("u", "sub", ".g[5].h")]
+        );
+    }
+
+    #[test]
+    fn instance_array_elements() {
+        let got = children(
+            "module sub; endmodule
+             module top;
+               sub u [3:0] ();
+             endmodule",
+            "top",
+        );
+        assert_eq!(
+            got,
+            [
+                child("u[3]", "sub", ""),
+                child("u[2]", "sub", ""),
+                child("u[1]", "sub", ""),
+                child("u[0]", "sub", ""),
+            ]
+        );
+    }
+
+    #[test]
+    fn instance_array_ascending() {
+        let got = children(
+            "module sub; endmodule
+             module top;
+               sub u [0:3] ();
+               sub w [2:3] ();
+             endmodule",
+            "top",
+        );
+        assert_eq!(
+            got,
+            [
+                child("u[0]", "sub", ""),
+                child("u[1]", "sub", ""),
+                child("u[2]", "sub", ""),
+                child("u[3]", "sub", ""),
+                child("w[2]", "sub", ""),
+                child("w[3]", "sub", ""),
+            ]
+        );
+    }
+
+    #[test]
+    fn instance_array_two_dimensions() {
+        let got = children(
+            "module sub; endmodule
+             module top;
+               sub v [1:0][0:1] ();
+             endmodule",
+            "top",
+        );
+        assert_eq!(
+            got,
+            [
+                child("v[1][0]", "sub", ""),
+                child("v[1][1]", "sub", ""),
+                child("v[0][0]", "sub", ""),
+                child("v[0][1]", "sub", ""),
+            ]
+        );
+    }
+
+    #[test]
+    fn instance_array_in_generate_block() {
+        let got = children(
+            "module sub; endmodule
+             module top;
+               if (1) begin : g sub u [1:0] (); end
+             endmodule",
+            "top",
+        );
+        assert_eq!(
+            got,
+            [child("u[1]", "sub", ".g"), child("u[0]", "sub", ".g")]
+        );
+    }
+
+    #[test]
+    fn undefined_module_is_a_child_without_contents() {
+        let verilog =
+            str2tmpfile("module top; missing m(); if (1) begin : g missing n(); end endmodule")
+                .unwrap();
+        let cfg = SlangConfig {
+            sources: &[verilog.path().to_str().unwrap()],
+            ..Default::default()
+        };
+        let top = &extract_hierarchy(&cfg).unwrap()["top"];
+        let got: Vec<_> = top
+            .contents
+            .iter()
+            .map(|c| {
+                let c = c.borrow();
+                (
+                    c.inst_name.clone(),
+                    c.def_name.clone(),
+                    c.hier_prefix.clone(),
+                    c.contents.len(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("m".to_string(), "missing".to_string(), String::new(), 0),
+                ("n".to_string(), "missing".to_string(), ".g".to_string(), 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn shared_body_under_two_parents() {
+        let verilog = str2tmpfile(
+            "module leaf; endmodule
+             module mid; leaf l(); endmodule
+             module top; mid a(); mid b(); endmodule",
+        )
+        .unwrap();
+        let cfg = SlangConfig {
+            sources: &[verilog.path().to_str().unwrap()],
+            ..Default::default()
+        };
+        let top = &extract_hierarchy(&cfg).unwrap()["top"];
+        assert_eq!(top.contents.len(), 2);
+        for mid in &top.contents {
+            let mid = mid.borrow();
+            assert_eq!(mid.def_name, "mid");
+            assert_eq!(mid.contents.len(), 1);
+            let leaf = mid.contents[0].borrow();
+            assert_eq!(
+                (leaf.def_name.as_str(), leaf.inst_name.as_str()),
+                ("leaf", "l")
+            );
+        }
+    }
 }

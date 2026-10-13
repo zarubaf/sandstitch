@@ -131,3 +131,33 @@ fn test_extract_hierarchy_unknown_module() {
         ]
     );
 }
+
+#[test]
+fn test_extract_hierarchy_instance_array() {
+    let source = slang_rs::str2tmpfile(
+        "
+        module C;
+        endmodule
+        module A;
+          C u [1:0] ();
+        endmodule
+        ",
+    )
+    .unwrap();
+
+    let cfg = ParserConfig {
+        sources: &[source.path().to_str().unwrap()],
+        include_hierarchy: true,
+        ..Default::default()
+    };
+
+    let result = ModDef::from_verilog_with_config("A", &cfg).report_all_instances();
+
+    assert_eq!(
+        result,
+        vec![
+            ("C".to_string(), "A.u[1]".to_string()),
+            ("C".to_string(), "A.u[0]".to_string()),
+        ]
+    );
+}
