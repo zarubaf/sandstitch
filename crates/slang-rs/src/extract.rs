@@ -293,6 +293,7 @@ pub(crate) fn extract_instance_ports_checked_with(
 
 /// Whether the body of the instance at `path` has a `ref` port, which the
 /// port extractors cannot read. `None` if no such instance exists.
+#[cfg(feature = "differential")]
 pub(crate) fn instance_has_ref_port_with(
     type_resolver: &TypeResolver,
     value: &Value,
@@ -305,6 +306,7 @@ pub(crate) fn instance_has_ref_port_with(
 /// The names of the instances that are direct members of the body of the
 /// instance at `path` (not those in generate blocks or instance arrays).
 /// `None` if no such instance exists.
+#[cfg(feature = "differential")]
 pub(crate) fn instance_child_names_with(
     type_resolver: &TypeResolver,
     value: &Value,
@@ -319,6 +321,7 @@ pub(crate) fn instance_child_names_with(
 }
 
 /// The names of the top-level instances.
+#[cfg(feature = "differential")]
 pub(crate) fn top_names_with(type_resolver: &TypeResolver, value: &Value) -> Vec<String> {
     top_level_bodies(value, type_resolver)
         .map(|(name, _)| name.to_string())
