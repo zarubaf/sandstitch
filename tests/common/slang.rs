@@ -23,6 +23,7 @@ fn run_slang(files: &[&Path], args: Vec<String>, ast_json: AstJson) -> sys::Resp
         args: all,
         stage: Stage::Elaborate,
         ast_json,
+        design: sys::DesignQuery::None,
     })
     .unwrap_or_else(|e| panic!("running Slang: {e}"))
 }

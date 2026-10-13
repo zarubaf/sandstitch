@@ -69,6 +69,7 @@ fn elaborate_manifest(manifest: &Manifest, emitted: &str, top: &str) -> Result<(
         args,
         stage: Stage::Elaborate,
         ast_json: AstJson::None,
+        design: sys::DesignQuery::None,
     })
     .unwrap_or_else(|e| panic!("running Slang: {e}"));
     if response.ok
