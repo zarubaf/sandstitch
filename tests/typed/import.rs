@@ -429,6 +429,27 @@ fn missing_module_reports_s0102() {
 }
 
 #[test]
+fn missing_source_reports_s0102_with_slang_text() {
+    let missing = "/nonexistent/sandstitch_missing.sv";
+    let cfg = ParserConfig {
+        sources: &[missing],
+        ..Default::default()
+    };
+    let err = ModDef::try_from_verilog_with_config("m", &cfg)
+        .err()
+        .unwrap();
+    assert_eq!(err.diagnostics.0.len(), 1);
+    let d = &err.diagnostics.0[0];
+    assert_eq!(d.code, codes::S0102);
+    assert_eq!(d.message, "cannot elaborate `m`");
+    // No located error: Slang's own text is the note.
+    assert_eq!(d.primary.span, Span::None);
+    assert_eq!(d.notes.len(), 1, "{d:?}");
+    assert!(d.notes[0].contains(missing), "{}", d.notes[0]);
+    assert!(d.notes[0].contains("error"), "{}", d.notes[0]);
+}
+
+#[test]
 fn slang_error_reports_s0102_with_span() {
     let sv_src = "
 module s (
