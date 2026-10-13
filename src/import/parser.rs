@@ -329,28 +329,29 @@ impl ModDef {
         cfg: &ParserConfig,
     ) -> Result<Self, ImportError> {
         let caller = Span::caller();
-        let value = match slang_rs::run_slang(&cfg.to_slang_config()) {
-            Ok(output) => output.ast,
+        let output = match slang_rs::run_slang(&cfg.to_slang_config()) {
+            Ok(output) => output,
             Err(e) => {
                 return Err(interface_port_error_of_definition(name, cfg)
                     .unwrap_or_else(|| typed::slang_failure(name, &e)));
             }
         };
 
-        let Some(imported_ports) = typed::import_top_ports(&value, name, cfg.skip_unsupported)
+        let Some(imported_ports) =
+            typed::import_top_ports(&output.design, name, cfg.skip_unsupported)
         else {
             return Err(interface_port_error_of_definition(name, cfg)
                 .unwrap_or_else(|| typed::module_not_found(name)));
         };
         let imported_ports = imported_ports?;
         let parameters =
-            plain_import_parameters(name, &owned_pairs(cfg.parameters), &value, &caller)?;
+            plain_import_parameters(name, &owned_pairs(cfg.parameters), &output.ast, &caller)?;
 
         let mod_def = Self::mod_def_from_imported_ports(name, &imported_ports, parameters, cfg);
 
         if cfg.include_hierarchy {
             let mod_def_with_hierarchy = mod_def.stub(name);
-            let hierarchy = slang_rs::extract_hierarchy_from_value(&value);
+            let hierarchy = slang_rs::extract_hierarchy_from_value(&output.ast);
             if let Some(inst) = hierarchy.get(name) {
                 crate::import::hierarchy::populate_hierarchy(&mod_def_with_hierarchy, inst);
             }
@@ -366,21 +367,21 @@ impl ModDef {
     pub fn all_from_verilog_with_config(cfg: &ParserConfig) -> Vec<Self> {
         let caller = Span::caller();
         let parameters = owned_pairs(cfg.parameters);
-        let value = slang_rs::run_slang(&cfg.to_slang_config()).unwrap().ast;
+        let output = slang_rs::run_slang(&cfg.to_slang_config()).unwrap();
         // Every top-level module (with or without interface ports), sorted by
         // name for a deterministic order.
-        let mut top_names: Vec<String> = slang_rs::extract_interface_ports_from_value(&value)
-            .into_keys()
-            .collect();
+        let mut top_names: Vec<String> = output.design.tops().map(str::to_string).collect();
         top_names.sort();
+        top_names.dedup();
 
         let mod_defs: Vec<ModDef> = top_names
             .into_iter()
             .map(|name| {
-                let imported_ports = typed::import_top_ports(&value, &name, cfg.skip_unsupported)
-                    .expect("listed as a top-level module")
-                    .unwrap_or_else(|e| panic!("{e}"));
-                let parameters = plain_import_parameters(&name, &parameters, &value, &caller)
+                let imported_ports =
+                    typed::import_top_ports(&output.design, &name, cfg.skip_unsupported)
+                        .expect("listed as a top-level module")
+                        .unwrap_or_else(|e| panic!("{e}"));
+                let parameters = plain_import_parameters(&name, &parameters, &output.ast, &caller)
                     .unwrap_or_else(|e| panic!("{e}"));
                 Self::mod_def_from_imported_ports(&name, &imported_ports, parameters, cfg)
             })
@@ -388,7 +389,7 @@ impl ModDef {
 
         if cfg.include_hierarchy {
             let mut mod_defs_with_hierarchy = Vec::new();
-            let hierarchy = slang_rs::extract_hierarchy_from_value(&value);
+            let hierarchy = slang_rs::extract_hierarchy_from_value(&output.ast);
             for mod_def in mod_defs.iter() {
                 let mod_def_name = mod_def.get_name();
                 if let Some(inst) = hierarchy.get(&mod_def_name) {

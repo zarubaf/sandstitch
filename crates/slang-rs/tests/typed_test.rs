@@ -641,7 +641,7 @@ fn absolute_path_normalizes() {
 }
 
 #[test]
-fn failed_run_keeps_ast() {
+fn failed_run_keeps_design() {
     // `T` defaults to `logic`, which has no member `v`: the definition does
     // not elaborate alone, but its declarations are in the dumped AST.
     let sv = "
@@ -664,7 +664,7 @@ endmodule
         "{e}"
     );
 
-    let kept = run_slang_keep_ast(&cfg).unwrap();
+    let kept = run_slang_keep_design(&cfg).unwrap();
     assert!(!kept.ok);
     assert_eq!(
         extract_overridable_parameters_from_value(&kept.ast)["m"],
@@ -681,14 +681,14 @@ endmodule
         sources: &paths,
         ..Default::default()
     };
-    assert!(run_slang_keep_ast(&cfg).unwrap().ok);
+    assert!(run_slang_keep_design(&cfg).unwrap().ok);
 
     // No AST at all (a missing source): the failure is returned.
     let cfg = SlangConfig {
         sources: &["/nonexistent/sandstitch.sv"],
         ..Default::default()
     };
-    let e = run_slang_keep_ast(&cfg).unwrap_err();
+    let e = run_slang_keep_design(&cfg).unwrap_err();
     assert_eq!(e.diagnostics.len(), 1, "{e}");
     assert_eq!(e.diagnostics[0].severity, Severity::Fatal, "{e}");
 }
@@ -744,5 +744,55 @@ fn check_slang_reports_exit_status() {
             .iter()
             .any(|d| d.message.contains("expected ')'")),
         "{e}"
+    );
+}
+
+fn design_of(sv: &str, top: &str) -> Design {
+    let file = str2tmpfile(sv).unwrap();
+    let paths = [file.path().to_str().unwrap()];
+    let cfg = SlangConfig {
+        sources: &paths,
+        tops: &[top],
+        ..Default::default()
+    };
+    run_slang(&cfg).unwrap().design
+}
+
+#[test]
+fn ref_port_is_unsupported() {
+    // A `ref` port of a top-level module is an error; connected, it is not.
+    let design = design_of(
+        "module r(input logic a, ref logic x, output logic [1:0] y); endmodule\n\
+         module top; logic s; r u(.a(1'b0), .x(s), .y()); endmodule\n",
+        "top",
+    );
+    let ports = design.ports("top.u").unwrap();
+    assert_eq!(ports.len(), 3);
+    assert!(matches!(&ports[0], Ok(p) if p.name == "a"));
+    let Err(unsupported) = &ports[1] else {
+        panic!("{:?}", ports[1]);
+    };
+    assert_eq!(unsupported.name, "x");
+    assert_eq!(unsupported.error, "`ref` ports are not supported");
+    assert_eq!(unsupported.loc.as_ref().unwrap().line, 1);
+    assert!(matches!(&ports[2], Ok(p) if p.name == "y"));
+}
+
+#[test]
+fn multi_port_is_unsupported() {
+    let design = design_of(
+        "module mp(z, .p({a, b})); input z; input a, b; endmodule\n",
+        "mp",
+    );
+    let ports = design.ports("mp").unwrap();
+    assert_eq!(ports.len(), 2);
+    assert!(matches!(&ports[0], Ok(p) if p.name == "z"));
+    let Err(unsupported) = &ports[1] else {
+        panic!("{:?}", ports[1]);
+    };
+    assert_eq!(unsupported.name, "p");
+    assert_eq!(
+        unsupported.error,
+        "ports that connect several signals are not supported"
     );
 }

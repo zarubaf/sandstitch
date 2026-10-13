@@ -272,14 +272,57 @@ pub fn extract_instance_ports_checked_from_value(
     value: &Value,
     path: &str,
 ) -> Option<Vec<Result<Port, UnsupportedPort>>> {
-    let type_resolver = TypeResolver::new(value);
-    let body = find_instance_body(value, &type_resolver, path)?;
+    extract_instance_ports_checked_with(&TypeResolver::new(value), value, path)
+}
+
+/// [`extract_instance_ports_checked_from_value`] with a resolver built once
+/// for `value`.
+pub(crate) fn extract_instance_ports_checked_with(
+    type_resolver: &TypeResolver,
+    value: &Value,
+    path: &str,
+) -> Option<Vec<Result<Port, UnsupportedPort>>> {
+    let body = find_instance_body(value, type_resolver, path)?;
     let type_parameters = type_resolver.type_parameters(body);
     Some(
         MemberIter::new(body, &["Port"])
-            .map(|member| parse_port(&type_resolver, &type_parameters, member))
+            .map(|member| parse_port(type_resolver, &type_parameters, member))
             .collect(),
     )
+}
+
+/// Whether the body of the instance at `path` has a `ref` port, which the
+/// port extractors cannot read. `None` if no such instance exists.
+pub(crate) fn instance_has_ref_port_with(
+    type_resolver: &TypeResolver,
+    value: &Value,
+    path: &str,
+) -> Option<bool> {
+    let body = find_instance_body(value, type_resolver, path)?;
+    Some(MemberIter::new(body, &["Port"]).any(|member| member["direction"] == "Ref"))
+}
+
+/// The names of the instances that are direct members of the body of the
+/// instance at `path` (not those in generate blocks or instance arrays).
+/// `None` if no such instance exists.
+pub(crate) fn instance_child_names_with(
+    type_resolver: &TypeResolver,
+    value: &Value,
+    path: &str,
+) -> Option<Vec<String>> {
+    let body = find_instance_body(value, type_resolver, path)?;
+    Some(
+        MemberIter::new(body, &["Instance"])
+            .filter_map(|member| member["name"].as_str().map(str::to_string))
+            .collect(),
+    )
+}
+
+/// The names of the top-level instances.
+pub(crate) fn top_names_with(type_resolver: &TypeResolver, value: &Value) -> Vec<String> {
+    top_level_bodies(value, type_resolver)
+        .map(|(name, _)| name.to_string())
+        .collect()
 }
 
 /// Lists the interface ports of every top-level module, keyed by module name.
@@ -296,8 +339,17 @@ pub fn extract_instance_interface_ports_from_value(
     value: &Value,
     path: &str,
 ) -> Option<Vec<InterfacePort>> {
-    let type_resolver = TypeResolver::new(value);
-    let body = find_instance_body(value, &type_resolver, path)?;
+    extract_instance_interface_ports_with(&TypeResolver::new(value), value, path)
+}
+
+/// [`extract_instance_interface_ports_from_value`] with a resolver built
+/// once for `value`.
+pub(crate) fn extract_instance_interface_ports_with(
+    type_resolver: &TypeResolver,
+    value: &Value,
+    path: &str,
+) -> Option<Vec<InterfacePort>> {
+    let body = find_instance_body(value, type_resolver, path)?;
     Some(body_interface_ports(body))
 }
 

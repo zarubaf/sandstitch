@@ -100,6 +100,21 @@ impl Design {
         self.body(path).map(|b| b.interface_ports.as_slice())
     }
 
+    /// The names of the instantiated children of the instance at `path`
+    /// that are outside generate blocks, in the order Slang lists them; each is a
+    /// valid last segment of a path below `path`. An instance array element
+    /// is named as declared (`u[3]`). Instances of undefined modules are
+    /// not listed. `None` when `path` names no instantiated instance.
+    pub fn child_instances(&self, path: &str) -> Option<Vec<&str>> {
+        self.body(path).map(|b| {
+            b.children
+                .iter()
+                .filter(|c| c.prefix.is_empty() && c.body.is_some())
+                .map(|c| c.name.as_str())
+                .collect()
+        })
+    }
+
     fn body(&self, path: &str) -> Option<&Body> {
         let mut segments = path.split('.');
         let top = segments.next()?;
