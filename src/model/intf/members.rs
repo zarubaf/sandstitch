@@ -20,7 +20,18 @@ pub(crate) struct IntfMember {
     pub(crate) port: String,
     pub(crate) msb: usize,
     pub(crate) lsb: usize,
-    pub(crate) select: Option<Arc<[Select]>>,
+    pub(crate) select: MemberSelect,
+}
+
+/// How a member's slice is formed when it is read.
+#[derive(Clone, Debug)]
+pub(crate) enum MemberSelect {
+    /// From a `(port, msb, lsb)` mapping (`def_intf`), resolved when read
+    /// as upstream, so the port may be added after the interface: the
+    /// whole port is typed, any other range is a plain bit slice.
+    Range,
+    /// The selection of the slice the member was defined with.
+    Slice(Option<Arc<[Select]>>),
 }
 
 impl IntfMember {
@@ -30,18 +41,32 @@ impl IntfMember {
             port: slice.port.name().to_string(),
             msb: slice.msb,
             lsb: slice.lsb,
-            select: slice.select.clone(),
+            select: MemberSelect::Slice(slice.select.clone()),
+        }
+    }
+
+    /// A member from a `(port, msb, lsb)` mapping; the port is not looked up.
+    pub(crate) fn range(name: impl Into<String>, port: &str, msb: usize, lsb: usize) -> Self {
+        IntfMember {
+            name: name.into(),
+            port: port.to_string(),
+            msb,
+            lsb,
+            select: MemberSelect::Range,
         }
     }
 
     /// The member as a slice of `port`, the member's port seen from the
     /// definition or from an instance.
     fn slice_of(&self, port: Port) -> PortSlice {
-        PortSlice {
-            port,
-            msb: self.msb,
-            lsb: self.lsb,
-            select: self.select.clone(),
+        match &self.select {
+            MemberSelect::Range => port.slice_or_whole(self.msb, self.lsb),
+            MemberSelect::Slice(select) => PortSlice {
+                port,
+                msb: self.msb,
+                lsb: self.lsb,
+                select: select.clone(),
+            },
         }
     }
 }

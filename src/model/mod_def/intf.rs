@@ -24,10 +24,7 @@ impl ModDef {
         let members = mapping
             .iter()
             .map(|(func_name, (port_name, msb, lsb))| {
-                IntfMember::new(
-                    func_name,
-                    &self.get_port(port_name).slice_or_whole(*msb, *lsb),
-                )
+                IntfMember::range(func_name, port_name, *msb, *lsb)
             })
             .collect();
         self.define_intf(name.as_ref(), members)
