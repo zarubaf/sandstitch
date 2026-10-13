@@ -269,7 +269,8 @@ mod tests {
             ]
         );
 
-        assert_eq!(definitions["foo"][1].ty.width().unwrap(), 8);
+        // An unpacked union has no bit layout.
+        assert!(definitions["foo"][1].ty.width().is_err());
     }
 
     #[test]
@@ -341,7 +342,8 @@ mod tests {
             ]
         );
 
-        assert_eq!(definitions["foo"][1].ty.width().unwrap(), 9);
+        // An unpacked struct has no bit layout.
+        assert!(definitions["foo"][1].ty.width().is_err());
     }
 
     #[test]
