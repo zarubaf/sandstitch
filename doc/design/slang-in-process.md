@@ -186,11 +186,11 @@ cxx cannot express recursive shared structs, so the design crosses as flat table
 ```rust
 impl Design {
     pub fn tops(&self) -> impl Iterator<Item = &str>;
-    pub fn ports(&self, path: &str) -> Option<Vec<Result<Port, UnsupportedPort>>>;
-    pub fn interface_ports(&self, path: &str) -> Option<Vec<InterfacePort>>;
-    pub fn parameters(&self, path: &str) -> Option<Vec<ParameterDef>>;
+    pub fn ports(&self, path: &str) -> Option<&[Result<Port, UnsupportedPort>]>;
+    pub fn interface_ports(&self, path: &str) -> Option<&[InterfacePort]>;
+    pub fn parameters(&self, path: &str) -> Option<&[ParameterDef]>;
     pub fn overridable_parameters(&self, path: &str) -> Option<Vec<(String, ParameterKind)>>;
-    pub fn signals(&self, path: &str) -> Option<Vec<Signal>>;
+    pub fn signals(&self, path: &str) -> Option<&[Signal]>;
     pub fn hierarchy(&self) -> HashMap<String, Instance>;
     pub fn packages(&self) -> HashMap<String, Package>;
 }
