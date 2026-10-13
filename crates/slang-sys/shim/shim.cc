@@ -13,6 +13,7 @@
 #include <string_view>
 #include <vector>
 
+#include "slang-sys/shim/design.h"
 #include "slang-sys/src/lib.rs.h"
 #include "slang/analysis/AnalysisManager.h"
 #include "slang/ast/ASTSerializer.h"
@@ -40,12 +41,6 @@ constexpr uint8_t NOTE = 0;
 constexpr uint8_t WARNING = 1;
 constexpr uint8_t ERROR = 2;
 constexpr uint8_t FATAL = 3;
-
-/// Invalid UTF-8 (a Latin-1 byte in a string literal, say) becomes U+FFFD
-/// instead of making `rust::String` throw and the whole run fail.
-rust::String str(std::string_view text) {
-    return rust::String::lossy(text.data(), text.size());
-}
 
 /// Options whose effect lives in `Driver::optionallyWriteDepFiles` or
 /// `Driver::reportDiagnostics`, which the shim never calls: they would
@@ -241,9 +236,10 @@ FfiResponse run(const FfiRequest& request) {
         response.ast_json = str(writer.view());
     }
 
-    // The walker that fills `response.design` is not in place yet: a
-    // requested design is the empty table set.
-    response.has_design = compilation && request.design != 0;
+    if (compilation && request.design != 0) {
+        response.has_design = true;
+        walkDesign(*compilation, driver->sourceManager, request.design == 2, response.design);
+    }
 
     auto& sourceManager = driver->sourceManager;
     for (auto buffer : sourceManager.getAllBuffers()) {

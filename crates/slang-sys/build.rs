@@ -73,6 +73,7 @@ fn main() {
 
     cxx_build::bridge("src/lib.rs")
         .file("shim/shim.cc")
+        .file("shim/design.cc")
         .include(src.join("slang/include"))
         .include(src.join("slang/external"))
         .include(build.join("source"))
