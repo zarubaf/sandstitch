@@ -58,6 +58,8 @@ constexpr uint8_t PACKAGE_ALIAS = 1;
 
 constexpr std::string_view TYPE_ERROR = "only integral (bit-vector) types are supported";
 constexpr std::string_view XZ_ERROR = "enum values with X or Z bits are not supported";
+constexpr std::string_view ENUM_VALUE_ERROR =
+    "enum values that are not constant integers are not supported";
 constexpr std::string_view REF_ERROR = "`ref` ports are not supported";
 constexpr std::string_view MULTI_PORT_ERROR =
     "ports that connect several signals are not supported";
@@ -91,9 +93,11 @@ bool isTypeParameterAlias(const TypeAliasType& alias) {
            &symbol->as<TypeParameterSymbol>().getTypeAlias() == &alias;
 }
 
-/// Whether Slang's type printer can print `type`: it asserts that every
+/// Whether Slang's type printer can print `type`. It asserts that every
 /// member of a struct or union is a variable, which fails for a struct that
-/// declares an anonymous enum (its values are members of the struct's scope).
+/// declares an anonymous enum (its values are members of the struct's scope),
+/// and it reads the integer of every enum value, which throws for a value
+/// that failed to evaluate.
 bool printable(const Type& type);
 
 bool printableMembers(const Scope& scope) {
@@ -120,6 +124,12 @@ bool printable(const Type& type) {
             return printableMembers(type.as<UnpackedStructType>());
         case SymbolKind::UnpackedUnionType:
             return printableMembers(type.as<UnpackedUnionType>());
+        case SymbolKind::EnumType:
+            for (auto& value : type.as<EnumType>().values()) {
+                if (!value.getValue().isInteger())
+                    return false;
+            }
+            return true;
         default:
             return true;
     }
@@ -130,7 +140,7 @@ std::string rangeText(const ConstantRange& range) {
 }
 
 /// Slang's display of `type` (`Type::toString`; a struct or union its printer
-/// cannot print is shown as `struct{...}` or `union{...}`), with the aliases of type
+/// cannot print is shown as `struct{...}`, `union{...}` or `enum{...}`), with the aliases of type
 /// parameters seen through: `real` for a port of type `T = real`, also
 /// inside arrays (`real$[0:1]`). Other aliases print as their names.
 std::string typeText(const Type& type) {
@@ -185,6 +195,8 @@ std::string typeText(const Type& type) {
         if (type.kind == SymbolKind::TypeAlias)
             return scopePrefix(type.getParentScope()) + std::string(type.name);
         auto& canonical = type.getCanonicalType();
+        if (canonical.kind == SymbolKind::EnumType)
+            return "enum{...}";
         bool isUnion = canonical.kind == SymbolKind::PackedUnionType ||
                        canonical.kind == SymbolKind::UnpackedUnionType;
         return isUnion ? "union{...}" : "struct{...}";
@@ -598,7 +610,7 @@ private:
         for (auto& member : type.values()) {
             auto& constant = member.getValue();
             if (!constant.isInteger())
-                return TYPE_ERROR;
+                return ENUM_VALUE_ERROR;
             auto value = constant.integer();
             if (value.hasUnknown())
                 return XZ_ERROR;
