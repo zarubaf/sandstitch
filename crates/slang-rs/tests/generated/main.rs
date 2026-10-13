@@ -7,6 +7,7 @@
 mod model;
 mod oracle;
 mod print;
+mod strategy;
 
 use std::collections::HashMap;
 
@@ -17,13 +18,16 @@ type Ports = Vec<Result<Port, UnsupportedPort>>;
 
 proptest! {
     #[test]
-    fn generated_ports_match_model(design in model::design()) {
+    fn generated_ports_match_model(design in strategy::design()) {
         let sv = print::sv(&design);
         let file = str2tmpfile(&sv).unwrap();
         let path = file.path().to_str().unwrap();
         let cfg = SlangConfig {
             sources: &[path],
             tops: &["top"],
+            // No suppressions: "no diagnostics" means none at all.
+            ignore_unknown_modules: false,
+            ignore_protected: false,
             ..Default::default()
         };
         let output = run_slang(&cfg);
