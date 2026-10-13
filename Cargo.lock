@@ -1231,6 +1231,8 @@ dependencies = [
  "cxx-build",
  "filetime",
  "libc",
+ "num-bigint",
+ "num-traits",
  "serde_json",
  "tempfile",
  "which",
