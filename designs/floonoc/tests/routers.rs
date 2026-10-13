@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Two router configurations import as distinct specializations, and a 2x2
-//! mesh of each emits RTL that Slang elaborates with the build manifest and
-//! strict width warnings.
+//! mesh of each, alone and both in one design, emits RTL that Slang
+//! elaborates with the build manifest and strict width warnings.
 
 use std::io::Write as _;
 use std::process::Command;
@@ -274,6 +274,145 @@ fn six_route_mesh_elaborates() {
             }
         }
     }
+}
+
+/// One design holding a mesh of each configuration: four instances of each
+/// of two router specializations, elaborated together with the original
+/// RTL.
+#[test]
+fn two_specializations_in_one_design() {
+    let dir = out_dir();
+    let top = ModDef::new("two_meshes");
+    let shared = ["clk_i", "rst_ni", "test_enable_i"].map(|p| top.add_port(p, IO::Input(1)));
+    for cfg in [small(), big()] {
+        let mesh = mesh_2x2(&cfg, dir.path());
+        let inst = top.instantiate(&mesh, Some(&format!("i_{}", cfg.name)), None);
+        for port in inst.get_ports(None) {
+            match shared.iter().find(|p| p.name() == port.name()) {
+                Some(p) => p.connect(&port),
+                None => {
+                    port.export_as(format!("{}_{}", cfg.name, port.name()));
+                }
+            }
+        }
+    }
+    let emitted = top.emit(EmitOptions::default());
+    let manifest = top.manifest();
+    if let Err(slang) = elaborate_manifest(&manifest, &emitted, "two_meshes") {
+        panic!("Slang rejects the emitted design:\n{emitted}\n{slang}");
+    }
+
+    // Both packages and the router source, once.
+    for cfg in [small(), big()] {
+        assert!(manifest.sources.contains(&cfg_pkg_file(&cfg, dir.path())));
+    }
+    assert_eq!(
+        manifest
+            .sources
+            .iter()
+            .filter(|s| s.ends_with("floonoc/hw/floo_nw_router.sv"))
+            .count(),
+        1,
+        "{manifest:#?}"
+    );
+
+    // Every router instance is listed under its own specialization.
+    let routers: Vec<ModDef> = [small(), big()]
+        .iter()
+        .map(|cfg| router(cfg, dir.path()).unwrap())
+        .collect();
+    let mut expected = Vec::new();
+    for (cfg, r) in [small(), big()].iter().zip(&routers) {
+        let key = r.specialization_key().unwrap();
+        for (x, y) in ROUTERS {
+            expected.push((
+                format!("two_meshes.i_{}.i_router_x{x}_y{y}", cfg.name),
+                key.short_hash(),
+            ));
+        }
+    }
+    assert_eq!(manifest.specializations, expected);
+    assert_ne!(expected[0].1, expected[4].1);
+
+    // Every router of each mesh gets all of its overrides from its own
+    // configuration.
+    for cfg in [small(), big()] {
+        let pkg = cfg.pkg_name();
+        let hex = |v: u32| format!("32'h{:04x}_{:04x}", v >> 16, v & 0xffff);
+        let mut params = vec![
+            format!(".AxiCfgN({pkg}::AxiCfgN)"),
+            format!(".AxiCfgW({pkg}::AxiCfgW)"),
+            format!(".RouteAlgo({pkg}::RouteAlgo)"),
+            format!(".NumRoutes({})", hex(cfg.num_routes)),
+            format!(".InFifoDepth({})", hex(cfg.in_fifo_depth)),
+            format!(".OutFifoDepth({})", hex(cfg.out_fifo_depth)),
+            format!(".WideRwDecouple({pkg}::WideRwDecouple)"),
+            format!(".VcImpl({pkg}::VcImpl)"),
+        ];
+        params.extend(
+            ["id_t", "hdr_t", "floo_req_t", "floo_rsp_t", "floo_wide_t"]
+                .map(|t| format!(".{t}({pkg}::{t})")),
+        );
+        let module = module_body(&emitted, &format!("{}_mesh_2x2", cfg.name));
+        for (x, y) in ROUTERS {
+            let inst = format!("i_router_x{x}_y{y}");
+            assert_eq!(parameters(module, &inst), params, "{pkg} {inst}");
+        }
+    }
+
+    // The exported links keep their configuration's type and the element
+    // widths Slang reports for `big` (116, 100 and 1204 bits); `small`'s
+    // narrower data and coordinates shrink each of them.
+    for (ch, big_bits) in [("req", 116), ("rsp", 100), ("wide", 1204)] {
+        let exported = |cfg: &FlooConfig| {
+            let ty = top
+                .get_port(format!("{}_x1_y0_p4_floo_{ch}_i", cfg.name))
+                .port_type()
+                .unwrap();
+            let pkg = cfg.pkg_name();
+            assert!(
+                ty.to_string().contains(&format!("{pkg}::floo_{ch}_t")),
+                "{ty}"
+            );
+            ty.width()
+        };
+        assert_eq!(exported(&big()), big_bits, "{ch}");
+        assert!(exported(&small()) < big_bits, "{ch}");
+        for (cfg, r) in [small(), big()].iter().zip(&routers) {
+            assert_eq!(
+                exported(cfg) * cfg.num_routes as usize,
+                width(r, &format!("floo_{ch}_i")),
+                "{} {ch}",
+                cfg.name
+            );
+        }
+    }
+}
+
+/// The text of module `name` in `emitted`.
+fn module_body<'a>(emitted: &'a str, name: &str) -> &'a str {
+    let body = &emitted[emitted
+        .find(&format!("module {name}"))
+        .unwrap_or_else(|| panic!("no module {name}"))..];
+    &body[..body.find("endmodule").unwrap()]
+}
+
+/// The parameter overrides of instance `inst` in `module`, one `.Name(value)`
+/// per entry, in order.
+fn parameters(module: &str, inst: &str) -> Vec<String> {
+    let end = module
+        .find(&format!(") {inst} ("))
+        .unwrap_or_else(|| panic!("no instance {inst}"));
+    let start = module[..end].rfind("#(").unwrap() + 2;
+    assert!(
+        !module[start..end].contains(");"),
+        "{inst} has no parameters"
+    );
+    module[start..end]
+        .lines()
+        .map(|l| l.trim().trim_end_matches(',').to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
 }
 
 /// What feeds one element of a router's link input.
