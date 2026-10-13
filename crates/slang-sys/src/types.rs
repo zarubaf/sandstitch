@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The data a design import reports: ports, their types and parameter
-//! declarations.
+//! The data a design import reports: ports, their types, parameter
+//! declarations and packages.
 
+use std::collections::HashMap;
+use std::ops::Index;
 use std::str::FromStr;
 
 use num_bigint::BigInt;
@@ -237,4 +239,72 @@ pub struct ParameterDef {
 pub enum ParameterKind {
     Value,
     Type,
+}
+
+/// A package member: a value parameter or a type alias.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Parameter {
+    pub name: String,
+    /// The constant as Slang prints it, or for an alias the alias as Slang's
+    /// type printer expands it with its package-qualified name
+    /// (`struct packed{logic[1:0] a;}my_pkg::my_struct_t`, `logic[33:22]`).
+    pub value: String,
+    /// The aliased type, set for an alias whose type is supported; its
+    /// structs, unions and enums are named as a port of that type would be.
+    pub ty: Option<Type>,
+}
+
+impl Parameter {
+    /// Parse the parameter's `value` into any type that implements [`FromStr`].
+    ///
+    /// # Type Parameters
+    ///
+    /// * **`T`** – The numeric type you want (`i64`, `u128`,
+    ///   [`num_bigint::BigInt`], [`num_bigint::BigUint`], `f64`, ...).
+    ///   `T` only needs to satisfy `T: FromStr`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(T::Err)` if `value` is *not* a valid textual
+    /// representation for `T`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use num_bigint::{BigInt, BigUint};
+    ///
+    /// # use slang_sys::Parameter;
+    /// let p = Parameter { name: "answer".into(), value: "42".into(), ty: None };
+    ///
+    /// // Primitive integer (type inferred)
+    /// let n: i32 = p.parse().unwrap();
+    ///
+    /// // Explicit turbofish when inference can’t decide
+    /// let n128 = p.parse::<u128>().unwrap();
+    ///
+    /// // Big integers
+    /// let big:  BigInt  = p.parse().unwrap();
+    /// let ubig: BigUint = p.parse().unwrap();
+    /// ```
+    pub fn parse<T>(&self) -> Result<T, T::Err>
+    where
+        T: FromStr,
+    {
+        self.value.parse()
+    }
+}
+
+/// A package with its value parameters and type aliases by name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Package {
+    pub name: String,
+    pub parameters: HashMap<String, Parameter>,
+}
+
+impl Index<&str> for Package {
+    type Output = Parameter;
+
+    fn index(&self, key: &str) -> &Self::Output {
+        &self.parameters[key]
+    }
 }

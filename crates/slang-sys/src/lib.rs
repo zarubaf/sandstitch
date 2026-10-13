@@ -8,8 +8,8 @@ mod design;
 mod types;
 pub use design::{Design, DesignQuery};
 pub use types::{
-    Field, InterfacePort, ParameterDef, ParameterKind, Port, PortDir, Range, SourceLoc, Type,
-    UnsupportedPort, Variant,
+    Field, InterfacePort, Package, Parameter, ParameterDef, ParameterKind, Port, PortDir, Range,
+    SourceLoc, Type, UnsupportedPort, Variant,
 };
 
 use std::fmt;
@@ -172,6 +172,31 @@ mod ffi {
         ty: u32,
     }
 
+    /// A member of a package, in declaration order: a value parameter or a
+    /// type alias; other members are left out.
+    ///
+    /// `kind`: 0 value parameter, 1 type alias. `value` is the constant
+    /// printed as in Slang's JSON (`toString(SVInt::MAX_BITS, true, true)`)
+    /// or, for an alias, the alias as Slang's type printer expands it with
+    /// its package-qualified name (`struct packed{logic[1:0] a;}pkg::s_t`,
+    /// `logic[33:22]`). For an alias `ty` indexes `types`, the entry named as
+    /// a port of that type would be and possibly kind 4 (unsupported); it is
+    /// ignored for a value parameter.
+    #[derive(Default)]
+    struct FfiPackageParameter {
+        name: String,
+        kind: u8,
+        value: String,
+        ty: u32,
+    }
+
+    /// A package of a compilation unit.
+    #[derive(Default)]
+    struct FfiPackage {
+        name: String,
+        parameters: Vec<FfiPackageParameter>,
+    }
+
     /// An instance inside a body.
     ///
     /// `name` is the instance name; an element of an instance array is one
@@ -196,8 +221,7 @@ mod ffi {
     }
 
     /// An instance body, numbered after every body it refers to
-    /// (post-order). Signals and packages join these tables as further
-    /// `Vec` fields.
+    /// (post-order). Signals join these tables as a further `Vec` field.
     #[derive(Default)]
     struct FfiBody {
         ports: Vec<FfiPort>,
@@ -218,6 +242,7 @@ mod ffi {
         types: Vec<FfiType>,
         bodies: Vec<FfiBody>,
         tops: Vec<FfiTop>,
+        packages: Vec<FfiPackage>,
     }
 
     unsafe extern "C++" {

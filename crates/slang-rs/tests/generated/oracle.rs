@@ -11,11 +11,72 @@
 //! consistent renaming.
 
 use num_bigint::BigInt;
+use std::collections::HashMap;
+
 use slang_rs::{
     Field, ParameterDef, ParameterKind, Port, PortDir, Range, Type, UnsupportedPort, Variant,
 };
 
-use crate::model::{Base, DataType, Design, Dim, Dir, EnumBase, Expr, IntKind, Module, TypeRef};
+use crate::model::{
+    Base, DataType, Design, Dim, Dir, EnumBase, Expr, IntKind, Module, PackageValue, TypeRef,
+};
+
+/// The value of the package parameter `param` of package `package`, as a
+/// constant of type `int` is printed.
+fn package_value(design: &Design, package: usize, param: usize) -> i64 {
+    match design.packages[package].params[param].value {
+        PackageValue::Const(value) => i64::from(value),
+        PackageValue::Sum {
+            package,
+            param,
+            offset,
+        } => package_value(design, package, param) + i64::from(offset),
+    }
+}
+
+/// What each package must report: its parameters' values (`int` constants
+/// in decimal), and for each typedef its aliased type, named as a port of
+/// that type is. The `value` text of an alias is Slang's printing and is
+/// checked against the JSON path by the differential comparison, not here.
+pub struct ExpectedPackage {
+    pub values: HashMap<String, String>,
+    pub aliases: HashMap<String, Type>,
+}
+
+pub fn packages(design: &Design) -> HashMap<String, ExpectedPackage> {
+    let env = Env {
+        module: 0,
+        params: vec![],
+        type_params: vec![],
+    };
+    design
+        .packages
+        .iter()
+        .enumerate()
+        .map(|(p, package)| {
+            let values = package
+                .params
+                .iter()
+                .enumerate()
+                .map(|(i, param)| (param.name.clone(), package_value(design, p, i).to_string()))
+                .collect();
+            let aliases = (0..package.typedefs.len())
+                .map(|i| {
+                    let resolver = Resolver { design, env: &env };
+                    let ty = resolver.named(
+                        TypeRef::Package {
+                            package: p,
+                            typedef: i,
+                        },
+                        Scope::Package(p),
+                    );
+                    (package.typedefs[i].name.clone(), ty)
+                })
+                .collect();
+            (package.name.clone(), ExpectedPackage { values, aliases })
+        })
+        .collect()
+}
 
 /// The ports of the instance at `path`, without locations; empty if the
 /// model has no such instance.
