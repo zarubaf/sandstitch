@@ -6,11 +6,11 @@ Status: accepted and implemented, 2026-10-13. Tracks #4 (sub-project 3 of 3). Bu
 
 Group struct-typed channel ports of an imported module into named, direction-aware interfaces, and connect, export and tie off whole groups while keeping the typed checks and typed emission of sub-project 1. A grouping is described once on the definition, as references to the imported ports; no port declaration is copied. The library stays generic: FlooNoC is the first user, in `designs/floonoc`.
 
-Today a FlooNoC link is six typed array elements, `floo_{req,rsp,wide}_{o,i}[d]`, wired by hand in `designs/floonoc/src/mesh.rs`: each output element to the neighbour's input element, edge links tied off element by element, local links exported element by element. Topstitch's `Intf` cannot carry this: it stores members as `(port, msb, lsb)` and reads them back as plain bit slices, so connections through it are checked for width only (no S0201), emit flat, and its name matching cannot pair `req` out with `req` in.
+A FlooNoC link is six typed array elements, `floo_{req,rsp,wide}_{o,i}[d]`: each output element connects to the neighbour's input element, edge links are tied off and local links exported. Upstream Topstitch's `Intf` cannot carry this: it stores members as `(port, msb, lsb)` and reads them back as plain bit slices, so connections through it are checked for width only (no S0201), emit flat, and its name matching cannot pair `req` out with `req` in.
 
 ## Decisions
 
-1. **One grouping concept.** `Intf` is extended; no second bundle type. Interfaces whose member names are unique behave exactly as today, so upstream tests and ported fixes stay valid.
+1. **One grouping concept.** `Intf` is extended; no second bundle type. Interfaces whose member names are unique behave exactly as in upstream Topstitch, so upstream tests and ported fixes stay valid.
 1. **Typed members.** A member is a name and a `PortSlice` that keeps its typed selection (`floo_req_o[1]` is the element, not bits `[N:M]`). Whole-port members created by the existing constructors are typed whenever their port is.
 1. **Direction comes from the port.** A member is keyed by `(name, direction)`; a name may appear twice, once per direction. No roles, modports or name-pairing patterns (`_tx`/`_rx` regexes).
 1. **Direction-aware operations** are connect, export and tie-off. The other upstream interface operations keep working on interfaces with unique names and reject the others with a diagnostic.
@@ -20,7 +20,7 @@ Today a FlooNoC link is six typed array elements, `floo_{req,rsp,wide}_{o,i}[d]`
 
 `ModDefCore::interfaces` maps an interface name to an ordered list of members. A member stores its name and the typed slice reference: port name, bit range and, when typed, the selection path (`Select` steps). Reading a member returns the same `PortSlice` the caller passed in, including `PortSlice::select`.
 
-Within one interface `(name, direction)` is unique (S0208). Interfaces are defined on a `ModDef` (for FlooNoC, the specialized router) and every instance of it sees them, as today.
+Within one interface `(name, direction)` is unique (S0208). Interfaces are defined on a `ModDef` (for FlooNoC, the specialized router) and every instance of it sees them, as in upstream Topstitch.
 
 New constructor:
 
@@ -38,7 +38,7 @@ let link = router.def_intf_members(
 );
 ```
 
-Every slice must belong to a port of that `ModDef`; anything else panics. `def_intf`, `def_intf_from_prefix(es)`, `def_intf_from_name_underscore` and `def_intf_from_regex(es)` keep their signatures and build members from their `(port, msb, lsb)` mappings, resolved when read as upstream (the port may be added later): a range covering the whole port is a typed whole-port member, any other range a plain bit slice, as today.
+Every slice must belong to a port of that `ModDef`; anything else panics. `def_intf`, `def_intf_from_prefix(es)`, `def_intf_from_name_underscore` and `def_intf_from_regex(es)` keep their signatures and build members from their `(port, msb, lsb)` mappings, resolved when read as upstream (the port may be added later): a range covering the whole port is a typed whole-port member, any other range a plain bit slice, as in upstream Topstitch.
 
 `Intf::get(name)` and `Intf::remove(name)` return the member of that name; on a name present in both directions they are S0209. `Intf::members()` lists every member as `(name, slice)` in definition order; the slice gives its direction.
 
@@ -63,7 +63,7 @@ So an input port of the parent drives the parent's body, like an output of a chi
 | `intf.export_with_prefix(name, prefix)` | Exports each member to the parent as port `<prefix><member>`, with the member's type and direction, and defines interface `name` on the parent with the same members. When a name is present in both directions the ports are `<prefix><member>_i` and `<prefix><member>_o`, after the exported port's direction (exporting a port of the module itself flips it). `export_with_name_underscore` and `export` follow the same rule. |
 | `intf.unused_and_tieoff(value)` | Ties off every member driven into the instance and marks every member driven out of it unused. `tieoff` and `unused` alone touch only their own direction. |
 
-Interfaces with unique names keep today's results for all three: when neither interface repeats a name, members pair by name alone, as upstream, so a wrong direction is still the connect-time direction error; exported names gain no suffix.
+Interfaces with unique names keep upstream's results for all three: when neither interface repeats a name, members pair by name alone, as upstream, so a wrong direction is still the connect-time direction error; exported names gain no suffix.
 
 `connect_except` skips a name in both directions. `connect_pipeline(_except)`, `connect_through(_generic)`, `crossover*`, `subdivide`, `copy_to*`, `flip_to*`, `feedthrough*`, `width`, `iter`, `keys` and `values` are unchanged for interfaces with unique names; on an interface that repeats a name they report S0209 instead of producing a wrong result.
 
