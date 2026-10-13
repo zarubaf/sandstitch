@@ -408,12 +408,18 @@ private:
         }
     }
 
-    /// `name`, or the name Slang's type printer gives an anonymous type:
-    /// its scope's prefix, `s$`, `u$` or `e$`, and its id.
+    /// `name`, or the name Slang's type printer gives the type: its scope's
+    /// prefix and the enum's own name, or for an anonymous type `s$`, `u$`
+    /// or `e$` and its id.
     static std::string typeName(const Type& type, const std::string& name, std::string_view tag,
                                 int systemId) {
         if (!name.empty())
             return name;
+        // Slang names an enum declared in a typedef by the typedef, also
+        // when the typedef adds dimensions (`EnumType::fromSyntax`), and the
+        // type printer prints that name.
+        if (type.kind == SymbolKind::EnumType && !type.name.empty())
+            return scopePrefix(type.getParentScope()) + std::string(type.name);
         return scopePrefix(type.getParentScope()) + std::string(tag) + std::to_string(systemId);
     }
 

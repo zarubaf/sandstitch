@@ -529,6 +529,29 @@ fn no_design_without_compilation() {
 }
 
 #[test]
+fn enum_declared_in_array_typedef_named_by_typedef() {
+    let ports = ports(
+        "package pkg1; typedef enum { E2 } t3 [0:0]; endpackage\n\
+         module top (input pkg1::t3 p4); endmodule\n",
+        "top",
+    );
+    assert_eq!(
+        ty(&ports, "p4"),
+        Type::Enum {
+            name: "pkg1::t3".to_string(),
+            variants: vec![Variant {
+                name: "E2".to_string(),
+                width: 32,
+                value: BigInt::from(0),
+                signed: true,
+            }],
+            packed_dimensions: vec![],
+            unpacked_dimensions: vec![range(0, 0)],
+        }
+    );
+}
+
+#[test]
 fn anonymous_enum_name() {
     let ports = ports("module m(input enum logic {A, B} x); endmodule\n", "m");
     let ty = ty(&ports, "x");

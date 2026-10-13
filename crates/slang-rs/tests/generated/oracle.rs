@@ -317,9 +317,13 @@ impl Resolver<'_> {
         // A typedef that reaches a struct, union or enum through aliases
         // only names it; one that adds a dimension names the array, which
         // has no name, and the element keeps its own.
+        // An enum written in the typedef itself is named by it, also when
+        // the typedef adds dimensions: Slang names such an enum after the
+        // typedef.
         let undimensioned =
             packed_dims(&mut resolved).is_empty() && unpacked_dims(&mut resolved).is_empty();
-        if undimensioned {
+        let enum_declared_here = matches!(typedef.ty.base, Base::Enum(_));
+        if undimensioned || enum_declared_here {
             if let Type::Struct { name, .. } | Type::Union { name, .. } | Type::Enum { name, .. } =
                 &mut resolved
             {
