@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Running Slang on emitted RTL: strict elaboration together with the
-//! design's sources, the nets Slang elaborates in a top module, and a
-//! one-hot checker for the bits a selection reads.
+//! design's sources, the nets Slang elaborates in a top module, a one-hot
+//! checker for the bits a selection reads, and a checker that evaluates a
+//! hand-written connection map against the emitted module.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -232,7 +233,8 @@ pub enum Driver<'a> {
     End(&'a str, usize, usize),
     /// A constant; its width is the sink range's width.
     Const(u128),
-    /// Intentionally unconnected (instance outputs, module inputs).
+    /// Intentionally unused: instance outputs, module inputs and unconnected
+    /// instance inputs. No other end's expression may read these bits.
     Unused,
 }
 
@@ -406,7 +408,7 @@ pub fn check_map(
         ends.iter()
             .find(|(e, _)| *e == end)
             .map(|(_, w)| *w)
-            .ok_or_else(|| format!("end {end} missing from ends"))
+            .ok_or_else(|| format!("end {end} in the map but not in ends"))
     };
 
     // Completeness of the map: each bit is at most one entry's end, and a
@@ -488,13 +490,6 @@ pub fn check_map(
     for (net, (ty, _)) in &nets {
         body += &format!("  typedef {ty} chk_t_{net};\n");
     }
-    // The sinks every `Unused` end must leave unchanged.
-    let all_sinks: Vec<Sink> = map
-        .iter()
-        .filter(|e| !matches!(e.driver, Driver::Unused))
-        .map(sink_of)
-        .collect::<Result<_, _>>()?;
-    let mut unused_base = false;
     for (i, e) in map.iter().enumerate() {
         let n = e.msb - e.lsb + 1;
         let label = format!("{} [{}:{}]", e.end, e.msb, e.lsb);
@@ -543,31 +538,47 @@ pub fn check_map(
             }
             Driver::Unused => {
                 let expr = expr_of(e.end)?;
-                if expr.is_empty() || all_sinks.is_empty() {
+                if expr.is_empty() {
                     continue;
                 }
-                if !unused_base {
-                    let (base, total) =
-                        chk_function("chk_ub", &nets, &assigns, None, "'0", &all_sinks);
-                    body += &base;
-                    body += &format!(
-                        "  localparam logic [{}:0] chk_ubase = chk_ub();\n",
-                        total - 1
-                    );
-                    unused_base = true;
+                // Every other end's whole expression must stay unchanged.
+                let mut readers: Vec<Sink> = Vec::new();
+                for (other, w) in ends {
+                    if *other == e.end {
+                        continue;
+                    }
+                    let oexpr = expr_of(other)?;
+                    if !oexpr.is_empty() {
+                        readers.push(Sink {
+                            expr: oexpr,
+                            width: *w,
+                            msb: w - 1,
+                            lsb: 0,
+                        });
+                    }
                 }
+                if readers.is_empty() {
+                    continue;
+                }
+                let (base, total) =
+                    chk_function(&format!("chk_ub{i}"), &nets, &assigns, None, "'0", &readers);
+                body += &base;
+                body += &format!(
+                    "  localparam logic [{}:0] chk_ubase{i} = chk_ub{i}();\n",
+                    total - 1
+                );
                 let (f, _) = chk_function(
                     &format!("chk_u{i}"),
                     &nets,
                     &assigns,
                     Some((&expr, width_of(e.end)?)),
                     "'0",
-                    &all_sinks,
+                    &readers,
                 );
                 body += &f;
                 body += &format!(
                     "  for (genvar chk_j = 0; chk_j < {n}; chk_j++) begin : chk_g{i}\n    \
-                     if (chk_u{i}({} + chk_j) !== chk_ubase)\n      \
+                     if (chk_u{i}({} + chk_j) !== chk_ubase{i})\n      \
                      $error(\"{label} unused bit %0d\", chk_j);\n  end\n",
                     e.lsb
                 );

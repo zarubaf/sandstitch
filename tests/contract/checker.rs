@@ -9,6 +9,7 @@ use crate::common::slang::{Driver, Expect, Sources, check_map};
 
 const SRC: &str = "module src(output [7:0] q); endmodule";
 const SNK: &str = "module snk(input [7:0] d); endmodule";
+const PSNK: &str = "module psnk #(parameter P = 1)(input [7:0] d); endmodule";
 
 const GOOD: &str = "\
 module t;
@@ -40,7 +41,7 @@ fn good_map() -> Vec<Expect<'static>> {
 }
 
 fn run(emitted: &str, module: &str, ends: &[(&str, usize)], map: &[Expect]) -> Result<(), String> {
-    let sources = Sources::new(&[SRC, SNK]);
+    let sources = Sources::new(&[SRC, SNK, PSNK]);
     let files: Vec<&Path> = sources.files.iter().map(|f| f.path()).collect();
     check_map(&files, emitted, module, ends, map)
 }
@@ -83,7 +84,6 @@ fn checker_rejects_constant_wired_to_net() {
     ];
     let err = run(&wired, "t", &ENDS, &map).unwrap_err();
     assert_culprits(&err, &["u.d [3:0] const", "a.q [7:4] unused bit 0"]);
-    // The zero evaluation alone passes: only the all-ones one catches it.
     assert!(!err.contains("u.d [7:4] bit"), "{err}");
 }
 
@@ -123,8 +123,86 @@ fn checker_rejects_read_unused() {
 }
 
 #[test]
-fn checker_rejects_missing_end() {
-    let err = run(GOOD, "t", &[("a.q", 8)], &good_map()).unwrap_err();
-    assert!(err.contains("u.d"), "{err}");
-    assert_eq!(err, "end u.d missing from ends");
+fn checker_rejects_missing_instance_end() {
+    let text = GOOD.replace("endmodule", "  snk w (\n    .d(a_q)\n  );\nendmodule");
+    let err = run(&text, "t", &ENDS, &good_map()).unwrap_err();
+    assert_eq!(err, "end w.d missing from ends");
+}
+
+#[test]
+fn checker_rejects_missing_module_end() {
+    let text = "\
+module t(
+  input wire [7:0] x,
+  output wire [7:0] y
+);
+  assign y = x;
+endmodule
+";
+    let map = [exp("x", 7, 0, Driver::Unused)];
+    let err = run(text, "t", &[("x", 8)], &map).unwrap_err();
+    assert_eq!(err, "end y missing from ends");
+}
+
+#[test]
+fn checker_does_not_count_parameters_as_ends() {
+    let text = GOOD.replace("snk u (", "psnk #(\n    .P(1)\n  ) u (");
+    assert_ne!(text, GOOD);
+    run(&text, "t", &ENDS, &good_map()).unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn checker_rejects_mapped_twice() {
+    let mut map = good_map();
+    map.push(exp("u.d", 3, 0, Driver::Const(0x5)));
+    let err = run(GOOD, "t", &ENDS, &map).unwrap_err();
+    assert_eq!(err, "u.d bit 0 mapped twice");
+}
+
+#[test]
+fn checker_rejects_uncovered_bits() {
+    let map = [
+        exp("u.d", 7, 4, Driver::End("a.q", 3, 0)),
+        exp("u.d", 3, 0, Driver::Const(0x5)),
+    ];
+    let err = run(GOOD, "t", &ENDS, &map).unwrap_err();
+    assert_eq!(err, "a.q bit 4 not covered by the map");
+}
+
+#[test]
+fn checker_accepts_empty_connection_as_unused() {
+    let text = "\
+module t;
+  src a (
+    .q()
+  );
+  snk u (
+    .d(8'h5)
+  );
+endmodule
+";
+    let map = [
+        exp("u.d", 7, 0, Driver::Const(0x5)),
+        exp("a.q", 7, 0, Driver::Unused),
+    ];
+    run(text, "t", &ENDS, &map).unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn checker_rejects_unused_read_by_unused_end() {
+    let text = "\
+module t(
+  input wire [7:0] en
+);
+  snk u (
+    .d(en)
+  );
+endmodule
+";
+    let map = [
+        exp("en", 7, 0, Driver::Unused),
+        exp("u.d", 7, 0, Driver::Unused),
+    ];
+    let err = run(text, "t", &[("en", 8), ("u.d", 8)], &map).unwrap_err();
+    assert_culprits(&err, &["en [7:0] unused bit 0"]);
 }
