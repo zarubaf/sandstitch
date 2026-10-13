@@ -796,3 +796,41 @@ fn multi_port_is_unsupported() {
         "ports that connect several signals are not supported"
     );
 }
+
+#[test]
+fn typedef_of_type_parameter_names_its_struct() {
+    // `tt` and `tt2` reach `top.ts_t` through aliases only; the type
+    // parameter's alias names nothing, so each is the outermost name.
+    let design = design_of(
+        "module c #(parameter type T = logic) (x, y, z, v);\n\
+           typedef T tt; typedef tt tt2;\n\
+           typedef struct packed { tt f; } w_t;\n\
+           input T x; input tt y; input w_t z; input tt2 v;\n\
+         endmodule\n\
+         module top;\n\
+           typedef struct packed { logic r; } ts_t;\n\
+           c #(.T(ts_t)) u(.x(), .y(), .z(), .v());\n\
+         endmodule\n",
+        "top",
+    );
+    let ports = design.ports("top.u").unwrap();
+    let ty = |i: usize| match &ports[i] {
+        Ok(port) => port.ty.clone(),
+        Err(port) => panic!("{port:?}"),
+    };
+    let name = |ty: &Type| match ty {
+        Type::Struct { name, .. } => name.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(name(&ty(0)), "top.ts_t");
+    assert_eq!(name(&ty(1)), "c.tt");
+    let Type::Struct {
+        name: z, fields, ..
+    } = ty(2)
+    else {
+        panic!("{:?}", ty(2));
+    };
+    assert_eq!(z, "c.w_t");
+    assert_eq!(name(&fields[0].ty), "c.tt");
+    assert_eq!(name(&ty(3)), "c.tt2");
+}

@@ -9,7 +9,7 @@
 //! each is normalized away explicitly here and nowhere else (see
 //! `doc/design/slang-in-process.md`, "Fixed behavior").
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fmt::Write;
 
 use regex::Regex;
@@ -19,7 +19,7 @@ use crate::extract::{
     TypeResolver, extract_instance_interface_ports_with, extract_instance_ports_checked_with,
     instance_child_names_with, instance_has_ref_port_with, top_names_with,
 };
-use crate::{Ast, Port, UnsupportedPort};
+use crate::{Ast, Field, Port, Type, UnsupportedPort};
 
 /// The snapshot's error text for a port that connects several signals; the
 /// JSON extractors drop such ports.
@@ -45,6 +45,7 @@ pub(crate) fn check(ast: &Ast, design: &Design) {
         design,
         resolver: TypeResolver::new(ast),
         link: Regex::new(r"\b[0-9]+ [A-Za-z_$]").unwrap(),
+        type_parameter_aliases: type_parameter_aliases(ast),
         differences: String::new(),
     };
     checker.run();
@@ -61,7 +62,69 @@ struct Checker<'a> {
     resolver: TypeResolver<'a>,
     /// An unresolved type link (`123 name`) left in an unsupported type's text.
     link: Regex,
+    /// See [`type_parameter_aliases`].
+    type_parameter_aliases: HashSet<String>,
     differences: String,
+}
+
+/// The printed names (`c.tt`) of the typedefs that alias a type parameter of
+/// their module without adding a dimension (`typedef T tt;`), directly or
+/// through other such typedefs (`typedef tt tt2;`). The snapshot
+/// names a struct, union or enum reached through one by the typedef; the
+/// JSON path names it by the type parameter's value.
+fn type_parameter_aliases(value: &serde_json::Value) -> HashSet<String> {
+    let mut aliases = HashSet::new();
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            serde_json::Value::Object(object) => {
+                if object.get("kind").and_then(|k| k.as_str()) == Some("InstanceBody") {
+                    body_type_parameter_aliases(value, &mut aliases);
+                }
+                stack.extend(object.values());
+            }
+            serde_json::Value::Array(array) => stack.extend(array),
+            _ => {}
+        }
+    }
+    aliases
+}
+
+fn body_type_parameter_aliases(body: &serde_json::Value, aliases: &mut HashSet<String>) {
+    let (Some(body_name), Some(members)) = (body["name"].as_str(), body["members"].as_array())
+    else {
+        return;
+    };
+    let members_of = |kind: &'static str| {
+        members
+            .iter()
+            .filter(move |m| m["kind"] == kind)
+            .filter_map(|m| Some((m["name"].as_str()?, m)))
+    };
+    // The type parameters, then the aliases that link to one of these
+    // without a dimension (`123 c.T`, `123 c.tt`), until none is added.
+    let mut reaching: HashSet<_> = members_of("TypeParameter").map(|(name, _)| name).collect();
+    loop {
+        let added: Vec<_> = members_of("TypeAlias")
+            .filter(|(name, alias)| {
+                !reaching.contains(name)
+                    && alias["target"]
+                        .as_str()
+                        .and_then(|target| target.split_once(' '))
+                        .and_then(|(_, linked)| linked.strip_prefix(body_name))
+                        .and_then(|rest| rest.strip_prefix('.'))
+                        .is_some_and(|linked| reaching.contains(linked))
+            })
+            .map(|(name, _)| name)
+            .collect();
+        if added.is_empty() {
+            break;
+        }
+        for name in added {
+            reaching.insert(name);
+            aliases.insert(format!("{body_name}.{name}"));
+        }
+    }
 }
 
 impl Checker<'_> {
@@ -147,7 +210,12 @@ impl Checker<'_> {
     fn same_ports(&self, json: &Ports, typed: &Ports) -> bool {
         json.len() == typed.len()
             && json.iter().zip(typed).all(|pair| match pair {
-                (Ok(json), Ok(typed)) => json == typed,
+                (Ok(json), Ok(typed)) => {
+                    json.dir == typed.dir
+                        && json.name == typed.name
+                        && json.loc == typed.loc
+                        && self.same_type(&json.ty, &typed.ty)
+                }
                 // The error texts are Slang's display of the type in the
                 // snapshot; the JSON path's differ.
                 (Err(json), Err(typed)) => json.name == typed.name && json.loc == typed.loc,
@@ -156,6 +224,80 @@ impl Checker<'_> {
                 (Err(json), Ok(_)) => self.link.is_match(&json.type_text),
                 (Ok(_), Err(_)) => false,
             })
+    }
+
+    /// Equal, except where the snapshot names a type by a typedef of a type
+    /// parameter (see [`type_parameter_aliases`]).
+    fn same_type(&self, json: &Type, typed: &Type) -> bool {
+        let same_name =
+            |json: &str, typed: &str| json == typed || self.type_parameter_aliases.contains(typed);
+        let same_fields = |json: &[Field], typed: &[Field]| {
+            json.len() == typed.len()
+                && json
+                    .iter()
+                    .zip(typed)
+                    .all(|(j, t)| j.name == t.name && self.same_type(&j.ty, &t.ty))
+        };
+        match (json, typed) {
+            (
+                Type::Struct {
+                    name: jn,
+                    signed: js,
+                    packed: jp,
+                    fields: jf,
+                    packed_dimensions: jpd,
+                    unpacked_dimensions: jud,
+                },
+                Type::Struct {
+                    name: tn,
+                    signed: ts,
+                    packed: tp,
+                    fields: tf,
+                    packed_dimensions: tpd,
+                    unpacked_dimensions: tud,
+                },
+            )
+            | (
+                Type::Union {
+                    name: jn,
+                    signed: js,
+                    packed: jp,
+                    fields: jf,
+                    packed_dimensions: jpd,
+                    unpacked_dimensions: jud,
+                },
+                Type::Union {
+                    name: tn,
+                    signed: ts,
+                    packed: tp,
+                    fields: tf,
+                    packed_dimensions: tpd,
+                    unpacked_dimensions: tud,
+                },
+            ) => {
+                same_name(jn, tn)
+                    && js == ts
+                    && jp == tp
+                    && jpd == tpd
+                    && jud == tud
+                    && same_fields(jf, tf)
+            }
+            (
+                Type::Enum {
+                    name: jn,
+                    variants: jv,
+                    packed_dimensions: jpd,
+                    unpacked_dimensions: jud,
+                },
+                Type::Enum {
+                    name: tn,
+                    variants: tv,
+                    packed_dimensions: tpd,
+                    unpacked_dimensions: tud,
+                },
+            ) => same_name(jn, tn) && jv == tv && jpd == tpd && jud == tud,
+            _ => json == typed,
+        }
     }
 
     fn children(&mut self, path: &str) {
