@@ -633,7 +633,7 @@ endmodule
 
 #[test]
 fn slang_version_names_slang() {
-    assert_eq!(slang_version(), "slang 11.0");
+    assert_eq!(slang_version(), "slang 12.0");
 }
 
 #[test]

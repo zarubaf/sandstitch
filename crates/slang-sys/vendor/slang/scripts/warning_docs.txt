@@ -197,6 +197,21 @@ module m;
 endmodule
 ```
 
+-Wreal-case-eq
+The case equality operators `===` and `!==` differ from the ordinary equality operators `==` and
+`!=` only in how they treat x and z bits. Real, shortreal, and realtime values have no x or z
+bits, so applying a case equality operator to a real operand performs an ordinary equality
+comparison, exactly as `==` or `!=` would. This warning is issued when a case equality
+operator is applied to a real operand, in case a plain equality operator was intended.
+```
+module m;
+    real a;
+    real b;
+    bit c;
+    initial c = (a === b);
+endmodule
+```
+
 -Wpacked-array-conv
 Indicates an implicit conversion between types with differing
 packed array dimensions, even if their overall bit width is the same.
@@ -783,6 +798,20 @@ module m(input a, b);
                 $display("A");
             else
                 $display("B");
+    end
+endmodule
+```
+
+-Wmissing-else-clause
+An `if` statement appears on the same line as the preceding `end` token from a prior
+`if` statement that has no `else` clause. This often indicates a typo where
+`end else if (...)` was intended but `else` was omitted.
+```
+module m(input a, b);
+    initial begin
+        if (a) begin
+        end if (b) begin
+        end
     end
 endmodule
 ```
@@ -1461,7 +1490,7 @@ endmodule
 ```
 
 -Wdynamic-cast-const
-A dynamic `$cast` call has a statically known result — it will always succeed or always
+A dynamic `$cast` call has a statically known result - it will always succeed or always
 fail regardless of any runtime state.
 \n\n
 If the cast always succeeds, you can replace it with a direct assignment or static cast instead.
@@ -2332,13 +2361,30 @@ endclass
 ```
 
 -Wimplicit-net-port
-A net port that elides its net type occurs in a context where `default_nettype is set to 'none'.
+A net port that elides its net type occurs in a context where `` `default_nettype `` is set to 'none'.
 This technically should be an error but it makes the use of 'none' as a default nettype very
 annoying and most tools just default to a wire in this case.
 ```
 `default_nettype none
 
 module m(input i);
+endmodule
+```
+
+-Wimplicit-net
+An undeclared identifier was used in a context where `` `default_nettype `` is in effect,
+causing an implicit net to be created. This is legal, but the implicit net may be the
+result of a typo or a missing declaration. Unlike -Wunused-implicit-net, this warning
+fires regardless of whether the net is subsequently used, so it can catch typos that
+happen to be referenced more than once. Set `` `default_nettype none `` if you want such
+implicit nets to be an error instead.
+```
+module producer(output out); endmodule
+module consumer(input in); endmodule
+
+module top;
+    producer p (.out(sig));
+    consumer c (.in(sig));
 endmodule
 ```
 
@@ -2861,7 +2907,7 @@ endmodule
 
 -Wunnamed-generate
 A generate block has no user-provided name. This is perfectly valid in SystemVerilog
-but many coding standards dictate that generate blocks alwayscbe given a name so this
+but many coding standards dictate that generate blocks always be given a name so this
 warning can be used to enforce that.
 ```
 module a;
@@ -2907,4 +2953,7 @@ endmodule
 <ignored>
 
 -Winvalid-source-encoding
+<ignored>
+
+-Wcommand-line
 <ignored>

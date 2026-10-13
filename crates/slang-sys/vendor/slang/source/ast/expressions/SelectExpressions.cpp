@@ -274,7 +274,8 @@ LValue ElementSelectExpression::evalLValueImpl(EvalContext& context) const {
 
     bool softFail = false;
     ConstantValue associativeIndex;
-    auto range = evalIndex(context, loadedVal, associativeIndex, softFail);
+    auto range = evalIndex(context, loadedVal, associativeIndex, softFail,
+                           /* allowQueueAppend */ true);
     if (!range && associativeIndex.bad()) {
         if (!softFail)
             return nullptr;
@@ -312,7 +313,8 @@ LValue ElementSelectExpression::evalLValueImpl(EvalContext& context) const {
 std::optional<ConstantRange> ElementSelectExpression::evalIndex(EvalContext& context,
                                                                 const ConstantValue& val,
                                                                 ConstantValue& associativeIndex,
-                                                                bool& softFail) const {
+                                                                bool& softFail,
+                                                                bool allowQueueAppend) const {
     auto prevQ = context.getQueueTarget();
     if (val.isQueue())
         context.setQueueTarget(&val);
@@ -365,8 +367,10 @@ std::optional<ConstantRange> ElementSelectExpression::evalIndex(EvalContext& con
     }
 
     if (val) {
+        // A write may target the append slot one past the end of a queue; a
+        // read at that index is out of bounds and returns the element default.
         size_t maxIndex = val.size();
-        if (val.isQueue())
+        if (val.isQueue() && allowQueueAppend)
             maxIndex++;
 
         if (*index < 0 || size_t(*index) >= maxIndex) {
@@ -1200,7 +1204,7 @@ static bool checkPackedUnionTag(const Type& valueType, const SVInt& val, uint32_
     if (tagBits) {
         bitwidth_t bits = val.getBitWidth();
         auto tag = val.slice(int32_t(bits - 1), int32_t(bits - tagBits)).as<uint32_t>();
-        if (tag.value() != expectedTag) {
+        if (!tag || *tag != expectedTag) {
             context.addDiag(diag::ConstEvalTaggedUnion, sourceRange) << memberName;
             return false;
         }

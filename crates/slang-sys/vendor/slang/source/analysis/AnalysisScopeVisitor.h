@@ -7,6 +7,7 @@
 //------------------------------------------------------------------------------
 #pragma once
 
+#include "slang/analysis/AnalysisManager.h"
 #include "slang/analysis/ValueDriver.h"
 #include "slang/ast/ASTVisitor.h"
 #include "slang/ast/EvalContext.h"
@@ -62,8 +63,8 @@ struct AnalysisScopeVisitor {
 
         for (auto& conn : symbol.getPortConnections()) {
             if (conn.formal.kind == SymbolKind::FormalArgument && conn.actual.index() == 0) {
-                manager.driverTracker.add(state.context, state.driverAlloc,
-                                          *std::get<0>(conn.actual), symbol);
+                if (auto expr = std::get<0>(conn.actual))
+                    manager.driverTracker.add(state.context, state.driverAlloc, *expr, symbol);
             }
         }
     }
@@ -427,7 +428,7 @@ private:
             return;
 
         auto syntax = symbol.getSyntax();
-        if (!syntax || symbol.name.empty())
+        if (!syntax || symbol.name.empty() || symbol.getType().isError())
             return;
 
         auto [rvalue, lvalue] = isReferenced(*syntax);
@@ -494,8 +495,7 @@ private:
 
         auto [used, _] = isReferenced(*syntax);
         if (!used && shouldWarnUnused(symbol)) {
-            auto& diag = context.addDiag(symbol, isInPackage(symbol) ? packageCode : code,
-                                         symbol.location);
+            auto& diag = context.addDiag(symbol, isInPackage(symbol) ? packageCode : code);
             if constexpr (!std::is_same_v<TKindGetter, std::nullptr_t>) {
                 diag << kindGetter();
             }
@@ -518,7 +518,7 @@ private:
 
     void addUnusedDiag(const Symbol& symbol, DiagCode code) {
         if (shouldWarnUnused(symbol))
-            context.addDiag(symbol, code, symbol.location) << symbol.name;
+            context.addDiag(symbol, code) << symbol.name;
     }
 
     void checkShadowProperty(const ClassPropertySymbol& symbol) {

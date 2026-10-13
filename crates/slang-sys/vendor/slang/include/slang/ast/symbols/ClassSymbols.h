@@ -200,6 +200,7 @@ private:
     mutable std::optional<const Expression*> baseConstructorCall;
     mutable std::optional<uint64_t> cachedBitstreamWidth;
     mutable std::optional<bool> cachedHasCycles;
+    mutable uint32_t specializationDepth = 0;
     SymbolIndex headerIndex;
 };
 
@@ -277,6 +278,11 @@ public:
     /// programmatically constructed generic classes (not sourced from syntax).
     /// Behavior is undefined if this generic class has already been instantiated and used.
     void addParameterDecl(const DefinitionSymbol::ParameterDecl& decl);
+
+    /// Gets the list of parameter declarations for this class.
+    std::span<const DefinitionSymbol::ParameterDecl> getParameterDecls() const {
+        return paramDecls;
+    }
 
     void serializeTo(ASTSerializer& serializer) const;
 

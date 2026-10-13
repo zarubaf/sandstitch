@@ -32,14 +32,14 @@ install(
 if(fmt_FOUND)
   set(FMT_FIND_DEP "find_dependency(fmt)")
 endif()
-if(Boost_FOUND)
+if(SLANG_USE_SYSTEM_BOOST)
   set(BOOST_FIND_DEP "find_dependency(Boost)")
 endif()
 if(mimalloc_FOUND)
   set(MIMALLOC_FIND_DEP "find_dependency(mimalloc)")
 endif()
-if(cpptrace_FOUND)
-  set(CPPTRACE_FIND_DEP "find_dependency(cpptrace)")
+if(tomlplusplus_FOUND)
+  set(TOMLPLUSPLUS_FIND_DEP "find_dependency(tomlplusplus)")
 endif()
 
 configure_package_config_file(

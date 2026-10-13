@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <source_location>
 #include <stdexcept>
 #include <string_view>
@@ -18,22 +19,10 @@
 #include "slang/util/Enum.h"
 
 #if __cpp_exceptions
-#    if defined(SLANG_USE_CPPTRACE)
-#        include <cpptrace/from_current.hpp>
-#        define SLANG_TRY CPPTRACE_TRY
-#        define SLANG_CATCH(X) CPPTRACE_CATCH(X)
-#        define SLANG_THROW(e) throw(e)
-#        define SLANG_REPORT_EXCEPTION(e, msg)                 \
-            do {                                               \
-                slang::OS::printE(fmt::format(msg, e.what())); \
-                cpptrace::from_current_exception().print();    \
-            } while (0)
-#    else
-#        define SLANG_TRY try
-#        define SLANG_CATCH(X) catch (X)
-#        define SLANG_THROW(e) throw(e)
-#        define SLANG_REPORT_EXCEPTION(e, msg) slang::OS::printE(fmt::format(msg, e.what()))
-#    endif
+#    define SLANG_TRY try
+#    define SLANG_CATCH(X) catch (X)
+#    define SLANG_THROW(e) throw(e)
+#    define SLANG_REPORT_EXCEPTION(e, msg) slang::OS::printException(msg, (e).what())
 #else
 #    define SLANG_TRY if (true)
 #    define SLANG_CATCH(X) if (false)
@@ -153,7 +142,7 @@ public:
 template<typename T>
 class not_null {
 public:
-    static_assert(std::is_assignable<T&, std::nullptr_t>::value, "T cannot be assigned nullptr.");
+    static_assert(std::is_assignable_v<T&, std::nullptr_t>, "T cannot be assigned nullptr.");
 
     template<std::convertible_to<T> U>
     constexpr not_null(U&& u) : ptr(std::forward<U>(u)) {

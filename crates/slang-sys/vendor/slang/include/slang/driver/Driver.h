@@ -21,6 +21,7 @@
 #include "slang/util/Function.h"
 #include "slang/util/LanguageVersion.h"
 #include "slang/util/OS.h"
+#include "slang/util/ScopeGuard.h"
 #include "slang/util/Util.h"
 
 namespace slang {
@@ -312,8 +313,14 @@ public:
         /// The maximum number of errors to print before giving up.
         std::optional<uint32_t> errorLimit;
 
+        /// If true, print unused waiver details after compilation.
+        std::optional<bool> printUnusedWaivers;
+
         /// A list of warning options that will be passed to the DiagnosticEngine.
         std::vector<std::string> warningOptions;
+
+        /// Optional paths to TOML files containing diagnostic waiver rules.
+        std::vector<std::string> waiverFiles;
 
         /// @}
         /// @name File lists
@@ -382,8 +389,9 @@ public:
     /// This is templated to support both char and wchar_t arg lists.
     /// Any errors encountered will be printed to stderr.
     template<typename TArgs>
-    [[nodiscard]] bool parseCommandLine(int argc, TArgs argv) {
-        if (!cmdLine.parse(argc, argv)) {
+    [[nodiscard]] bool parseCommandLine(int argc, TArgs argv,
+                                        const CommandLine::ParseOptions& parseOptions = {}) {
+        if (!cmdLine.parse(argc, argv, parseOptions)) {
             issueCommandLineErrors(cmdLine);
             return false;
         }
@@ -410,7 +418,7 @@ public:
 
     /// Processes and applies all configured options.
     /// @returns true on success and false if errors were encountered.
-    [[nodiscard]] bool processOptions();
+    [[nodiscard]] bool processOptions(bool checkFiles = true);
 
     /// Returns the analysis options constructed from flags.
     [[nodiscard]]
@@ -432,8 +440,15 @@ public:
     /// @brief Parses all loaded buffers into syntax trees and appends the resulting trees
     /// to the @a syntaxTrees list.
     ///
+    /// @param bufferChangeCB an optional callback invoked whenever the preprocessor enters
+    ///                       or returns from a source buffer. The arguments are the BufferID
+    ///                       of the affected file, whether we are returning to a file (isBack),
+    ///                       and whether the file is being skipped as an already-included
+    ///                       header (isSkip). Note that when parsing with multiple threads
+    ///                       this callback may be invoked concurrently from those threads.
     /// @returns true on success and false if errors were encountered.
-    [[nodiscard]] bool parseAllSources();
+    [[nodiscard]] bool parseAllSources(
+        function_ref<void(BufferID, bool, bool)> bufferChangeCB = {});
 
     /// Creates an options bag from all of the currently set options.
     [[nodiscard]] Bag createOptionBag() const;
@@ -478,11 +493,39 @@ public:
     /// Prints a warning to stderr with appropriate terminal colors.
     void printWarning(const std::string& message);
 
-    /// Prints a note to stderr with appropriate terminal colors.
-    void printNote(const std::string& message);
-
     /// Sets whether terminal output should use color.
     void setTerminalColorsEnabled(bool enable);
+
+    /// Metadata collected while processing a command file.
+    struct SLANG_EXPORT CommandFileMetadata {
+        /// The raw -D defines contributed by the command file.
+        std::vector<std::string> defines;
+    };
+
+    /// Gets the map from command file to metadata collected while processing it.
+    /// Every processed command file has an entry, even if no metadata was collected.
+    const flat_hash_map<std::filesystem::path, CommandFileMetadata>& getCommandFileMetadata()
+        const {
+        return commandFileMetadata;
+    }
+
+    /// Temporarily sets the file used to attribute parsed options.
+    /// The returned guard will restore the previous command file when destroyed.
+    [[nodiscard]] auto setCurrentCommandFile(std::filesystem::path path) {
+        std::error_code ec;
+        auto canonicalPath = std::filesystem::weakly_canonical(path, ec);
+        if (!ec)
+            path = std::move(canonicalPath);
+
+        auto guard = ScopeGuard([this, savedCommandFile = std::exchange(
+                                           currentCommandFile, std::move(path))]() mutable {
+            currentCommandFile = std::move(savedCommandFile);
+        });
+        if (!currentCommandFile.empty())
+            commandFileMetadata.try_emplace(currentCommandFile);
+
+        return guard;
+    }
 
 private:
     bool parseUnitListing(const SourceBuffer& sourceBuffer);
@@ -494,7 +537,10 @@ private:
     bool reportLoadErrors();
 
     bool anyFailedLoads = false;
+
+    std::filesystem::path currentCommandFile;
     flat_hash_set<std::filesystem::path> activeCommandFiles;
+    flat_hash_map<std::filesystem::path, CommandFileMetadata> commandFileMetadata;
     std::vector<std::tuple<std::string_view, std::string_view, std::string_view>>
         translateOffFormats;
     std::unique_ptr<JsonWriter> jsonWriter;

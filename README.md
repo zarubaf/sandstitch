@@ -8,6 +8,6 @@ Imported SystemVerilog modules can be specialized with value and type parameters
 
 ## Building
 
-Slang is vendored and runs in-process. The first build compiles it (minutes); install ccache to make rebuilds instant. Requires GCC 11+ or Clang 17+, CMake 3.20+ and Python 3. `cargo xtask ci` runs the repository checks.
+Slang is vendored and runs in-process. The first build compiles it (minutes); install ccache to make rebuilds instant. Requires GCC 11+ or Clang 17+, CMake 3.28+ and Python 3. `cargo xtask ci` runs the repository checks.
 
 Forked from [Topstitch](https://github.com/xlsynth/topstitch) v0.100.0 (Apache-2.0), copyright its authors.

@@ -13,6 +13,10 @@ Directives in test files
                               commands for the file is collected and fed into
                               the CHECK engine below.
 
+  // CHECK-STDOUT: <path>     The complete stdout of all RUN commands must
+                              exactly match the contents of <path>.
+                              With --update, <path> is rewritten instead.
+
   // CHECK: <pattern>         A line in the output must match <pattern> (regex).
                               Patterns are matched in order of appearance.
 
@@ -29,6 +33,26 @@ Directives in test files
   // CHECK-LABEL: <pattern>   Resets the current scan position to the matching
                               line. Useful for separating sections.
 
+  // CHECK-DIAGS: <file>      Check JSON diagnostics in <file> against inline
+                              squiggle annotations. The file is normally
+                              produced with ``%slang --diag-json %t``.
+
+Inline diagnostic annotations are placed directly below the source line they
+describe. The ``//`` starts in column 1 and carets use their physical source
+columns, so they visually align with the highlighted text. Continuation ranges
+and notes identify their primary diagnostic with a ``- for`` suffix::
+
+        int scalar;
+    //      ^ NoteDeclarationHere declared here - for AssignmentPatternNoMember(scalar)
+        value = '{real: 1.0};
+    //          ^^ AssignmentPatternNoMember member 'scalar' is not covered by any assignment pattern key
+
+Multiple diagnostics on the same source line use one annotation line each.
+
+Pass ``--update`` to generate or refresh these annotations from the JSON
+diagnostics emitted by each test's RUN command. Updated tests are rerun immediately
+to verify the generated expectations.
+
   // XFAIL: *                 Mark the test as expected to fail.
 
   // REQUIRES: llvm           Skip the test unless a requirement is satisfied.
@@ -36,10 +60,12 @@ Directives in test files
 Substitutions in RUN lines
 ---------------------------
   %s      Absolute path to the test source file.
+  %b      Absolute path to the test source file without its final suffix.
   %t      Path to a per-test temporary file (cleaned up after each test).
   %T      Temporary directory shared for the test run.
   %slang  Path to the slang binary (configurable via --slang).
-  %KEY    User-defined substitution introduced via --define KEY=VALUE.
+  %KEY    Custom value from --define KEY=VALUE, or a launcher-aware executable
+          from --tool KEY=PATH.
 
 Usage
 -----
@@ -51,9 +77,12 @@ Options
                         common build directories relative to the script location).
   --define KEY=VALUE    Define a custom substitution; %KEY in RUN lines is
                         replaced with VALUE. Can be specified multiple times.
+  --tool KEY=PATH       Define an executable %KEY substitution, automatically
+                        wrapping WebAssembly binaries with wasmtime.
   --verbose, -v         Print each test command as it runs.
-  --jobs, -j <N>        Run N tests in parallel (default: 1).
+  --jobs, -j <N>        Run N tests in parallel (default: one per usable CPU).
   --filter <regex>      Run only tests whose paths match <regex>.
+  --update             Rewrite expected stdout files and inline diagnostic annotations.
   --no-color            Disable ANSI colour output.
 
 .lit-conf
@@ -81,6 +110,8 @@ Command-line arguments always override ``.lit-conf`` values for the same key.
 from __future__ import annotations
 
 import argparse
+import difflib
+import json
 import os
 import re
 import shlex
@@ -133,9 +164,11 @@ def yellow(t: str) -> str:
 # Matches any recognised directive comment.
 _DIRECTIVE_RE = re.compile(
     r"^\s*//\s*"
-    r"(RUN|CHECK(?:-NEXT|-NOT|-DAG|-LABEL)?|XFAIL|REQUIRES)"
+    r"(RUN|CHECK-DIAGS|CHECK(?:-STDOUT|-NEXT|-NOT|-DAG|-LABEL)?|XFAIL|REQUIRES)"
     r"\s*:\s*(.*?)\s*$"
 )
+
+_DIAG_ANNOTATION_RE = re.compile(r"^//[ \t]*\^+(?:\s+.*?)?\s*$")
 
 
 @dataclass
@@ -149,7 +182,10 @@ class CheckDirective:
 class ParsedTest:
     path: Path
     run_lines: list[str] = field(default_factory=list)
+    check_stdout: CheckDirective | None = None
     check_directives: list[CheckDirective] = field(default_factory=list)
+    diag_file: str | None = None
+    diag_lines: set[int] = field(default_factory=set)
     xfail: bool = False
     requires: list[str] = field(default_factory=list)
 
@@ -159,16 +195,28 @@ def parse_test_file(path: Path) -> ParsedTest:
     result = ParsedTest(path=path)
     with path.open(encoding="utf-8", errors="replace") as fh:
         for lineno, raw_line in enumerate(fh, start=1):
+            if _DIAG_ANNOTATION_RE.match(raw_line):
+                result.diag_lines.add(lineno)
+                continue
+
             m = _DIRECTIVE_RE.match(raw_line)
             if not m:
                 continue
             kind, body = m.group(1), m.group(2)
             if kind == "RUN":
                 result.run_lines.append(body)
+            elif kind == "CHECK-DIAGS":
+                if result.diag_file is not None:
+                    raise ValueError(
+                        f"{path}:{lineno}: multiple CHECK-DIAGS directives"
+                    )
+                result.diag_file = body
             elif kind == "XFAIL":
                 result.xfail = True
             elif kind == "REQUIRES":
                 result.requires.extend(r.strip() for r in body.split(","))
+            elif kind == "CHECK-STDOUT":
+                result.check_stdout = CheckDirective(kind, body, lineno)
             else:
                 result.check_directives.append(CheckDirective(kind, body, lineno))
     return result
@@ -188,20 +236,50 @@ def expand_substitutions(
     slang_path: str,
     slang_is_cmdline: bool,
     user_defines: dict[str, str] | None = None,
+    user_tools: dict[str, tuple[str, bool]] | None = None,
 ) -> str:
-    """Replace %s, %t, %T, %slang, and user-defined %KEY substitutions in a RUN-line command."""
+    """Replace lit substitutions in a RUN-line command."""
+    source_base_path = source_path.with_suffix("")
+
     # Apply user-defined substitutions before the built-in ones so that user
     # values cannot accidentally match built-in tokens like %s or %t.
     if user_defines:
         for key, value in user_defines.items():
             command = command.replace(f"%{key}", _quote_arg(value))
+    if user_tools:
+        for key, (value, is_cmdline) in user_tools.items():
+            command = command.replace(
+                f"%{key}", value if is_cmdline else _quote_arg(value)
+            )
     command = command.replace(
         "%slang", slang_path if slang_is_cmdline else _quote_arg(slang_path)
     )
     command = command.replace("%s", _quote_arg(str(source_path)))
+    command = command.replace("%b", _quote_arg(str(source_base_path)))
     command = command.replace("%t", _quote_arg(str(tmp_file)))
     command = command.replace("%T", _quote_arg(str(tmp_dir)))
     return command
+
+
+def expand_substitution_value(
+    value: str,
+    *,
+    source_path: Path,
+    tmp_file: Path,
+    tmp_dir: Path,
+    slang_path: str,
+    user_defines: dict[str, str] | None = None,
+) -> str:
+    """Expand substitutions without shell quoting, for directive values."""
+    if user_defines:
+        for key, replacement in user_defines.items():
+            value = value.replace(f"%{key}", replacement)
+    value = value.replace("%slang", slang_path)
+    value = value.replace("%s", str(source_path))
+    value = value.replace("%b", str(source_path.with_suffix("")))
+    value = value.replace("%t", str(tmp_file))
+    value = value.replace("%T", str(tmp_dir))
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +538,286 @@ def run_checks(output: str, directives: list[CheckDirective]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Inline diagnostic verification
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, order=True)
+class DiagSegment:
+    line: int
+    start_column: int
+    end_column: int
+
+
+@dataclass
+class ActualDiagnostic:
+    code: str
+    message: str
+    segments: set[DiagSegment]
+
+
+class DiagCheckError(Exception):
+    """Raised when CHECK-DIAGS annotations don't match JSON diagnostics."""
+
+
+def _same_file(reported: str, test_path: Path) -> bool:
+    resolved_test = test_path.resolve()
+    try:
+        if Path(reported).resolve() == resolved_test:
+            return True
+    except OSError:
+        pass
+
+    # WASI reports host absolute paths without the leading slash. Resolving such
+    # a path on the host incorrectly treats it as relative to the current working
+    # directory, so also compare it against the root-relative spelling.
+    if not Path(reported).is_absolute():
+        reported_norm = os.path.normcase(os.path.normpath(reported))
+        test_norm = os.path.normcase(os.path.normpath(str(resolved_test)))
+        return reported_norm == test_norm.lstrip("/\\")
+
+    return False
+
+
+def _parse_location(location: str) -> tuple[str, int, int] | None:
+    try:
+        filename, line, column = location.rsplit(":", 2)
+        return filename, int(line), int(column)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _range_segments(
+    start: dict,
+    end: dict,
+    *,
+    test_path: Path,
+    source_lines: list[str],
+    diag_lines: set[int],
+) -> set[DiagSegment]:
+    if not _same_file(start.get("file", ""), test_path):
+        return set()
+    if not _same_file(end.get("file", ""), test_path):
+        return set()
+
+    try:
+        start_line = int(start["line"])
+        start_column = int(start["column"])
+        end_line = int(end["line"])
+        end_column = int(end["column"])
+    except (KeyError, TypeError, ValueError):
+        return set()
+
+    if (end_line, end_column) < (start_line, start_column):
+        return set()
+
+    result: set[DiagSegment] = set()
+    for lineno in range(start_line, end_line + 1):
+        if lineno in diag_lines or not 1 <= lineno <= len(source_lines):
+            continue
+
+        line_length = len(source_lines[lineno - 1])
+        segment_start = start_column if lineno == start_line else 1
+        segment_end = end_column if lineno == end_line else line_length + 1
+
+        # Multiline ranges include leading indentation and trailing whitespace on
+        # continuation lines. Squiggle only the visible source text so annotations
+        # remain useful and can physically align after the leading `//`.
+        line_text = source_lines[lineno - 1]
+        if segment_start == 1:
+            first_text_column = len(line_text) - len(line_text.lstrip()) + 1
+            segment_start = max(segment_start, first_text_column)
+        if segment_end == line_length + 1:
+            segment_end = min(segment_end, len(line_text.rstrip()) + 1)
+
+        segment_start = max(1, min(segment_start, line_length + 1))
+        segment_end = max(1, min(segment_end, line_length + 1))
+        if segment_end <= segment_start:
+            if start_line == end_line and start_column == end_column:
+                segment_end = segment_start + 1
+            else:
+                continue
+
+        result.add(DiagSegment(lineno, segment_start, segment_end))
+    return result
+
+
+def _load_json_diagnostics(diag_path: Path) -> list[dict]:
+    try:
+        with diag_path.open(encoding="utf-8") as fh:
+            json_diags = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DiagCheckError(
+            f"unable to read CHECK-DIAGS file {diag_path}: {exc}"
+        ) from exc
+
+    if not isinstance(json_diags, list):
+        raise DiagCheckError(f"CHECK-DIAGS file {diag_path} must contain a JSON array")
+
+    return [item for item in json_diags if isinstance(item, dict)]
+
+
+def _collect_actual_groups(
+    parsed: ParsedTest,
+    json_diags: list[dict],
+    source_lines: list[str],
+    diag_lines: set[int],
+) -> list[list[ActualDiagnostic]]:
+    def collect_actual(item: dict, group: list[ActualDiagnostic]) -> None:
+        location = _parse_location(item.get("location", ""))
+        if location and _same_file(location[0], parsed.path):
+            segments: set[DiagSegment] = set()
+            for source_range in item.get("ranges", []):
+                if isinstance(source_range, dict):
+                    segments.update(
+                        _range_segments(
+                            source_range.get("start", {}),
+                            source_range.get("end", {}),
+                            test_path=parsed.path,
+                            source_lines=source_lines,
+                            diag_lines=diag_lines,
+                        )
+                    )
+
+            if not segments:
+                _, line, column = location
+                segments.add(DiagSegment(line, column, column + 1))
+
+            group.append(
+                ActualDiagnostic(
+                    code=str(item.get("code", "")),
+                    message=str(item.get("message", "")),
+                    segments=segments,
+                )
+            )
+
+        for note in item.get("notes", []):
+            if isinstance(note, dict):
+                collect_actual(note, group)
+
+    actual_groups: list[list[ActualDiagnostic]] = []
+    for item in json_diags:
+        group: list[ActualDiagnostic] = []
+        collect_actual(item, group)
+        if group:
+            actual_groups.append(group)
+    return actual_groups
+
+
+def _diag_reference(
+    diagnostic: ActualDiagnostic,
+    source_lines: list[str],
+    *,
+    include_args: bool,
+) -> str:
+    if not include_args:
+        return diagnostic.code
+
+    args: list[str] = []
+    quoted_arg = re.search(r"(?<![A-Za-z0-9_$])'([^']+)'", diagnostic.message)
+    message_without_quotes = diagnostic.message
+    if quoted_arg:
+        args.append(quoted_arg.group(1))
+        message_without_quotes = (
+            diagnostic.message[: quoted_arg.start()]
+            + diagnostic.message[quoted_arg.end() :]
+        )
+
+    number_arg = re.search(
+        r"(?<![A-Za-z0-9_$'])-?\d+(?![A-Za-z0-9_$'])", message_without_quotes
+    )
+    if number_arg:
+        args.append(number_arg.group())
+
+    if not args:
+        segment = min(diagnostic.segments)
+        source_line = source_lines[segment.line - 1]
+        source_arg = source_line[segment.start_column - 1 : segment.end_column - 1]
+        source_arg = source_arg.strip()
+        if source_arg and len(source_arg) <= 32:
+            args.append(source_arg)
+
+    if not args:
+        return diagnostic.code
+    return f"{diagnostic.code}({', '.join(args)})"
+
+
+def _format_diag_annotation(segment: DiagSegment) -> str:
+    if segment.start_column < 3:
+        raise DiagCheckError(
+            "cannot generate an inline diagnostic annotation for a range before "
+            f"column 3 ({segment.line}:{segment.start_column})"
+        )
+    return (
+        "//"
+        + " " * (segment.start_column - 3)
+        + "^" * (segment.end_column - segment.start_column)
+    )
+
+
+def _generate_diag_expectations(parsed: ParsedTest, diag_path: Path) -> str:
+    """Generate the test file with canonical annotations from JSON diagnostics."""
+    json_diags = _load_json_diagnostics(diag_path)
+    old_text = parsed.path.read_text(encoding="utf-8", errors="replace")
+    source_lines = old_text.splitlines()
+    actual_groups = _collect_actual_groups(
+        parsed, json_diags, source_lines, parsed.diag_lines
+    )
+
+    annotations_by_line: dict[int, list[str]] = {}
+    for group in actual_groups:
+        reference = _diag_reference(group[0], source_lines, include_args=len(group) > 1)
+
+        for diagnostic_index, diagnostic in enumerate(group):
+            for index, segment in enumerate(sorted(diagnostic.segments)):
+                annotation = _format_diag_annotation(segment)
+                if index == 0:
+                    annotation += f" {diagnostic.code} {diagnostic.message}"
+                if diagnostic_index > 0 or index > 0:
+                    annotation += f" - for {reference}"
+                annotations_by_line.setdefault(segment.line, []).append(annotation)
+
+    output_lines: list[str] = []
+    for lineno, line in enumerate(source_lines, start=1):
+        if lineno in parsed.diag_lines:
+            continue
+        output_lines.append(line)
+        output_lines.extend(annotations_by_line.get(lineno, []))
+
+    return "\n".join(output_lines) + ("\n" if old_text.endswith("\n") else "")
+
+
+def run_diag_checks(parsed: ParsedTest, diag_path: Path) -> None:
+    """Check diagnostic annotations against the canonically generated file."""
+    old_text = parsed.path.read_text(encoding="utf-8", errors="replace")
+    new_text = _generate_diag_expectations(parsed, diag_path)
+    if new_text == old_text:
+        return
+
+    diff = difflib.unified_diff(
+        old_text.splitlines(),
+        new_text.splitlines(),
+        fromfile=str(parsed.path),
+        tofile=f"{parsed.path} (generated)",
+        lineterm="",
+    )
+    raise DiagCheckError(
+        "diagnostic annotations do not match; rerun with --update\n" + "\n".join(diff)
+    )
+
+
+def update_diags(parsed: ParsedTest, diag_path: Path) -> bool:
+    """Rewrite inline squiggle annotations to match JSON diagnostics."""
+    old_text = parsed.path.read_text(encoding="utf-8", errors="replace")
+    new_text = _generate_diag_expectations(parsed, diag_path)
+    if new_text == old_text:
+        return False
+
+    parsed.path.write_text(new_text, encoding="utf-8")
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Single test execution
 # ---------------------------------------------------------------------------
 
@@ -480,9 +838,12 @@ def run_test(
     slang_is_cmdline: bool,
     tmp_dir: Path,
     verbose: bool,
+    update: bool,
     available_features: set[str],
     output_limit: int | None = 30,
     user_defines: dict[str, str] | None = None,
+    diags_updated: bool = False,
+    user_tools: dict[str, tuple[str, bool]] | None = None,
 ) -> TestResult:
     start = time.monotonic()
 
@@ -525,6 +886,7 @@ def run_test(
             slang_path=slang_path,
             slang_is_cmdline=slang_is_cmdline,
             user_defines=user_defines,
+            user_tools=user_tools,
         )
         if os.name == "nt":
             # cmd.exe does not interpret single quotes as quoting characters;
@@ -541,10 +903,10 @@ def run_test(
             proc = subprocess.run(
                 cmd,
                 shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 timeout=60,
+                check=False,
             )
         except subprocess.TimeoutExpired:
             elapsed = time.monotonic() - start
@@ -576,6 +938,92 @@ def run_test(
                 message=msg,
                 output=combined_output,
             )
+
+    # --- Check inline diagnostic annotations ---------------------------------
+    if parsed.diag_file is not None:
+        diag_file = expand_substitution_value(
+            parsed.diag_file,
+            source_path=parsed.path.resolve(),
+            tmp_file=tmp_file,
+            tmp_dir=tmp_dir,
+            slang_path=slang_path,
+            user_defines=user_defines,
+        )
+        diag_path = Path(diag_file)
+        try:
+            if update and not diags_updated and update_diags(parsed, diag_path):
+                # Annotations shift diagnostic locations. Verify them on the rerun
+                # and use its output when updating the expected stdout file.
+                result = run_test(
+                    parse_test_file(parsed.path),
+                    slang_path=slang_path,
+                    slang_is_cmdline=slang_is_cmdline,
+                    tmp_dir=tmp_dir,
+                    verbose=verbose,
+                    update=update,
+                    available_features=available_features,
+                    output_limit=output_limit,
+                    user_defines=user_defines,
+                    diags_updated=True,
+                    user_tools=user_tools,
+                )
+                result.elapsed = time.monotonic() - start
+                if result.status == "PASS":
+                    result.message = "updated diagnostic expectations"
+                return result
+            run_diag_checks(parsed, diag_path)
+        except DiagCheckError as exc:
+            elapsed = time.monotonic() - start
+            status = "XFAIL" if parsed.xfail else "FAIL"
+            return TestResult(
+                path=parsed.path,
+                status=status,
+                elapsed=elapsed,
+                message=str(exc),
+                output=combined_output,
+            )
+
+    # --- Run CHECK-STDOUT directive ---------------------------------------------
+    if parsed.check_stdout is not None:
+        golden_file = expand_substitution_value(
+            parsed.check_stdout.pattern,
+            source_path=parsed.path.resolve(),
+            tmp_file=tmp_file,
+            tmp_dir=tmp_dir,
+            slang_path=slang_path,
+            user_defines=user_defines,
+        )
+
+        golden_path = Path(golden_file)
+        if update:
+            golden_path.parent.mkdir(parents=True, exist_ok=True)
+            golden_path.write_text(combined_output, encoding="utf-8")
+        else:
+            try:
+                expected = golden_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                elapsed = time.monotonic() - start
+                msg = f"CHECK-STDOUT file not found: {golden_path}\n  rerun with --update to create it"
+                status = "XFAIL" if parsed.xfail else "FAIL"
+                return TestResult(
+                    path=parsed.path,
+                    status=status,
+                    elapsed=elapsed,
+                    message=msg,
+                    output=combined_output,
+                )
+
+            if combined_output != expected:
+                elapsed = time.monotonic() - start
+                msg = f"CHECK-STDOUT mismatch: {golden_path}\n  rerun with --update to refresh it"
+                status = "XFAIL" if parsed.xfail else "FAIL"
+                return TestResult(
+                    path=parsed.path,
+                    status=status,
+                    elapsed=elapsed,
+                    message=msg,
+                    output=combined_output,
+                )
 
     # --- Run CHECK directives -------------------------------------------------
     try:
@@ -631,20 +1079,25 @@ def run_test(
 _TEST_EXTENSIONS = {".sv", ".v", ".lit"}
 
 
+def is_test_file(path: Path) -> bool:
+    return path.suffix in _TEST_EXTENSIONS and not path.name.endswith(".out.sv")
+
+
 def discover_tests(paths: list[Path], filter_re: re.Pattern | None) -> list[Path]:
     """Return all test files reachable from *paths* (files or directories)."""
     result: list[Path] = []
     for p in paths:
         if p.is_file():
-            if filter_re is None or filter_re.search(str(p)):
+            if is_test_file(p) and (filter_re is None or filter_re.search(str(p))):
                 result.append(p)
         elif p.is_dir():
             for root, _dirs, files in os.walk(p):
                 for name in sorted(files):
                     fp = Path(root) / name
-                    if fp.suffix in _TEST_EXTENSIONS:
-                        if filter_re is None or filter_re.search(str(fp)):
-                            result.append(fp)
+                    if is_test_file(fp) and (
+                        filter_re is None or filter_re.search(str(fp))
+                    ):
+                        result.append(fp)
         else:
             print(f"warning: {p} does not exist, skipping", file=sys.stderr)
     return result
@@ -745,32 +1198,30 @@ def load_lit_conf(directory: Path) -> dict:
     return result
 
 
-def maybe_wrap_wasm_launcher(slang_bin: str) -> tuple[str, bool]:
+def maybe_wrap_wasm_launcher(executable: str) -> tuple[str, bool]:
     """Return (command, is_cmdline) and auto-wrap wasm binaries via wasmtime."""
-    p = Path(slang_bin)
+    p = Path(executable)
     if not p.is_file():
-        return slang_bin, False
+        return executable, False
 
     try:
         with p.open("rb") as fh:
             magic = fh.read(4)
     except OSError:
-        return slang_bin, False
+        return executable, False
 
     if magic != b"\0asm":
-        return slang_bin, False
+        return executable, False
 
     wasmtime = shutil.which("wasmtime")
     if not wasmtime:
-        return slang_bin, False
+        return executable, False
 
     tests_dir = (_SCRIPT_DIR.parent / "tests").resolve()
     cmd = " ".join(
         [
             _quote_arg(wasmtime),
             "run",
-            "-S",
-            "threads",
             "--dir=/",
             f"--dir={_quote_arg(str(tests_dir))}::tests",
             _quote_arg(str(p.resolve())),
@@ -784,8 +1235,23 @@ def maybe_wrap_wasm_launcher(slang_bin: str) -> tuple[str, bool]:
 # ---------------------------------------------------------------------------
 
 
+def usable_cpu_count() -> int:
+    """Return the number of CPUs this process may actually run on.
+
+    os.cpu_count() reports the CPUs of the machine and ignores any restriction
+    placed on the process, so a run pinned to a couple of cores would still
+    start a job per CPU of the host.
+    """
+    process_cpu_count = getattr(os, "process_cpu_count", None)
+    if process_cpu_count is not None:  # Python 3.13+
+        return process_cpu_count() or 1
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0)) or 1
+    return os.cpu_count() or 1
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    _default_jobs = os.cpu_count() or 1
+    _default_jobs = usable_cpu_count()
 
     p = argparse.ArgumentParser(
         description=__doc__ or "",
@@ -805,6 +1271,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--filter", metavar="REGEX", help="Only run tests whose path matches REGEX"
     )
+    p.add_argument(
+        "--update",
+        action="store_true",
+        help="Rewrite expected stdout files and inline diagnostic annotations",
+    )
     p.add_argument("--no-color", action="store_true", help="Disable ANSI colour output")
     p.add_argument(
         "--define",
@@ -812,6 +1283,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[],
         help="Define a custom %%KEY substitution for use in RUN lines (repeatable)",
+    )
+    p.add_argument(
+        "--tool",
+        metavar="KEY=PATH",
+        action="append",
+        default=[],
+        help="Define a launcher-aware executable %%KEY substitution (repeatable)",
     )
     return p.parse_args(argv)
 
@@ -860,6 +1338,24 @@ def main(argv: list[str] | None = None) -> int:
         k, _, v = defn.partition("=")
         user_defines[k.strip()] = v
 
+    user_tools: dict[str, tuple[str, bool]] = {}
+    for tool in args.tool:
+        if "=" not in tool:
+            print(f"error: --tool {tool!r}: expected KEY=PATH format", file=sys.stderr)
+            return 1
+        k, _, v = tool.partition("=")
+        key = k.strip()
+        if not key or not v:
+            print(f"error: --tool {tool!r}: expected KEY=PATH format", file=sys.stderr)
+            return 1
+        if key in user_defines:
+            print(
+                f"error: substitution %{key} is both a --define and --tool",
+                file=sys.stderr,
+            )
+            return 1
+        user_tools[key] = maybe_wrap_wasm_launcher(v)
+
     filter_re: re.Pattern | None = None
     if args.filter:
         try:
@@ -885,16 +1381,17 @@ def main(argv: list[str] | None = None) -> int:
             stderr=subprocess.STDOUT,
             text=True,
             timeout=10,
+            check=False,
         ).stdout
         if "--emit-ir" in help_out:
             available_features.add("llvm")
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
 
-    # Each --define KEY=VALUE also registers KEY as an available feature so
-    # that tests can guard themselves with `// REQUIRES: KEY` and be skipped
-    # gracefully when the define is absent (e.g. when running outside ctest).
+    # Each named substitution also registers KEY as an available feature so tests can
+    # guard themselves with `// REQUIRES: KEY` and be skipped gracefully when absent.
     available_features.update(user_defines.keys())
+    available_features.update(user_tools.keys())
 
     results: list[TestResult] = []
     total = len(parsed_tests)
@@ -912,9 +1409,11 @@ def main(argv: list[str] | None = None) -> int:
                 slang_is_cmdline=slang_is_cmdline,
                 tmp_dir=tmp_dir,
                 verbose=args.verbose,
+                update=args.update,
                 available_features=available_features,
                 output_limit=None if total == 1 else 30,
                 user_defines=user_defines or None,
+                user_tools=user_tools or None,
             )
 
         if args.jobs > 1:
@@ -932,9 +1431,11 @@ def main(argv: list[str] | None = None) -> int:
                     slang_is_cmdline=slang_is_cmdline,
                     tmp_dir=tmp_dir,
                     verbose=args.verbose,
+                    update=args.update,
                     available_features=available_features,
                     output_limit=None if total == 1 else 30,
                     user_defines=user_defines or None,
+                    user_tools=user_tools or None,
                 )
                 results.append(r)
                 _print_result(r, total, len(results), width)
@@ -954,7 +1455,9 @@ def _print_result(r: TestResult, total: int, done: int, width: int) -> None:
     rel = r.path.name
     print(f"[{done:>{width}}/{total}] {icon}  {rel}  ({r.elapsed:.2f}s)")
 
-    if r.status in ("FAIL", "XPASS") and r.message:
+    if r.status == "PASS" and r.message:
+        print(f"       {r.message}")
+    elif r.status in ("FAIL", "XPASS") and r.message:
         for line in r.message.splitlines():
             print(f"       {line}")
         print()

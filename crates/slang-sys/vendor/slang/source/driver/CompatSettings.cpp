@@ -36,7 +36,9 @@ using namespace analysis;
     CompilationFlags::AllowSelfDeterminedStreamConcat, \
     CompilationFlags::AllowMergingAnsiPorts, \
     CompilationFlags::AllowArrayConcatAssignPattern, \
-    CompilationFlags::AllowLibModuleRedefinition
+    CompilationFlags::AllowLibModuleRedefinition, \
+    CompilationFlags::AllowCrossAutoBinMax, \
+    CompilationFlags::InferInputPortsAsVars
 
 static constexpr CompilationFlags vcsCompFlags[] = {VCS_COMP_FLAGS};
 static constexpr CompilationFlags allCompFlags[] = {

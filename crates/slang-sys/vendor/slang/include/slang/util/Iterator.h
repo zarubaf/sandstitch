@@ -163,7 +163,7 @@ template<typename T>
     requires(!std::is_lvalue_reference_v<T>)
 constexpr arrow_proxy<std::remove_cvref_t<T>> arrow_helper(T&& t) noexcept(
     std::is_nothrow_move_constructible_v<std::remove_cvref_t<T>>) {
-    return {std::move(t)};
+    return {std::forward<T>(t)};
 }
 
 } // namespace detail
@@ -418,11 +418,11 @@ template<slang::detail::iterator_facade_subclass Iter>
 struct std::iterator_traits<Iter> {
     using reference = decltype(*std::declval<Iter&>());
     using pointer = decltype(std::declval<Iter&>().operator->());
-    using difference_type = slang ::detail::inferred_difference_type_t<Iter>;
-    using value_type = slang ::detail::inferred_value_type_t<Iter>;
+    using difference_type = slang::detail::inferred_difference_type_t<Iter>;
+    using value_type = slang::detail::inferred_value_type_t<Iter>;
 
-    using iterator_category = slang ::detail::iterator_category_t<Iter>;
-    using iterator_concept = slang ::detail::iterator_concept_t<Iter>;
+    using iterator_category = slang::detail::iterator_category_t<Iter>;
+    using iterator_concept = slang::detail::iterator_concept_t<Iter>;
 };
 
 // specialization for contiguous iterators since the standard implementation

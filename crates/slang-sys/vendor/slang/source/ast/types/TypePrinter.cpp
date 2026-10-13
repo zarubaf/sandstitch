@@ -7,8 +7,9 @@
 //------------------------------------------------------------------------------
 #include "slang/ast/types/TypePrinter.h"
 
+#include "../../text/FormatBuffer.h"
+
 #include "slang/ast/ASTVisitor.h"
-#include "slang/text/FormatBuffer.h"
 
 namespace slang::ast {
 
@@ -35,9 +36,13 @@ TypePrinter::TypePrinter() : buffer(std::make_unique<FormatBuffer>()) {
 
 TypePrinter::~TypePrinter() = default;
 
+void TypePrinter::maybeAddQuote() {
+    if (options.quoteChar)
+        buffer->append(*options.quoteChar);
+}
+
 void TypePrinter::append(const Type& type) {
-    if (options.addSingleQuotes)
-        buffer->append("'");
+    maybeAddQuote();
 
     if (options.printAKA && type.kind == SymbolKind::TypeAlias) {
         if (!options.elideScopeNames)
@@ -48,11 +53,30 @@ void TypePrinter::append(const Type& type) {
         type.visit(*this, ""sv);
     }
 
-    if (options.addSingleQuotes)
-        buffer->append("'");
+    maybeAddQuote();
 
     if (options.printAKA && type.kind == SymbolKind::TypeAlias)
         printAKA(type);
+
+    if (options.printIntegralRange) {
+        auto& canon = type.getCanonicalType();
+        switch (canon.kind) {
+            case SymbolKind::EnumType:
+            case SymbolKind::PackedStructType:
+            case SymbolKind::PackedUnionType: {
+                const auto& intType = canon.as<IntegralType>();
+                auto range = intType.getBitVectorRange();
+                auto arrKind = intType.isFourState ? "logic" : "bit";
+                buffer->append(" (");
+                maybeAddQuote();
+                buffer->format("{}[{}:{}]", arrKind, range.left, range.right);
+                maybeAddQuote();
+                buffer->append(")");
+            } break;
+            default:
+                break;
+        }
+    }
 }
 
 void TypePrinter::clear() {
@@ -457,8 +481,8 @@ void TypePrinter::appendParameters(std::span<const Symbol* const> parameters, bo
         return;
     }
 
-    auto guard = ScopeGuard([savedFlag = std::exchange(options.addSingleQuotes, false), this] {
-        options.addSingleQuotes = savedFlag;
+    auto guard = ScopeGuard([savedFlag = std::exchange(options.quoteChar, std::nullopt), this] {
+        options.quoteChar = savedFlag;
     });
 
     for (auto param : parameters) {
@@ -553,14 +577,16 @@ void TypePrinter::printAKA(const Type& type) {
     }
 
     if (target != &type && target->name != type.name) {
-        buffer->append(" (aka '");
+        buffer->append(" (aka ");
+        maybeAddQuote();
         target->visit(*this, ""sv);
-        buffer->append("')");
+        maybeAddQuote();
+        buffer->append(")");
     }
 }
 
 TypeArgFormatter::TypeArgFormatter() {
-    printer.options.addSingleQuotes = true;
+    printer.options.quoteChar = '\'';
     printer.options.elideScopeNames = true;
     printer.options.printAKA = true;
     printer.options.anonymousTypeStyle = TypePrintingOptions::FriendlyName;

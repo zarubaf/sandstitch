@@ -8,7 +8,6 @@
 #include "slang/ast/symbols/MemberSymbols.h"
 
 #include "../FmtHelpers.h"
-#include "fmt/core.h"
 
 #include "slang/ast/ASTSerializer.h"
 #include "slang/ast/ASTVisitor.h"
@@ -22,8 +21,10 @@
 #include "slang/ast/symbols/CompilationUnitSymbols.h"
 #include "slang/ast/symbols/SubroutineSymbols.h"
 #include "slang/ast/symbols/VariableSymbols.h"
+#include "slang/ast/types/AllTypes.h"
 #include "slang/ast/types/NetType.h"
 #include "slang/ast/types/Type.h"
+#include "slang/ast/types/TypePrinter.h"
 #include "slang/diagnostics/DeclarationsDiags.h"
 #include "slang/diagnostics/ExpressionsDiags.h"
 #include "slang/diagnostics/LookupDiags.h"
@@ -68,7 +69,7 @@ const PackageSymbol* ExplicitImportSymbol::package() const {
 }
 
 static const PackageSymbol* findPackage(std::string_view packageName, const Scope& lookupScope,
-                                        SourceLocation errorLoc, bool isFromExport) {
+                                        SourceLocation errorLoc) {
     auto& comp = lookupScope.getCompilation();
     auto package = comp.getPackage(packageName);
     if (!package) {
@@ -81,10 +82,7 @@ static const PackageSymbol* findPackage(std::string_view packageName, const Scop
         do {
             auto& sym = currScope->asSymbol();
             if (package == &sym) {
-                if (isFromExport)
-                    lookupScope.addDiag(diag::PackageExportSelf, errorLoc);
-                else
-                    lookupScope.addDiag(diag::PackageImportSelf, errorLoc);
+                lookupScope.addDiag(diag::PackageImportSelf, errorLoc);
                 return nullptr;
             }
 
@@ -106,7 +104,7 @@ const Symbol* ExplicitImportSymbol::importedSymbol() const {
         if (auto syntax = getSyntax())
             loc = syntax->as<PackageImportItemSyntax>().package.location();
 
-        package_ = findPackage(packageName, *scope, loc, isFromExport);
+        package_ = findPackage(packageName, *scope, loc);
         if (!package_)
             return nullptr;
 
@@ -126,7 +124,6 @@ const Symbol* ExplicitImportSymbol::importedSymbol() const {
 }
 
 void ExplicitImportSymbol::serializeTo(ASTSerializer& serializer) const {
-    serializer.write("isFromExport", isFromExport);
     if (auto pkg = package())
         serializer.writeLink("package", *pkg);
 
@@ -147,13 +144,12 @@ const PackageSymbol* WildcardImportSymbol::getPackage() const {
         if (auto syntax = getSyntax(); syntax)
             loc = syntax->as<PackageImportItemSyntax>().package.location();
 
-        package = findPackage(packageName, *scope, loc, isFromExport);
+        package = findPackage(packageName, *scope, loc);
     }
     return *package;
 }
 
 void WildcardImportSymbol::serializeTo(ASTSerializer& serializer) const {
-    serializer.write("isFromExport", isFromExport);
     if (auto pkg = getPackage())
         serializer.writeLink("package", *pkg);
 }
@@ -447,8 +443,7 @@ void ContinuousAssignSymbol::fromSyntax(Compilation& compilation,
 
                 for (auto ins : implicitNetNames) {
                     if (seenNames.emplace(ins->identifier.valueText()).second) {
-                        implicitNets.push_back(
-                            &NetSymbol::createImplicit(compilation, *ins, netType));
+                        implicitNets.push_back(&NetSymbol::createImplicit(context, *ins, netType));
                     }
                 }
             }
@@ -673,6 +668,19 @@ std::optional<std::string_view> ElabSystemTaskSymbol::createMessage(
     return std::string_view(reinterpret_cast<char*>(mem), str->size());
 }
 
+// Prints `type` with just its immediate name and no AKA expansion. The
+// per-step 'declared here' notes provide disambiguation when two same-named
+// types come from different scopes.
+static std::string printTypeForReduce(const Type& type) {
+    TypePrinter printer;
+    printer.options.quoteChar = '\'';
+    printer.options.elideScopeNames = true;
+    printer.options.printAKA = false;
+    printer.options.anonymousTypeStyle = TypePrintingOptions::FriendlyName;
+    printer.append(type);
+    return printer.toString();
+}
+
 static void reduceComparison(const BinaryExpression& expr, Diagnostic& result) {
     switch (expr.op) {
         case BinaryOperator::Equality:
@@ -697,9 +705,59 @@ static void reduceComparison(const BinaryExpression& expr, Diagnostic& result) {
 
     auto opToken = syntax->as<BinaryExpressionSyntax>().operatorToken;
 
+    if (expr.left().kind == ExpressionKind::TypeReference &&
+        expr.right().kind == ExpressionKind::TypeReference) {
+        // If either side is an error type, a separate diagnostic was already
+        // emitted; a note here would just print '<error>' and confuse things.
+        auto& lt = expr.left().as<TypeReferenceExpression>().targetType;
+        auto& rt = expr.right().as<TypeReferenceExpression>().targetType;
+        if (lt.isError() || rt.isError())
+            return;
+
+        auto& note = result.addNote(diag::NoteComparisonReduces, opToken.location());
+        note << expr.sourceRange;
+        note << printTypeForReduce(lt) << opToken.rawText() << printTypeForReduce(rt);
+
+        // For each side, walk the alias chain. The first step uses an lhs/rhs
+        // header note so the two chains can't be confused with each other.
+        // Each subsequent step is shown as 'X declared here', plus an
+        // 'aliases Y here' note pointing at the syntax that connects this
+        // step to the next (e.g. the `I #(.data_type(other_t))` parameter
+        // binding, or the RHS of a typedef). When neither side has any
+        // aliases this emits no extra notes - the single-line note above
+        // is enough.
+        auto noteChain = [&](const Type& start, std::string_view sideLabel) {
+            bool isFirst = true;
+            for (auto t = &start; t->kind == SymbolKind::TypeAlias;) {
+                if (t->location) {
+                    if (isFirst) {
+                        result.addNote(diag::NoteLabeledDeclaredHere, t->location)
+                            << sideLabel << t->name;
+                    }
+                    else {
+                        result.addNote(diag::NoteNamedDeclaredHere, t->location) << t->name;
+                    }
+                }
+                isFirst = false;
+                auto& declared = t->as<TypeAliasType>().targetType;
+                auto& nextType = declared.getType();
+                if (auto typeSyntax = declared.getResolvedTypeSyntax();
+                    typeSyntax && !nextType.name.empty()) {
+                    result.addNote(diag::NoteConnectedHere, typeSyntax->sourceRange())
+                        << nextType.name;
+                }
+                t = &nextType;
+            }
+        };
+        noteChain(lt, "lhs"sv);
+        noteChain(rt, "rhs"sv);
+        return;
+    }
+
     auto lc = expr.left().getConstant();
     auto rc = expr.right().getConstant();
-    SLANG_ASSERT(lc && rc);
+    if (!lc || !rc)
+        return;
 
     auto& note = result.addNote(diag::NoteComparisonReduces, opToken.location());
     note << expr.sourceRange;
@@ -1124,7 +1182,7 @@ static void createTableRow(const Scope& scope, const UdpEntrySyntax& syntax,
     SmallVector<const UdpEntrySyntax*> conflicts;
     trie.insert(syntax, inputs, stateChar, trieAlloc, conflicts);
     if (!conflicts.empty()) {
-        for (const auto* existing : conflicts) {
+        for (auto existing : conflicts) {
             // This is an error if the existing row has a different output,
             // otherwise it's just silently ignored.
             auto existingOutput = getOutputChar(existing->next);
@@ -2174,6 +2232,11 @@ void RandSeqProductionSymbol::serializeTo(ASTSerializer& serializer) const {
         serializer.endObject();
     };
 
+    auto writeCodeBlock = [&](std::string_view propName, const CodeBlockProd& codeBlock) {
+        if (auto stmt = codeBlock.block->tryGetStatement())
+            serializer.write(propName, *stmt);
+    };
+
     serializer.write("returnType", getReturnType());
 
     serializer.startArray("arguments");
@@ -2195,6 +2258,7 @@ void RandSeqProductionSymbol::serializeTo(ASTSerializer& serializer) const {
                     break;
                 case ProdKind::CodeBlock:
                     serializer.write("kind", "CodeBlock"sv);
+                    writeCodeBlock("body", *(const CodeBlockProd*)prod);
                     break;
                 case ProdKind::IfElse: {
                     auto& iep = *(const IfElseProd*)prod;
@@ -2242,6 +2306,9 @@ void RandSeqProductionSymbol::serializeTo(ASTSerializer& serializer) const {
         if (rule.weightExpr)
             serializer.write("weightExpr", *rule.weightExpr);
 
+        if (rule.codeBlock)
+            writeCodeBlock("codeBlock", *rule.codeBlock);
+
         serializer.write("isRandJoin", rule.isRandJoin);
         if (rule.randJoinExpr)
             serializer.write("randJoinExpr", *rule.randJoinExpr);
@@ -2287,7 +2354,7 @@ NetAliasSymbol& NetAliasSymbol::fromSyntax(const ASTContext& parentContext,
 
             for (auto ins : implicitNetNames) {
                 if (seenNames.emplace(ins->identifier.valueText()).second)
-                    implicitNets.push_back(&NetSymbol::createImplicit(comp, *ins, netType));
+                    implicitNets.push_back(&NetSymbol::createImplicit(context, *ins, netType));
             }
         }
     }
@@ -2370,7 +2437,8 @@ std::span<const Expression* const> NetAliasSymbol::getNetReferences() const {
     SLANG_ASSERT(scope && syntax);
 
     SmallVector<const Expression*> buffer;
-    ASTContext context(*scope, LookupLocation::after(*this), ASTFlags::NonProcedural);
+    ASTContext context(*scope, LookupLocation::after(*this),
+                       ASTFlags::NonProcedural | ASTFlags::AllowInterconnect);
     EvalContext evalCtx(context);
     NetAliasVisitor visitor(context, evalCtx);
     SmallVector<SmallVector<NetAlias>> netAliases;

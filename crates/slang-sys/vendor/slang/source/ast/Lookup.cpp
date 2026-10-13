@@ -609,14 +609,33 @@ bool lookupUpward(std::span<const NamePlusLoc> nameParts, const NameComponents& 
     do {
         // Search for a scope or instance target within our current scope.
         auto symbol = scope->find(name.text);
-        if (symbol && !symbol->isValue() && !symbol->isType() &&
-            (symbol->isScope() || symbol->kind == SymbolKind::Instance)) {
-            if (!tryMatch(*symbol))
-                return false;
+        if (symbol) {
+            // Normally an upward lookup can only match the head of a hierarchical name
+            // against a scope or instance target, since those are the only things we can
+            // descend into.
+            const bool viable = !symbol->isValue() && !symbol->isType() &&
+                                (symbol->isScope() || symbol->kind == SymbolKind::Instance);
 
-            if (result.found) {
-                result.upwardCount = upwardCount;
-                return true;
+            // If we've walked up into an enclosing class, however, its members are visible
+            // throughout the entire class body regardless of textual declaration order. A
+            // dotted name whose head resolves to such a member -- for example a class property
+            // referenced by an embedded covergroup's coverage expression -- is really an
+            // implicit-this member select, so resolve it here even though the order-sensitive
+            // unqualified lookup that got us to this point skipped over it.
+            const bool enclosingClassMember = scope->asSymbol().kind == SymbolKind::ClassType &&
+                                              symbol->isValue();
+
+            if (viable || enclosingClassMember) {
+                if (!tryMatch(*symbol))
+                    return false;
+
+                if (result.found) {
+                    // Resolving a member of an enclosing class is a lexical reference within
+                    // the same instance, not an upward hierarchical one, so don't count it as
+                    // such (otherwise it would spuriously trigger the upward-name warning).
+                    result.upwardCount = enclosingClassMember ? 0 : upwardCount;
+                    return true;
+                }
             }
         }
 
@@ -1189,7 +1208,7 @@ void Lookup::name(const NameSyntax& syntax, const ASTContext& context, bitmask<L
                 return;
 
             if (!result.found)
-                result = originalResult;
+                result = std::move(originalResult);
         }
 
         if (!result.found && !result.hasError())
@@ -1211,6 +1230,11 @@ void Lookup::name(const NameSyntax& syntax, const ASTContext& context, bitmask<L
     }
 
     unwrapResult(scope, result);
+    if (!name.selectors.empty() && result.found &&
+        (result.found->kind == SymbolKind::InstanceArray ||
+         result.found->kind == SymbolKind::GenerateBlockArray)) {
+        result.path.emplace_back(*result.found);
+    }
     applySelectors(name, context, result);
     if (flags.has(LookupFlags::NoSelectors))
         result.errorIfSelectors(context);
@@ -1677,11 +1701,13 @@ bool Lookup::withinClassRandomize(const ASTContext& context, const NameSyntax& s
     auto& classScope = *details.classType;
 
     auto findSuperScope = [&]() -> const Scope& {
-        if (details.thisVar) {
-            auto dt = details.thisVar->getDeclaredType();
-            SLANG_ASSERT(dt);
-            return dt->getType().getCanonicalType().as<ClassType>();
-        }
+        // classScope is the canonical class type of the object being randomized,
+        // which is exactly the scope from which 'super' should be resolved. Note
+        // that we can't rely on thisVar's declared type here, since it may not be
+        // a class type directly (e.g. when randomizing an element of an array of
+        // class handles).
+        if (details.thisVar)
+            return classScope;
 
         return *context.scope;
     };
@@ -1713,7 +1739,7 @@ bool Lookup::withinClassRandomize(const ASTContext& context, const NameSyntax& s
             // may expect 'y' to refer to a local variable, but inside a randomize 'with'
             // block it resolves to the class member instead.
             if (result.found && result.found->isValue()) {
-                auto* localSym = Lookup::unqualified(*context.scope, name.text);
+                auto localSym = Lookup::unqualified(*context.scope, name.text);
                 if (localSym && localSym->isValue() && localSym != result.found) {
                     auto& diag = result.addDiag(*context.scope, diag::RandomizeConstraintShadow,
                                                 name.range);
@@ -2317,7 +2343,7 @@ void Lookup::qualified(const ScopedNameSyntax& syntax, const ASTContext& context
     // We couldn't find anything. originalResult has any diagnostics issued by the first
     // downward lookup (if any), so it's fine to just return it as is. If we never found any
     // symbol originally, issue an appropriate error for that.
-    result = originalResult;
+    result = std::move(originalResult);
     if (!result.found && !result.hasError()) {
         reportUndeclared(scope, name, first.range,
                          flags | LookupFlags::NoUndeclaredErrorIfUninstantiated, true, result);

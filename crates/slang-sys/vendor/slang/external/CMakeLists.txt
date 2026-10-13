@@ -3,70 +3,116 @@
 # SPDX-License-Identifier: MIT
 # ~~~
 
-# Required minimum versions for dependencies
-set(fmt_min_version "12.1")
-set(mimalloc_min_version "3.3")
-set(cpptrace_min_version "1.0")
-set(catch2_min_version "3.14")
+# Derive the base URL prefix used to fetch slang's dependencies. By default they
+# come from GitHub over HTTPS, which keeps the self-contained build working from
+# a plain checkout, a release tarball, or any tree without a .git directory. If
+# slang itself was cloned from a mirror we inherit that mirror's host and
+# protocol so the dependencies are fetched from the same place. Users behind a
+# firewall or using a custom mirror can override this directly with
+# -DSLANG_DEP_URL_PREFIX=...
+find_package(Git QUIET)
+set(_slang_default_prefix "https://github.com/")
+if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} remote get-url origin
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    OUTPUT_VARIABLE _slang_origin
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
+    RESULT_VARIABLE _slang_git_rc)
+  # CMAKE_MATCH_1 is only set on a real match, so unusual origins (local paths,
+  # file:// clones, ...) fall back to HTTPS instead of forming a malformed URL.
+  if(_slang_git_rc EQUAL 0 AND _slang_origin MATCHES
+                               "^(git@[^:]+:|ssh://[^/]+/|https?://[^/]+/)")
+    set(_slang_default_prefix "${CMAKE_MATCH_1}")
+  endif()
+endif()
+set(SLANG_DEP_URL_PREFIX
+    "${_slang_default_prefix}"
+    CACHE STRING "Base URL prefix used to fetch slang's dependencies")
+message(STATUS "Dependency URL prefix: ${SLANG_DEP_URL_PREFIX}")
 
 # --- fmt lib ---
-set(find_pkg_args "")
-if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.24.0")
-  set(find_pkg_args "FIND_PACKAGE_ARGS" "${fmt_min_version}")
-endif()
+if(SLANG_USE_SYSTEM_FMT)
+  find_package(fmt 12 REQUIRED)
 
-set(FMT_SYSTEM_HEADERS
-    ON
-    CACHE INTERNAL "")
-
-FetchContent_Declare(
-  fmt
-  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-  GIT_TAG 12.1.0
-  GIT_SHALLOW ON
-  ${find_pkg_args})
-
-# Force fmtlib to always be a static lib if we pull it via FetchContent (i.e.
-# not intercepted by find_package), since it's a private dependency that's
-# mostly header-only already.
-set(saved_build_shared_libs ${BUILD_SHARED_LIBS})
-set(BUILD_SHARED_LIBS OFF)
-FetchContent_MakeAvailable(fmt)
-set(BUILD_SHARED_LIBS ${saved_build_shared_libs})
-
-if(NOT TARGET fmt::fmt)
-  message(
-    FATAL_ERROR "Could not find fmt package, min version: ${fmt_min_version}")
-endif()
-
-if((SLANG_INCLUDE_PYLIB OR BUILD_SHARED_LIBS) AND NOT fmt_FOUND)
-  set_target_properties(fmt PROPERTIES POSITION_INDEPENDENT_CODE ON)
-endif()
-
-if(fmt_FOUND)
   get_target_property(FMT_CFG fmt::fmt IMPORTED_CONFIGURATIONS)
   list(GET FMT_CFG 0 FMT_CFG_FIRST)
   get_target_property(FMT_LIB fmt::fmt IMPORTED_LOCATION_${FMT_CFG_FIRST})
   get_target_property(FMT_INC fmt::fmt INTERFACE_INCLUDE_DIRECTORIES)
   message(STATUS "Found system fmt library: ${FMT_LIB}")
   message(STATUS "Using system fmt include: ${FMT_INC}")
+
+  set(fmt_target "fmt::fmt")
 else()
-  message(STATUS "Using remote fmt library")
+  FetchContent_Declare(
+    fmt
+    GIT_REPOSITORY ${SLANG_DEP_URL_PREFIX}fmtlib/fmt.git
+    GIT_TAG 12.2.0
+    GIT_SHALLOW ON
+    SYSTEM EXCLUDE_FROM_ALL)
+  FetchContent_MakeAvailable(fmt)
+
+  # The fmt-header-only target unconditionally defines FMT_HEADER_ONLY, which
+  # pulls the entire fmt implementation into every TU that includes a fmt
+  # header. We strip that define here and instead manually build the definitions
+  # into one TU (Fmt.cpp).
+  set_property(TARGET fmt-header-only PROPERTY INTERFACE_COMPILE_DEFINITIONS)
+
+  # The slang library compiles the fmt definitions into a single TU (Fmt.cpp)
+  # using PIC as needed, but the compiled fmt target is still used by
+  # non-exported consumers (tools, tests, bindings). Make sure it's built with
+  # PIC when it may be linked into a shared library or the Python module.
+  if((SLANG_INCLUDE_PYLIB OR BUILD_SHARED_LIBS) AND TARGET fmt)
+    set_target_properties(fmt PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  endif()
+
+  message(STATUS "Using remote fmt library (header-only)")
+
+  # Wrap in BUILD_INTERFACE so the header-only usage requirements apply only
+  # while building slang and don't leak into the installed/exported interface.
+  set(fmt_target "$<BUILD_INTERFACE:fmt::fmt-header-only>")
 endif()
 
 # --- boost ---
-find_package(Boost 1.87.0 CONFIG QUIET)
-if(NOT Boost_FOUND)
+# By default slang stays header-only and consumes a vendored boost_unordered
+# header plus a FetchContent'd header-only boost::regex, avoiding a transitive
+# boost dependency for downstream consumers. Set SLANG_USE_SYSTEM_BOOST to link
+# against a system-installed boost instead.
+if(SLANG_USE_SYSTEM_BOOST)
+  find_package(Boost 1.87.0 CONFIG REQUIRED)
+  message(
+    STATUS "Found system boost ${Boost_VERSION_STRING} at ${Boost_INCLUDE_DIRS}"
+  )
+else()
   message(STATUS "Using vendored boost_unordered header")
 
   add_library(boost_unordered INTERFACE)
   add_library(Boost::headers ALIAS boost_unordered)
-  target_compile_definitions(boost_unordered
-                             INTERFACE SLANG_BOOST_SINGLE_HEADER)
-else()
-  message(
-    STATUS "Found system boost ${Boost_VERSION_STRING} at ${Boost_INCLUDE_DIRS}"
-  )
+
+  # slang uses boost::regex (in place of std::regex) as a header-only library.
+  # We fetch just the regex repo and force standalone mode (see below) so it
+  # falls back to the C++ standard library for its dependencies. We don't
+  # add_subdirectory the fetched repo (SOURCE_SUBDIR pointed at a non-existent
+  # path makes FetchContent_MakeAvailable populate only).
+  message(STATUS "Using FetchContent for boost::regex (header-only)")
+  FetchContent_Declare(
+    boost_regex
+    GIT_REPOSITORY ${SLANG_DEP_URL_PREFIX}MikePopoloski/regex.git
+    GIT_TAG boost-1.91.0
+    GIT_SHALLOW ON
+    SOURCE_SUBDIR _no_build_)
+  FetchContent_MakeAvailable(boost_regex)
+
+  target_include_directories(
+    boost_unordered SYSTEM
+    INTERFACE "$<BUILD_INTERFACE:${boost_regex_SOURCE_DIR}/include>")
+
+  # Force boost::regex standalone mode instead of relying on its auto-detection,
+  # which only kicks in when <boost/version.hpp> is absent. If a system boost is
+  # installed, auto-detection fails to enable standalone mode and boost::regex
+  # pulls in system boost headers that clash with our vendored boost_unordered.
+  target_compile_definitions(
+    boost_unordered INTERFACE "$<BUILD_INTERFACE:BOOST_REGEX_STANDALONE>")
 endif()
 
 # --- mimalloc ---
@@ -76,15 +122,7 @@ if(SLANG_USE_MIMALLOC)
       FATAL_ERROR "mimalloc cannot be used with Windows shared lib builds")
   endif()
 
-  set(find_pkg_args "")
-  if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.24.0")
-    set(find_pkg_args "FIND_PACKAGE_ARGS")
-  endif()
-
   set(MI_BUILD_SHARED
-      OFF
-      CACHE INTERNAL "")
-  set(MI_BUILD_STATIC
       OFF
       CACHE INTERNAL "")
   set(MI_BUILD_TESTS
@@ -99,10 +137,10 @@ if(SLANG_USE_MIMALLOC)
 
   FetchContent_Declare(
     mimalloc
-    GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
-    GIT_TAG v3.3.2
+    GIT_REPOSITORY ${SLANG_DEP_URL_PREFIX}microsoft/mimalloc.git
+    GIT_TAG v3.5.3
     GIT_SHALLOW ON
-    ${find_pkg_args})
+    FIND_PACKAGE_ARGS 3.5)
   FetchContent_MakeAvailable(mimalloc)
 
   if(mimalloc_FOUND)
@@ -111,10 +149,7 @@ if(SLANG_USE_MIMALLOC)
     elseif(TARGET mimalloc-static)
       set(mimalloc_target "mimalloc-static")
     else()
-      message(
-        FATAL_ERROR
-          "Could not find mimalloc package, min version: ${mimalloc_min_version}"
-      )
+      message(FATAL_ERROR "Could not find mimalloc target")
     endif()
 
     get_target_property(MIMALLOC_CFG ${mimalloc_target} IMPORTED_CONFIGURATIONS)
@@ -127,67 +162,22 @@ if(SLANG_USE_MIMALLOC)
     message(STATUS "Using system mimalloc include: ${MIMALLOC_INC}")
   else()
     if(NOT TARGET mimalloc-obj)
-      message(
-        FATAL_ERROR
-          "Could not find mimalloc package, min version: ${mimalloc_min_version}"
-      )
+      message(FATAL_ERROR "Could not find mimalloc-obj target")
     endif()
     set(mimalloc_target "$<BUILD_INTERFACE:mimalloc-obj>")
     message(STATUS "Using remote mimalloc library")
   endif()
 endif()
 
-# --- cpptrace ---
-if(SLANG_USE_CPPTRACE)
-  set(find_pkg_args "")
-  if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.24.0")
-    set(find_pkg_args "FIND_PACKAGE_ARGS" "${cpptrace_min_version}")
-  endif()
-
-  set(CPPTRACE_BUILD_SHARED
-      OFF
-      CACHE INTERNAL "")
-
-  FetchContent_Declare(
-    cpptrace
-    GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
-    GIT_TAG v1.0.4
-    GIT_SHALLOW ON
-    ${find_pkg_args})
-  FetchContent_MakeAvailable(cpptrace)
-
-  if(cpptrace_FOUND)
-    get_target_property(CPPTRACE_INC cpptrace INTERFACE_INCLUDE_DIRECTORIES)
-    message(STATUS "Found system cpptrace library: ${CPPTRACE_INC}")
-  else()
-    message(STATUS "Using remote cpptrace library")
-    if(IS_DIRECTORY "${cpptrace_SOURCE_DIR}")
-      set_property(DIRECTORY ${cpptrace_SOURCE_DIR} PROPERTY EXCLUDE_FROM_ALL
-                                                             YES)
-    endif()
-  endif()
-endif()
-
 # --- catch2 ---
 if(SLANG_INCLUDE_TESTS)
-  set(find_pkg_args "")
-  if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.24.0")
-    set(find_pkg_args "FIND_PACKAGE_ARGS" "${catch2_min_version}")
-  endif()
-
   FetchContent_Declare(
     Catch2
-    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-    GIT_TAG v3.14.0
+    GIT_REPOSITORY ${SLANG_DEP_URL_PREFIX}catchorg/Catch2.git
+    GIT_TAG v3.16.0
     GIT_SHALLOW ON
-    ${find_pkg_args})
+    FIND_PACKAGE_ARGS 3.16)
   FetchContent_MakeAvailable(Catch2)
-
-  if(NOT TARGET Catch2::Catch2)
-    message(
-      FATAL_ERROR
-        "Could not find Catch2 package, min version: ${catch2_min_version}")
-  endif()
 
   if(Catch2_FOUND)
     get_target_property(Catch2_INCLUDE_DIR Catch2::Catch2
@@ -196,6 +186,39 @@ if(SLANG_INCLUDE_TESTS)
     message(STATUS "Using system Catch2 include: ${Catch2_INCLUDE_DIR}")
   else()
     message(STATUS "Using remote Catch2 library")
+  endif()
+endif()
+
+# --- tomlplusplus ---
+if(SLANG_USE_SYSTEM_TOMLPLUSPLUS)
+  find_package(tomlplusplus 3.4 REQUIRED)
+  get_target_property(TOML_LIB tomlplusplus::tomlplusplus IMPORTED_LOCATION)
+  get_target_property(TOML_INC tomlplusplus::tomlplusplus
+                      INTERFACE_INCLUDE_DIRECTORIES)
+  message(STATUS "Found system tomlplusplus library: ${TOML_LIB}")
+  message(STATUS "Using system tomlplusplus include: ${TOML_INC}")
+  set(tomlplusplus_target "tomlplusplus::tomlplusplus")
+else()
+  FetchContent_Declare(
+    tomlplusplus
+    GIT_REPOSITORY ${SLANG_DEP_URL_PREFIX}marzer/tomlplusplus.git
+    GIT_TAG v3.4.0
+    GIT_SHALLOW ON
+    FIND_PACKAGE_ARGS 3.4)
+  FetchContent_MakeAvailable(tomlplusplus)
+
+  if(tomlplusplus_FOUND)
+    get_target_property(TOMLPP_INC tomlplusplus::tomlplusplus
+                        INTERFACE_INCLUDE_DIRECTORIES)
+    message(STATUS "Found system tomlplusplus library: ${TOMLPP_INC}")
+    set(tomlplusplus_target "tomlplusplus::tomlplusplus")
+  else()
+    message(STATUS "Using remote tomlplusplus library")
+    if(IS_DIRECTORY "${tomlplusplus_SOURCE_DIR}")
+      set_property(DIRECTORY ${tomlplusplus_SOURCE_DIR}
+                   PROPERTY EXCLUDE_FROM_ALL YES)
+    endif()
+    set(tomlplusplus_target "$<BUILD_INTERFACE:tomlplusplus::tomlplusplus>")
   endif()
 endif()
 
@@ -210,21 +233,7 @@ if(SLANG_INCLUDE_INSTALL)
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     COMPONENT slang_Development)
 
-  if(NOT fmt_FOUND)
-    install(
-      TARGETS fmt
-      EXPORT slangTargets
-      LIBRARY COMPONENT slang_Development
-      ARCHIVE COMPONENT slang_Development
-      PUBLIC_HEADER EXCLUDE_FROM_ALL
-      PRIVATE_HEADER EXCLUDE_FROM_ALL)
-    install(
-      DIRECTORY ${fmt_SOURCE_DIR}/include/fmt
-      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-      COMPONENT slang_Development)
-  endif()
-
-  if(NOT Boost_FOUND)
+  if(NOT SLANG_USE_SYSTEM_BOOST)
     install(
       TARGETS boost_unordered
       EXPORT slangTargets
@@ -233,13 +242,6 @@ if(SLANG_INCLUDE_INSTALL)
       FILES ${PROJECT_SOURCE_DIR}/external/boost_unordered.hpp
             ${PROJECT_SOURCE_DIR}/external/boost_concurrent.hpp
       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-      COMPONENT slang_Development)
-  endif()
-
-  if(SLANG_USE_CPPTRACE AND NOT cpptrace_FOUND)
-    install(
-      TARGETS cpptrace-lib
-      EXPORT slangTargets
       COMPONENT slang_Development)
   endif()
 

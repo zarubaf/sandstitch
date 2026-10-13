@@ -9,6 +9,7 @@
 
 #include "slang/diagnostics/LexerDiags.h"
 #include "slang/diagnostics/PreprocessorDiags.h"
+#include "slang/parsing/TokenKind.h"
 #include "slang/syntax/AllSyntax.h"
 #include "slang/text/Glob.h"
 #include "slang/text/SourceManager.h"
@@ -103,6 +104,7 @@ void Preprocessor::pushSource(std::string_view source, std::string_view name) {
 
 void Preprocessor::pushSource(SourceBuffer buffer) {
     SLANG_ASSERT(buffer.id);
+    metadata.sourceBufferIds.push_back(buffer.id);
 
     if (!options.keywordMapping.empty()) {
         std::optional<KeywordVersion> bufVersion;
@@ -315,8 +317,9 @@ std::vector<const DefineDirectiveSyntax*> Preprocessor::getDefinedMacros() const
     return results;
 }
 
-std::vector<IncludeMetadata> Preprocessor::getIncludeDirectives() const {
-    return includeDirectives;
+PreprocessorMetadata&& Preprocessor::getMetadata() {
+    metadata.definedMacros = getDefinedMacros();
+    return std::move(metadata);
 }
 
 Token Preprocessor::next() {
@@ -675,33 +678,37 @@ Trivia Preprocessor::handleIncludeDirective(Token directive) {
         bool isSystem = path[0] == '<';
         path = path.substr(1, path.length() - 2);
 
-        auto buffer = sourceManager.readHeader(path, directive.location(), getCurrentLibrary(),
-                                               isSystem, options.additionalIncludePaths);
-        if (!buffer) {
-            addDiag(diag::CouldNotOpenIncludeFile, fileName.range())
-                << path << buffer.error().message();
-        }
-        else if (includeDepth >= options.maxIncludeDepth) {
+        SourceBuffer sourceBuffer;
+        if (includeDepth >= options.maxIncludeDepth) {
             addDiag(diag::ExceededMaxIncludeDepth, fileName.range());
         }
-        else if (auto onceIt = includeOnceHeaders.find(buffer->data.data());
-                 onceIt == includeOnceHeaders.end() ||
-                 (!onceIt->second.empty() && !isDefined(onceIt->second))) {
-            includeDepth++;
-            hasProtectedCode = false;
-            expectedEndKind = TokenKind::Unknown;
-            pushSource(*buffer);
-
-            includeDirectives.push_back(IncludeMetadata{
-                .syntax = syntax,
-                .path = path,
-                .buffer = *buffer,
-                .isSystem = isSystem,
-            });
+        else {
+            auto buffer = sourceManager.readHeader(path, directive.location(), getCurrentLibrary(),
+                                                   isSystem, options.additionalIncludePaths);
+            if (!buffer) {
+                addDiag(diag::CouldNotOpenIncludeFile, fileName.range())
+                    << path << buffer.error().message();
+            }
+            else if (auto onceIt = includeOnceHeaders.find(buffer->data.data());
+                     onceIt == includeOnceHeaders.end() ||
+                     (!onceIt->second.empty() && !isDefined(onceIt->second))) {
+                includeDepth++;
+                hasProtectedCode = false;
+                expectedEndKind = TokenKind::Unknown;
+                pushSource(*buffer);
+                sourceBuffer = *buffer;
+            }
+            else if (options.bufferChangeCB) {
+                options.bufferChangeCB(buffer->id, false, true);
+                sourceBuffer = *buffer;
+            }
         }
-        else if (options.bufferChangeCB) {
-            options.bufferChangeCB(buffer->id, false, true);
-        }
+        metadata.includeDirectives.push_back(IncludeMetadata{
+            .syntax = syntax,
+            .path = path,
+            .buffer = sourceBuffer,
+            .isSystem = isSystem,
+        });
     }
 
     return Trivia(TriviaKind::Directive, syntax);
@@ -854,13 +861,23 @@ Trivia Preprocessor::handleDefineDirective(Token directive) {
 }
 
 std::pair<Trivia, Trivia> Preprocessor::handleMacroUsage(Token directive) {
+    auto macroDef = findMacro(directive);
+
     // delegate to a nested function to simplify the error handling paths
     inMacroBody = true;
-    auto [actualArgs, extraTrivia] = handleTopLevelMacro(directive);
+    auto [actualArgs, extraTrivia] = handleTopLevelMacro(directive, macroDef);
     inMacroBody = false;
 
-    auto syntax = alloc.emplace<MacroUsageSyntax>(directive, actualArgs);
-    return std::make_pair(Trivia(TriviaKind::Directive, syntax), extraTrivia);
+    auto usageSyntax = alloc.emplace<MacroUsageSyntax>(directive, actualArgs);
+
+    if (macroDef.valid() && !macroDef.isIntrinsic()) {
+        metadata.macroRefs.push_back(MacroRefMetadata{
+            .syntax = usageSyntax,
+            .definition = macroDef.syntax,
+        });
+    }
+
+    return std::make_pair(Trivia(TriviaKind::Directive, usageSyntax), extraTrivia);
 }
 
 Trivia Preprocessor::handleIfDefDirective(Token directive, bool inverted, Token savedLastSeen) {
@@ -938,11 +955,13 @@ Trivia Preprocessor::parseBranchDirective(Token directive,
                                           bool taken) {
     scratchTokenBuffer.clear();
     if (!taken) {
-        // skip over everything until we find another conditional compilation directive
+        // Skip over everything until we find a sibling conditional directive
+        // (elsif, else, endif) at the same nesting level. Inner ifdef/endif
+        // pairs are included in the disabled tokens
+        int nestedDepth = 0;
         while (true) {
             auto token = nextRaw();
 
-            // EoF or conditional directive stops the skipping process
             bool done = false;
             if (token.kind == TokenKind::EndOfFile) {
                 done = true;
@@ -951,10 +970,18 @@ Trivia Preprocessor::parseBranchDirective(Token directive,
                 switch (token.directiveKind()) {
                     case SyntaxKind::IfDefDirective:
                     case SyntaxKind::IfNDefDirective:
+                        nestedDepth++;
+                        break;
+                    case SyntaxKind::EndIfDirective:
+                        if (nestedDepth > 0)
+                            nestedDepth--;
+                        else
+                            done = true;
+                        break;
                     case SyntaxKind::ElsIfDirective:
                     case SyntaxKind::ElseDirective:
-                    case SyntaxKind::EndIfDirective:
-                        done = true;
+                        if (nestedDepth == 0)
+                            done = true;
                         break;
                     default:
                         break;
@@ -962,25 +989,14 @@ Trivia Preprocessor::parseBranchDirective(Token directive,
             }
 
             if (done) {
-                // Put the token back so that we'll look at it next, but with
-                // its trivia rewritten to change comments and whitespace to disabled
-                // text, since this branch was not taken and we want the comments to
-                // disappear in the preprocessed output.
-                SmallVector<Trivia, 2> trivia(token.trivia());
-                for (auto& t : trivia) {
-                    switch (t.kind) {
-                        case TriviaKind::LineComment:
-                        case TriviaKind::BlockComment:
-                        case TriviaKind::Whitespace:
-                        case TriviaKind::EndOfLine:
-                            t.kind = TriviaKind::DisabledText;
-                            break;
-                        default:
-                            break;
-                    }
-                }
 
-                currentToken = token.withTrivia(alloc, trivia);
+                // Make a synthetic token for holding the trailing trivia, to keep it still
+                // classified as disabled text.
+                scratchTokenBuffer.push_back(
+                    Token::createMissing(alloc, TokenKind::Placeholder, token.location())
+                        .withTrivia(alloc, token.trivia()));
+
+                currentToken = token.withTrivia(alloc, {});
                 break;
             }
             scratchTokenBuffer.push_back(token);
@@ -1161,19 +1177,25 @@ Trivia Preprocessor::handleDefaultNetTypeDirective(Token directive) {
 
 Trivia Preprocessor::handleUndefDirective(Token directive) {
     Token nameToken = expect(TokenKind::Identifier);
+    auto result = alloc.emplace<UndefDirectiveSyntax>(directive, nameToken);
 
     if (!nameToken.isMissing()) {
         std::string_view name = nameToken.valueText();
         auto it = macros.find(name);
         if (it != macros.end()) {
-            if (!it->second.builtIn)
+            if (!it->second.builtIn) {
+                metadata.macroRefs.push_back(MacroRefMetadata{
+                    .syntax = result,
+                    .definition = it->second.syntax,
+                });
                 macros.erase(it);
-            else
+            }
+            else {
                 addDiag(diag::UndefineBuiltinDirective, nameToken.range());
+            }
         }
     }
 
-    auto result = alloc.emplace<UndefDirectiveSyntax>(directive, nameToken);
     return Trivia(TriviaKind::Directive, result);
 }
 

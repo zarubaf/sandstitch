@@ -18,14 +18,14 @@ use std::path::{Component, Path, PathBuf};
 /// The vendored Slang release number, the one place it is written.
 macro_rules! release {
     () => {
-        "11.0"
+        "12.0"
     };
 }
 
 /// The vendored Slang release.
 pub const SLANG_VERSION: &str = release!();
 
-/// The vendored Slang release, named, for example `slang 11.0`.
+/// The vendored Slang release, named, for example `slang 12.0`.
 pub const SLANG_VERSION_LABEL: &str = concat!("slang ", release!());
 
 /// Stack of the thread each [`run`] executes on: deep nesting in a design
@@ -448,7 +448,7 @@ pub fn absolute_path(working_dir: &Path, path: &str) -> String {
     normalized.to_string_lossy().into_owned()
 }
 
-/// `major.minor.patch` of the linked Slang library, for example `11.0.0`.
+/// `major.minor.patch` of the linked Slang library, for example `12.0.0`.
 pub fn library_version() -> String {
     ffi::library_version()
 }

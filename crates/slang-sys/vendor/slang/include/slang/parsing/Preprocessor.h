@@ -11,6 +11,7 @@
 
 #include "slang/parsing/Lexer.h"
 #include "slang/parsing/NumberParser.h"
+#include "slang/parsing/PreprocessorMetadata.h"
 #include "slang/parsing/Token.h"
 #include "slang/syntax/SyntaxNode.h"
 #include "slang/text/SourceLocation.h"
@@ -28,6 +29,7 @@ struct MacroActualArgumentListSyntax;
 struct MacroFormalArgumentListSyntax;
 struct MacroActualArgumentSyntax;
 struct MacroFormalArgumentSyntax;
+struct MacroUsageSyntax;
 struct PragmaDirectiveSyntax;
 struct PragmaExpressionSyntax;
 struct IncludeDirectiveSyntax;
@@ -77,14 +79,6 @@ struct SLANG_EXPORT PreprocessorOptions {
     bool allowMissingProtectedScopeEnd = false;
 };
 
-/// Metadata about an include directive that was invoked.
-struct IncludeMetadata {
-    const syntax::IncludeDirectiveSyntax* syntax;
-    std::string_view path;
-    SourceBuffer buffer;
-    bool isSystem;
-};
-
 /// Preprocessor - Interface between lexer and parser
 ///
 /// This class handles the messy interface between various source file lexers, include directives,
@@ -95,6 +89,7 @@ public:
     Preprocessor(SourceManager& sourceManager, BumpAllocator& alloc, Diagnostics& diagnostics,
                  const Bag& options = {},
                  std::span<const syntax::DefineDirectiveSyntax* const> inheritedMacros = {});
+    Preprocessor& operator=(const Preprocessor& other) = delete;
 
     /// Gets the next token in the stream, after applying preprocessor rules.
     Token next();
@@ -188,8 +183,8 @@ public:
     /// Gets all macros that have been defined thus far in the preprocessor.
     std::vector<const syntax::DefineDirectiveSyntax*> getDefinedMacros() const;
 
-    /// Gets all include directives that have been encountered thus far in the preprocessor.
-    std::vector<IncludeMetadata> getIncludeDirectives() const;
+    /// Gets the metadata that has been collected by the preprocessor.
+    PreprocessorMetadata&& getMetadata();
 
     /// Splits the provided token at the given offset, taking into account the current state
     /// of the preprocessor (this calls into Lexer::splitTokens).
@@ -199,7 +194,6 @@ private:
     friend class MacroOpEvaluator;
 
     Preprocessor(const Preprocessor& other);
-    Preprocessor& operator=(const Preprocessor& other) = delete;
 
     // Internal methods to grab and handle the next token
     Token nextProcessed();
@@ -344,7 +338,8 @@ private:
 
     // Macro handling methods
     MacroDef findMacro(Token directive);
-    std::pair<syntax::MacroActualArgumentListSyntax*, Trivia> handleTopLevelMacro(Token directive);
+    std::pair<syntax::MacroActualArgumentListSyntax*, Trivia> handleTopLevelMacro(
+        Token directive, const MacroDef& macro);
     bool expandMacro(MacroDef macro, MacroExpansion& expansion,
                      syntax::MacroActualArgumentListSyntax* actualArgs);
     bool expandIntrinsic(MacroIntrinsic intrinsic, MacroExpansion& expansion);
@@ -530,8 +525,8 @@ private:
     };
     SmallVector<MacroBufferFrame> pendingMacroFrames;
 
-    // The include directives that have been encountered thus far in the preprocessor.
-    std::vector<IncludeMetadata> includeDirectives;
+    // Metadata collected while preprocessing, like include and macro usages.
+    PreprocessorMetadata metadata;
 
     // Helper struct for entries on the keyword version stack.
     struct KeywordVersionState {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Builds the vendored Slang and fmt with CMake in `OUT_DIR`, then the C++
+//! Builds the vendored Slang and its dependencies with CMake in `OUT_DIR`, then the C++
 //! shim with `cxx-build`. See `doc/design/slang-in-process.md`, "Build".
 
 #[path = "build/support.rs"]
@@ -49,10 +49,20 @@ fn main() {
         .define("SLANG_USE_MIMALLOC", "OFF")
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         .define("CMAKE_CXX_SCAN_FOR_MODULES", "OFF")
+        .define("SLANG_USE_SYSTEM_FMT", "OFF")
+        .define("SLANG_USE_SYSTEM_BOOST", "OFF")
+        .define("SLANG_USE_SYSTEM_TOMLPLUSPLUS", "OFF")
         .define("FETCHCONTENT_SOURCE_DIR_FMT", src.join("fmt"))
+        .define(
+            "FETCHCONTENT_SOURCE_DIR_TOMLPLUSPLUS",
+            src.join("tomlplusplus"),
+        )
+        .define(
+            "FETCHCONTENT_SOURCE_DIR_BOOST_REGEX",
+            src.join("boost_regex"),
+        )
         .define("FETCHCONTENT_FULLY_DISCONNECTED", "ON")
-        .define("FETCHCONTENT_TRY_FIND_PACKAGE_MODE", "NEVER")
-        .define("CMAKE_DISABLE_FIND_PACKAGE_Boost", "ON");
+        .define("FETCHCONTENT_TRY_FIND_PACKAGE_MODE", "NEVER");
     // CMake rejects a generator that differs from the build directory's.
     let cache = fs::read_to_string(out.join("build/CMakeCache.txt")).ok();
     if let Some(generator) = support::generator(cache.as_deref(), which::which("ninja").is_ok()) {
@@ -77,7 +87,6 @@ fn main() {
         .include(src.join("slang/include"))
         .include(src.join("slang/external"))
         .include(build.join("source"))
-        .include(src.join("fmt/include"))
         .define("SLANG_STATIC_DEFINE", None)
         .define("SLANG_BOOST_SINGLE_HEADER", None)
         .define("SLANG_USE_THREADS", None)
@@ -90,7 +99,6 @@ fn main() {
         build.join("lib").display()
     );
     println!("cargo:rustc-link-lib=static=svlang");
-    println!("cargo:rustc-link-lib=static=fmt");
 }
 
 /// Stops the build before configuring if the compiler, CMake or Python

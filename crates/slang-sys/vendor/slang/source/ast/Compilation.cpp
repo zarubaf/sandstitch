@@ -9,13 +9,14 @@
 
 #include "ElabVisitors.h"
 #include "builtins/Builtins.h"
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <mutex>
 
 #include "slang/ast/ScriptSession.h"
 #include "slang/ast/SystemSubroutine.h"
 #include "slang/ast/types/TypePrinter.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
+#include "slang/diagnostics/Diagnostics.h"
 #include "slang/diagnostics/LookupDiags.h"
 #include "slang/parsing/Parser.h"
 #include "slang/parsing/Preprocessor.h"
@@ -316,6 +317,9 @@ const RootSymbol& Compilation::getRoot(bool skipDefParamsAndBinds) {
     auto guard = ScopeGuard([this] { finalizing = false; });
 
     auto isValidTop = [&](auto& definition) {
+        if (hasFlag(CompilationFlags::AllowInvalidTop))
+            return true;
+
         // All parameters must have defaults.
         for (auto& param : definition.parameters) {
             if (!param.hasDefault() &&
@@ -1686,31 +1690,55 @@ void Compilation::addDiagnostics(const Diagnostics& diagnostics) {
         addDiag(diag);
 }
 
+static const flat_hash_set<DiagCode> BadLookupDiags = {
+    diag::ScopeIndexOutOfRange,
+    diag::InvalidScopeIndexExpression,
+    diag::CouldNotResolveHierarchicalPath,
+    diag::DotIntoInstArray,
+};
+
+static bool shouldReportUninstantiatedDiag(const DiagCode& code) {
+    switch (code.getSubsystem()) {
+        case DiagSubsystem::Declarations:
+            return true;
+        case DiagSubsystem::Lookup:
+            return !BadLookupDiags.contains(code);
+        default:
+            return false;
+    }
+}
+
 Diagnostic& Compilation::addDiag(Diagnostic diag) {
     SLANG_ASSERT(!isFrozen());
 
-    if (diagsDisabled) {
+    auto suppressDiag = [&]() -> Diagnostic& {
         tempDiag = std::move(diag);
         return tempDiag;
-    }
+    };
 
-    auto isSuppressed = [](const Symbol* symbol) {
+    if (diagsDisabled)
+        return suppressDiag();
+
+    auto isInstantiated = [](const Symbol* symbol) {
         while (symbol) {
             if (symbol->kind == SymbolKind::GenerateBlock)
-                return symbol->as<GenerateBlockSymbol>().isUninstantiated;
+                return !symbol->as<GenerateBlockSymbol>().isUninstantiated;
 
             auto scope = symbol->getParentScope();
             symbol = scope ? &scope->asSymbol() : nullptr;
         }
-        return false;
+        return true;
     };
 
     // Filter out diagnostics that came from inside an uninstantiated generate block.
     SLANG_ASSERT(diag.symbol);
     SLANG_ASSERT(diag.location);
-    if (isSuppressed(diag.symbol)) {
-        tempDiag = std::move(diag);
-        return tempDiag;
+
+    if (!isInstantiated(diag.symbol)) {
+        if (!hasFlag(CompilationFlags::CheckUninstantiated) ||
+            !shouldReportUninstantiatedDiag(diag.code)) {
+            return suppressDiag();
+        }
     }
 
     const bool isError = diag.isError();
@@ -1955,9 +1983,13 @@ void Compilation::checkDPIMethods(std::span<const SubroutineSymbol* const> dpiIm
             continue;
         }
 
+        // The export directive counts as a use of the subroutine, since it can be
+        // called from the C side; mark it referenced so it isn't flagged as unused.
+        auto& sub = symbol->as<SubroutineSymbol>();
+        noteReference(sub);
+
         // This check is a little verbose because we're avoiding issuing an error if the
         // functionOrTask keyword is invalid, i.e. not 'function' or 'task'.
-        auto& sub = symbol->as<SubroutineSymbol>();
         if ((sub.subroutineKind == SubroutineKind::Function &&
              syntax->functionOrTask.kind == TokenKind::TaskKeyword) ||
             (sub.subroutineKind == SubroutineKind::Task &&
@@ -2017,7 +2049,6 @@ void Compilation::checkDPIMethods(std::span<const SubroutineSymbol* const> dpiIm
 
             auto [nameIt, nameInserted] = nameMap.emplace(cId, &sub);
             if (!nameInserted) {
-                shouldRecordResolved = false;
                 if (!checkSignaturesMatch(sub, *nameIt->second)) {
                     auto& diag = scope->addDiag(diag::DPISignatureMismatch, syntax->name.range());
                     diag << cId;
@@ -2447,8 +2478,10 @@ std::pair<Compilation::DefinitionLookupResult, bool> Compilation::resolveConfigR
 
 Diagnostic* Compilation::errorMissingDef(std::string_view name, const Scope& scope,
                                          SourceRange sourceRange, DiagCode code) const {
-    if (hasFlag(CompilationFlags::IgnoreUnknownModules) || scope.isUninstantiated() || name.empty())
+    if (hasFlag(CompilationFlags::IgnoreUnknownModules) || name.empty() ||
+        (scope.isUninstantiated() && !hasFlag(CompilationFlags::CheckUninstantiated))) {
         return nullptr;
+    }
 
     if (auto def = getExternDefinition(name, scope)) {
         auto& diag = scope.addDiag(diag::MissingExternModuleImpl, getExternNameToken(*def).range());

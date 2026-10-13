@@ -21,8 +21,8 @@ class CovergroupType;
 
 /// A collection of type printing options.
 struct SLANG_EXPORT TypePrintingOptions {
-    /// Add single quotes around type names.
-    bool addSingleQuotes = false;
+    /// Optionally add quotes around type names.
+    std::optional<char> quoteChar;
 
     /// Elide the names of scopes containing the types.
     bool elideScopeNames = false;
@@ -47,6 +47,9 @@ struct SLANG_EXPORT TypePrintingOptions {
 
     /// Print classes and covergroups as links instead of their expanded type details.
     bool classesAsLinks = false;
+
+    /// Print the constant range of integral types for packed non-array objects
+    bool printIntegralRange = false;
 
     /// Selects a style for anonymous types, either the system ID name
     /// or a more human-friendly name.
@@ -112,6 +115,7 @@ public:
     void visit(const T&, std::string_view) {}
 
 private:
+    void maybeAddQuote();
     void appendMembers(const Scope& scope);
     void appendFriendlyMembers(const Scope& scope);
     void printUnpackedArray(const Type& type);

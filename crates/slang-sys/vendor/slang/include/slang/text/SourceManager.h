@@ -172,6 +172,12 @@ public:
     /// Gets the actual source text for a given file buffer.
     std::string_view getSourceText(BufferID buffer) const;
 
+    /// Gets the source text of the line containing @a location, without the
+    /// trailing newline. Returns an empty view if the buffer is invalid or
+    /// has no text. The returned view is backed by the buffer owned by this
+    /// SourceManager and is valid for as long as the manager is alive.
+    std::string_view getSourceLine(SourceLocation location) const;
+
     /// Gets a value that can be used to sort a given buffer when comparing
     /// to other buffers.
     uint64_t getSortKey(BufferID buffer) const;
@@ -316,7 +322,7 @@ private:
         BufferKind bufferKind = BufferKind::DesignFile;
         std::vector<LineDirectiveInfo> lineDirectives;
 
-        FileInfo() {}
+        FileInfo() = default;
 
         FileInfo(FileData* data, const SourceLibrary* library, SourceLocation includedFrom,
                  uint64_t sortKey) :
@@ -342,7 +348,7 @@ private:
 
         std::string_view macroName;
 
-        ExpansionInfo() {}
+        ExpansionInfo() = default;
         ExpansionInfo(SourceLocation originalLoc, SourceRange expansionRange, bool isMacroArg) :
             originalLoc(originalLoc), expansionRange(expansionRange), isMacroArg(isMacroArg) {}
 

@@ -239,18 +239,19 @@ Expression* Expression::tryConnectPortArray(const ASTContext& context, const Typ
         if (instanceDims.empty())
             return portType.isEquivalent(*ct) ? result : bad();
 
-        // Otherwise, if there are instance dimemsions left there needs to be packed dimensions
-        // in the connection to match up with them.
-        if (ct->kind != SymbolKind::PackedArrayType)
+        // Otherwise, if there are instance dimensions left there needs to be a packed
+        // integral type in the connection (a packed array, struct, union, enum, or a
+        // plain integer) that can be sliced up to match up with them.
+        if (!ct->isIntegral())
             return bad();
     }
-    else if (ct->kind != SymbolKind::PackedArrayType) {
+    else if (!ct->isIntegral()) {
         return nullptr;
     }
 
-    // If we reach this point we're looking at a packed array connection; if there were
+    // If we reach this point we're looking at a packed integral connection; if there were
     // any unpacked dimensions we already stripped them off and accounted for them.
-    // The port type must be integral since we're assigning a packed array.
+    // The port type must be integral since we're assigning a packed value.
     if (!portType.isIntegral())
         return bad();
 
@@ -794,7 +795,7 @@ Expression& Expression::bindAssignmentPattern(Compilation& comp,
     }
 
     if (!assignmentTarget || assignmentTarget->isError()) {
-        if (!assignmentTarget)
+        if (!assignmentTarget && !context.flags.has(ASTFlags::UnknownPortConn))
             context.addDiag(diag::AssignmentPatternNoContext, syntax.sourceRange());
         return badExpr(comp, &bindInvalidAssignmentPattern(context, p));
     }
@@ -1169,7 +1170,7 @@ ConstantValue SimpleAssignmentPatternExpression::applyConversions(EvalContext& c
 
 static const Expression* matchElementValue(
     const ASTContext& context, const Type& elementType, const FieldSymbol* targetField,
-    SourceRange sourceRange,
+    const Type& assignmentTargetType, const StructuredAssignmentPatternSyntax& syntax,
     std::span<const StructuredAssignmentPatternExpression::TypeSetter> typeSetters,
     const Expression* defaultSetter) {
 
@@ -1226,8 +1227,8 @@ static const Expression* matchElementValue(
             if (type.isError() || field.name.empty())
                 return nullptr;
 
-            auto elemExpr = matchElementValue(context, type, &field, sourceRange, typeSetters,
-                                              defaultSetter);
+            auto elemExpr = matchElementValue(context, type, &field, assignmentTargetType, syntax,
+                                              typeSetters, defaultSetter);
             if (!elemExpr)
                 return nullptr;
 
@@ -1236,15 +1237,16 @@ static const Expression* matchElementValue(
 
         auto& comp = context.getCompilation();
         return comp.emplace<SimpleAssignmentPatternExpression>(elementType, /* isLValue */ false,
-                                                               elements.copy(comp), sourceRange);
+                                                               elements.copy(comp),
+                                                               syntax.sourceRange());
     }
 
     if (elementType.isArray() && elementType.hasFixedRange()) {
         auto nestedElemType = elementType.getArrayElementType();
         SLANG_ASSERT(nestedElemType);
 
-        auto elemExpr = matchElementValue(context, *nestedElemType, nullptr, sourceRange,
-                                          typeSetters, defaultSetter);
+        auto elemExpr = matchElementValue(context, *nestedElemType, targetField,
+                                          assignmentTargetType, syntax, typeSetters, defaultSetter);
         if (!elemExpr)
             return nullptr;
 
@@ -1255,7 +1257,8 @@ static const Expression* matchElementValue(
 
         auto& comp = context.getCompilation();
         return comp.emplace<SimpleAssignmentPatternExpression>(elementType, /* isLValue */ false,
-                                                               elements.copy(comp), sourceRange);
+                                                               elements.copy(comp),
+                                                               syntax.sourceRange());
     }
 
     // Finally, if we have a default then it must now be assignment compatible.
@@ -1264,12 +1267,15 @@ static const Expression* matchElementValue(
 
     // Otherwise there's no setter for this element, which is an error.
     if (targetField) {
-        auto& diag = context.addDiag(diag::AssignmentPatternNoMember, sourceRange);
+        auto& diag = context.addDiag(diag::AssignmentPatternNoMember,
+                                     syntax.getFirstToken().range());
         diag << targetField->name;
         diag.addNote(diag::NoteDeclarationHere, targetField->location);
     }
     else {
-        context.addDiag(diag::AssignmentPatternMissingElements, sourceRange);
+        SLANG_ASSERT(assignmentTargetType.hasFixedRange());
+        context.addDiag(diag::AssignmentPatternMissingElements, syntax.getFirstToken().range())
+            << assignmentTargetType;
     }
 
     return nullptr;
@@ -1389,7 +1395,7 @@ Expression& StructuredAssignmentPatternExpression::forStruct(
             continue;
         }
 
-        auto expr = matchElementValue(context, fieldType, &field, sourceRange, typeSetters,
+        auto expr = matchElementValue(context, fieldType, &field, type, syntax, typeSetters,
                                       defaultSetter);
         if (!expr) {
             bad = true;
@@ -1490,7 +1496,12 @@ Expression& StructuredAssignmentPatternExpression::forFixedArray(
     std::optional<const Expression*> cachedVal;
     auto arrayRange = type.getFixedRange();
 
-    for (int32_t i = arrayRange.lower(); i <= arrayRange.upper(); i++) {
+    // Elements are stored from the leftmost declared index to the rightmost, so
+    // we walk the range in that order (which is reversed for descending ranges)
+    // to ensure keyed indices map to the correct element slot.
+    const int32_t step = arrayRange.isDescending() ? -1 : 1;
+    int32_t i = arrayRange.left;
+    for (uint32_t count = arrayRange.width(); count > 0; count--, i += step) {
         // If we already have a setter for this index we don't have to do anything else.
         if (auto it = indexMap.find(i); it != indexMap.end()) {
             elements.push_back(it->second);
@@ -1498,8 +1509,8 @@ Expression& StructuredAssignmentPatternExpression::forFixedArray(
         }
 
         if (!cachedVal) {
-            cachedVal = matchElementValue(context, elementType, nullptr, syntax.sourceRange(),
-                                          typeSetters, defaultSetter);
+            cachedVal = matchElementValue(context, elementType, nullptr, type, syntax, typeSetters,
+                                          defaultSetter);
             if (!cachedVal.value()) {
                 bad = true;
                 break;
@@ -1561,7 +1572,7 @@ Expression& StructuredAssignmentPatternExpression::forDynamicArray(
     // If there is a default setter expression, translate it to the target type
     // of the array, and store that in case we need it to do constant evaluation.
     if (defaultSetter) {
-        auto matched = matchElementValue(context, elementType, nullptr, syntax.sourceRange(), {},
+        auto matched = matchElementValue(context, elementType, nullptr, type, syntax, {},
                                          defaultSetter);
         if (!matched)
             bad = true;
@@ -1572,7 +1583,9 @@ Expression& StructuredAssignmentPatternExpression::forDynamicArray(
     SmallVector<const Expression*> elements;
     if (indexMap.size() != maxIndex + 1 && !defaultSetter) {
         if (!bad) {
-            context.addDiag(diag::AssignmentPatternMissingElements, sourceRange);
+            context.addDiag(diag::AssignmentPatternMissingDynamicElements,
+                            syntax.getFirstToken().range())
+                << maxIndex + 1 << type;
             bad = true;
         }
     }

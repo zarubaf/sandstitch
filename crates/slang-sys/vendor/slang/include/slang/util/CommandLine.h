@@ -9,7 +9,6 @@
 
 #include <cctype>
 #include <deque>
-#include <fmt/core.h>
 #include <functional>
 #include <map>
 #include <optional>
@@ -284,6 +283,18 @@ public:
     void addEnum(std::string_view name, std::optional<T>& value, std::string_view desc,
                  std::string_view valueName = {}, bitmask<CommandLineFlags> flags = {});
 
+    /// Sets the group into which subsequently registered options will be placed
+    /// for the purpose of organizing help text output. All options added after a
+    /// call to this function will be associated with the given @a name until it is
+    /// changed by another call. Passing an empty string reverts to the default,
+    /// ungrouped section.
+    ///
+    /// Groups are displayed in help text in the order in which they are first seen.
+    /// Grouping has no effect on how options are parsed.
+    ///
+    /// @param name the name of the group to place subsequently added options into
+    void setGroup(std::string_view name);
+
     /// Set a variable that will receive any positional arguments provided
     /// on the command line. They will be returned as a list of strings.
     ///
@@ -324,10 +335,6 @@ public:
     /// @returns a string containing an error message if the @a value is malformed.
     std::string addRenameCommand(std::string_view value);
 
-    /// Parse the provided command line (C-style).
-    /// @return true on success, false if any errors occur.
-    bool parse(int argc, const char* const argv[]);
-
     /// Represents an error encountered while parsing command line arguments.
     struct Error {
         /// A human-readable error message.
@@ -365,6 +372,10 @@ public:
         ParseOptions() {}
     };
 
+    /// Parse the provided command line (C-style).
+    /// @return true on success, false if any errors occur.
+    bool parse(int argc, const char* const argv[], const ParseOptions& options = {});
+
     /// Parse the provided command line (space delimited, with handling of
     /// quoted arguments).
     /// @return true on success, false if an errors occurs.
@@ -385,7 +396,13 @@ public:
 
     /// Gets a string representing program help text, based on registered flags.
     /// @a overview text is a human friendly description of what the program does.
-    std::string getHelpText(std::string_view overview) const;
+    /// Option descriptions are word-wrapped to @a maxWidth columns; if @a maxWidth
+    /// is 0 the current terminal width is queried, falling back to a default when
+    /// it can't be determined.
+    std::string getHelpText(std::string_view overview, size_t maxWidth = 0) const;
+
+    /// Gets a list of help options based on registered flags.
+    std::vector<std::pair<std::string, std::string>> getHelpOptions() const;
 
 private:
     using OptionStorage =
@@ -402,6 +419,7 @@ private:
         std::string desc;
         std::string valueName;
         std::string allArgNames;
+        std::string group;
         bitmask<CommandLineFlags> flags;
 
         explicit Option(CommandLine& parent) : parent(parent) {}
@@ -536,6 +554,7 @@ private:
     std::map<std::string, std::string> cmdRename;
 
     std::string programName;
+    std::string currentGroup;
     std::vector<Error> errors;
 };
 
@@ -551,9 +570,9 @@ void CommandLine::addEnum(std::string_view name, std::optional<T>& value, std::s
         for (auto enumVal : Traits::values) {
             if (!validOptions.empty())
                 validOptions += ", ";
-            validOptions += "'";
+            validOptions += '\'';
             validOptions += CommandLine::toKebabCase(toString(enumVal));
-            validOptions += "'";
+            validOptions += '\'';
         }
         return validOptions;
     };
@@ -568,8 +587,8 @@ void CommandLine::addEnum(std::string_view name, std::optional<T>& value, std::s
             }
         }
 
-        return fmt::format("invalid value '{}', valid options are: {}", str,
-                           buildValidOptionsList());
+        return "invalid value '" + std::string(str) +
+               "', valid options are: " + buildValidOptionsList();
     };
 
     // Build description with valid options listed

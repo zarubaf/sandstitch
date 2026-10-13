@@ -27,17 +27,34 @@ class Symbol;
 class DiagArgFormatter;
 class DiagnosticClient;
 class SourceManager;
+class WaiverManager;
 
-struct SLANG_EXPORT ReportedDiagnostic {
+/// Data shared by primary diagnostics and their associated notes after preparation for reporting.
+struct SLANG_EXPORT ReportedDiagnosticInfo {
     const Diagnostic& originalDiagnostic;
-    std::span<const SourceLocation> expansionLocs;
+    SmallVector<SourceLocation> expansionLocs;
     std::span<const SourceRange> ranges;
     SourceLocation location;
-    std::string_view formattedMessage;
-    DiagnosticSeverity severity = DiagnosticSeverity::Ignored;
+    std::string formattedMessage;
     bool shouldShowIncludeStack = false;
 
-    ReportedDiagnostic(const Diagnostic& original) : originalDiagnostic(original) {}
+    ReportedDiagnosticInfo(const Diagnostic& original) : originalDiagnostic(original) {}
+};
+
+/// A note associated with a ReportedDiagnostic.
+struct SLANG_EXPORT ReportedNote : ReportedDiagnosticInfo {
+    ReportedNote(ReportedDiagnosticInfo&& info) : ReportedDiagnosticInfo(std::move(info)) {}
+};
+
+/// A primary diagnostic prepared for reporting to a DiagnosticClient.
+struct SLANG_EXPORT ReportedDiagnostic : ReportedDiagnosticInfo {
+    std::vector<ReportedNote> notes;
+    DiagnosticSeverity severity;
+
+    ReportedDiagnostic(const Diagnostic& original, DiagnosticSeverity severity) :
+        ReportedDiagnosticInfo(original), severity(severity) {}
+    ReportedDiagnostic(ReportedDiagnosticInfo&& info, DiagnosticSeverity severity) :
+        ReportedDiagnosticInfo(std::move(info)), severity(severity) {}
 };
 
 /// The DiagnosticEngine is the central point for controlling how diagnostics are
@@ -61,6 +78,9 @@ public:
 
     /// Adds a client which will receive all future diagnostics that are issued.
     void addClient(const std::shared_ptr<DiagnosticClient>& client);
+
+    /// Removes a previously added client from the engine.
+    void removeClient(const std::shared_ptr<DiagnosticClient>& client);
 
     /// Clears all previously registered clients from the engine.
     void clearClients();
@@ -119,6 +139,7 @@ public:
     /// Sets the severity for the given diagnostic. If this is a built-in diagnostic
     /// this will essentially override its default severity. Otherwise this can
     /// be used to define a new user-specified diagnostic.
+    /// Note diagnostics can only be set to Note or Ignored; other severities are unsupported.
     void setSeverity(DiagCode code, DiagnosticSeverity severity);
 
     /// Sets the baseline severity for the given diagnostic.
@@ -171,6 +192,12 @@ public:
     /// This applies to all natural warnings, regardless of whether they've been upgraded
     /// to an error.
     std::error_code addIgnoreMacroPaths(std::string_view pattern);
+
+    /// Installs a waiver manager, which can control diagnostics via external config files.
+    void setWaiverManager(std::shared_ptr<WaiverManager> manager);
+
+    /// Gets the waiver manager, if configured.
+    [[nodiscard]] std::shared_ptr<WaiverManager> getWaiverManager() const { return waiverManager; }
 
     /// Sets a custom formatter function for the given type. This is used to
     /// provide formatting for diagnostic arguments of a custom type.
@@ -290,7 +317,9 @@ private:
     std::optional<DiagnosticSeverity> findPerBufferSeverity(DiagCode code, SourceLocation location,
                                                             bool& overrideWarnAsError) const;
 
-    bool issueImpl(const Diagnostic& diagnostic, DiagnosticSeverity severity);
+    // Resolves and formats a diagnostic for reporting. Returns nullopt if the diagnostic is
+    // suppressed by a path filter or waiver. Note diagnostics are never suppressed here.
+    std::optional<ReportedDiagnosticInfo> getReportedDiag(const Diagnostic& diagnostic);
 
     template<typename TDirective>
     void setMappingsFromPragmasImpl(BufferID buffer, std::span<const TDirective> directives,
@@ -342,6 +371,9 @@ private:
     // A list of path patterns in which to suppress warnings.
     std::vector<std::filesystem::path> ignoreWarnPatterns;
     std::vector<std::filesystem::path> ignoreMacroWarnPatterns;
+
+    // Optional waiver manager for external waiver file support.
+    std::shared_ptr<WaiverManager> waiverManager;
 
     // A list of all registered clients that receive issued diagnostics.
     std::vector<std::shared_ptr<DiagnosticClient>> clients;
