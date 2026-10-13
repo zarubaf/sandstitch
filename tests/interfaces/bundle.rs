@@ -24,7 +24,7 @@ module duplex import bpkg::*; (
   output struct packed { req_t req; rsp_t rsp; } ch_o
 );
 endmodule
-module pad (inout wire [3:0] pad_io);
+module pad import bpkg::*; (input req_t req_i, output req_t req_o, inout wire [3:0] pad_io);
 endmodule
 module node import bpkg::*; (
   input  req_t [1:0] req_i,
@@ -536,19 +536,30 @@ fn export_without_prefix_keeps_both_directions() {
 
 #[test]
 fn inout_members_pair_with_inouts() {
+    // `req` in both directions makes `connect` pair by direction, so the
+    // inout pairs only because inouts pair with inouts.
     let sources = Sources::new(&[PKG, MODS]);
     let pad = sources.import("pad");
-    pad.def_intf_members("bus", [("pad", pad.get_port("pad_io").to_port_slice())]);
+    pad.def_intf_members(
+        "bus",
+        [
+            ("req", pad.get_port("req_o").to_port_slice()),
+            ("req", pad.get_port("req_i").to_port_slice()),
+            ("pad", pad.get_port("pad_io").to_port_slice()),
+        ],
+    );
     let build = |by_hand: bool| {
         let top = ModDef::new("top");
         let a = top.instantiate(&pad, Some("a"), None);
         let b = top.instantiate(&pad, Some("b"), None);
         if by_hand {
+            a.get_port("req_o").connect(&b.get_port("req_i"));
+            b.get_port("req_o").connect(&a.get_port("req_i"));
             a.get_port("pad_io").connect(&b.get_port("pad_io"));
         } else {
             a.get_intf("bus").connect(&b.get_intf("bus"), false);
         }
-        top.emit(EmitOptions::default())
+        sources.emit_checked(&top)
     };
     assert_eq!(build(false), build(true));
 }
