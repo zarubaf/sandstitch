@@ -6,17 +6,25 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde_json::Value;
 
 use slang_rs::str2tmpfile;
+use slang_rs::sys::{self, AstJson, Request, Severity, Stage};
 use tempfile::NamedTempFile;
 use topstitch::*;
 
-/// The Slang binary: `SLANG_PATH`, or `slang` on the `PATH`.
-pub fn slang() -> String {
-    std::env::var("SLANG_PATH").unwrap_or_else(|_| "slang".into())
+/// Runs Slang in-process with `args` and `files`; panics if Slang itself
+/// fails (an exception, not a diagnostic).
+fn run_slang(files: &[&Path], args: Vec<String>, ast_json: AstJson) -> sys::Response {
+    let mut all = args;
+    all.extend(files.iter().map(|f| f.to_str().unwrap().to_string()));
+    sys::run(&Request {
+        args: all,
+        stage: Stage::Elaborate,
+        ast_json,
+    })
+    .unwrap_or_else(|e| panic!("running Slang: {e}"))
 }
 
 /// Elaborates `files` plus `emitted` under `top` with width and multiple
@@ -61,53 +69,43 @@ fn elaborate_with(
     top: &str,
 ) -> Result<(), String> {
     let rtl = str2tmpfile(emitted).unwrap();
-    let output = Command::new(slang())
-        .args(args)
-        .args(files)
-        .arg(rtl.path())
-        .args(["--top", top])
-        .args([
-            "-Wport-width-trunc",
-            "-Wport-width-expand",
-            "-Wwidth-trunc",
-            "-Wwidth-expand",
-            "-Wmultiple-cont-assigns",
-        ])
-        .output()
-        .expect("running Slang");
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if output.status.success() && text.contains("Build succeeded: 0 errors, 0 warnings") {
+    let mut all: Vec<String> = args.to_vec();
+    for arg in [
+        "--top",
+        top,
+        "-Wport-width-trunc",
+        "-Wport-width-expand",
+        "-Wwidth-trunc",
+        "-Wwidth-expand",
+        "-Wmultiple-cont-assigns",
+    ] {
+        all.push(arg.to_string());
+    }
+    let mut sources: Vec<&Path> = files.to_vec();
+    sources.push(rtl.path());
+    let response = run_slang(&sources, all, AstJson::None);
+    let clean = response
+        .diagnostics
+        .iter()
+        .all(|d| d.severity < Severity::Warning);
+    if response.ok && clean {
         Ok(())
     } else {
-        Err(text)
+        Err(response.rendered)
     }
 }
 
 /// Runs Slang on `files` plus `extra` with `args` and returns its AST JSON.
 fn ast_json(files: &[&Path], extra: &[&str], args: &[&str]) -> Result<Value, String> {
     let extra: Vec<NamedTempFile> = extra.iter().map(|s| str2tmpfile(s).unwrap()).collect();
-    let json = NamedTempFile::new().unwrap();
-    let output = Command::new(slang())
-        .args(files)
-        .args(extra.iter().map(|f| f.path()))
-        .args(args)
-        .arg("--ast-json")
-        .arg(json.path())
-        .output()
-        .expect("running Slang");
-    if !output.status.success() {
-        return Err(format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    let args = args.iter().map(|a| a.to_string()).collect();
+    let mut files: Vec<&Path> = files.to_vec();
+    files.extend(extra.iter().map(|f| f.path()));
+    let response = run_slang(&files, args, AstJson::Json { source_info: false });
+    if !response.ok {
+        return Err(response.rendered);
     }
-    let text = std::fs::read_to_string(json.path()).unwrap();
-    Ok(serde_json::from_str(&text).unwrap())
+    Ok(serde_json::from_str(&response.ast_json).unwrap())
 }
 
 /// The members of the body of the top-level instance `top` in Slang's AST

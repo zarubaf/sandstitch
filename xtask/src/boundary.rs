@@ -83,6 +83,65 @@ fn line_violates(line: &str) -> bool {
         .any(|m| !benign_token(m.as_str(), &line[m.end()..]) && FORBIDDEN.is_match(m.as_str()))
 }
 
+/// Slang is reached through `slang-rs` only: of all manifests, only
+/// `crates/slang-rs/Cargo.toml` may depend on `slang-sys`, and nothing under
+/// `src/` may name `slang_rs::sys` or `slang_sys`.
+fn check_slang_sys(root: &Path) -> Vec<String> {
+    static DEPENDS: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r#"^\s*(slang[-_]sys\s*[=.]|\[[^\]]*dependencies\.slang[-_]sys\]|.*package\s*=\s*"slang-sys")"#,
+        )
+        .unwrap()
+    });
+    static NAMES: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"slang_rs\s*::\s*sys\b|\bslang_sys\b").unwrap());
+
+    let mut manifests = Vec::new();
+    collect_manifests(root, &mut manifests);
+    let mut sources = Vec::new();
+    collect(&root.join("src"), &mut sources);
+    let mut out = Vec::new();
+    let mut scan = |files: &mut Vec<PathBuf>, hit: &dyn Fn(&Path, &str) -> bool| {
+        files.sort();
+        for f in files.iter() {
+            let Ok(text) = std::fs::read_to_string(f) else {
+                continue;
+            };
+            let rel = f.strip_prefix(root).unwrap_or(f);
+            for (i, line) in text.lines().enumerate() {
+                if hit(rel, line) {
+                    out.push(format!("{}:{}", rel.display(), i + 1));
+                }
+            }
+        }
+    };
+    scan(&mut manifests, &|rel, line| {
+        rel != Path::new("crates/slang-rs/Cargo.toml") && DEPENDS.is_match(line)
+    });
+    scan(&mut sources, &|_, line| NAMES.is_match(line));
+    out
+}
+
+/// Every `Cargo.toml` below `dir`, except in build output, vendored code and
+/// hidden directories (worktrees, `.git`).
+fn collect_manifests(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        if p.is_dir() {
+            if !name.starts_with('.') && name != "target" && name != "vendor" {
+                collect_manifests(&p, out);
+            }
+        } else if name == "Cargo.toml" {
+            out.push(p);
+        }
+    }
+}
+
 /// Returns `path:line` for every offending line.
 pub fn check_repo(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
@@ -93,7 +152,7 @@ pub fn check_repo(root: &Path) -> Vec<String> {
         }
     }
     files.sort();
-    let mut out = Vec::new();
+    let mut out = check_slang_sys(root);
     for f in files {
         let Ok(text) = std::fs::read_to_string(&f) else {
             continue;
@@ -210,5 +269,55 @@ mod tests {
             write(d.path(), &format!("src/f{i}.rs"), &format!("{l}\n"));
         }
         assert_eq!(check_repo(d.path()).len(), 5);
+    }
+
+    #[test]
+    fn only_slang_rs_depends_on_slang_sys() {
+        let d = tempfile::tempdir().unwrap();
+        write(
+            d.path(),
+            "crates/slang-rs/Cargo.toml",
+            "[dependencies]\nslang-sys = { path = \"../slang-sys\" }\n",
+        );
+        write(
+            d.path(),
+            "crates/slang-sys/Cargo.toml",
+            "[package]\nname = \"slang-sys\"\n",
+        );
+        assert!(check_slang_sys(d.path()).is_empty());
+        write(
+            d.path(),
+            "Cargo.toml",
+            "[dev-dependencies]\nslang-sys = { path = \"crates/slang-sys\" }\n",
+        );
+        write(
+            d.path(),
+            "designs/x/Cargo.toml",
+            "[dependencies.slang-sys]\npath = \"../../crates/slang-sys\"\n",
+        );
+        write(
+            d.path(),
+            "xtask/Cargo.toml",
+            "[dependencies]\nslang_sys = { package = \"slang-sys\", path = \"x\" }\n",
+        );
+        assert_eq!(
+            check_slang_sys(d.path()),
+            [
+                "Cargo.toml:2",
+                "designs/x/Cargo.toml:1",
+                "xtask/Cargo.toml:2"
+            ]
+        );
+    }
+
+    #[test]
+    fn src_may_not_name_the_sys_layer() {
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), "src/ok.rs", "use slang_rs::str2tmpfile;\n");
+        write(d.path(), "tests/t.rs", "use slang_rs::sys::run;\n");
+        assert!(check_slang_sys(d.path()).is_empty());
+        write(d.path(), "src/a.rs", "fn f() {}\nuse slang_rs::sys::run;\n");
+        write(d.path(), "src/b/c.rs", "use slang_sys::Request;\n");
+        assert_eq!(check_slang_sys(d.path()), ["src/a.rs:2", "src/b/c.rs:1"]);
     }
 }

@@ -4,7 +4,6 @@
 
 mod boundary;
 mod hygiene;
-mod slang;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -16,13 +15,10 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn run(root: &Path, envs: &[(&str, &Path)], args: &[&str]) -> Result<(), String> {
+fn run(root: &Path, args: &[&str]) -> Result<(), String> {
     eprintln!("+ cargo {}", args.join(" "));
     let mut cmd = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
     cmd.args(args).current_dir(root);
-    for (k, v) in envs {
-        cmd.env(k, v);
-    }
     let status = cmd.status().map_err(|e| format!("spawn cargo: {e}"))?;
     if status.success() {
         Ok(())
@@ -43,10 +39,9 @@ fn report(name: &str, violations: Vec<String>) -> Result<(), String> {
 }
 
 fn ci(root: &Path) -> Result<(), String> {
-    run(root, &[], &["fmt", "--all", "--", "--check"])?;
+    run(root, &["fmt", "--all", "--", "--check"])?;
     run(
         root,
-        &[],
         &[
             "clippy",
             "--workspace",
@@ -59,12 +54,7 @@ fn ci(root: &Path) -> Result<(), String> {
     )?;
     report("hygiene", hygiene::check_repo(root)?)?;
     report("boundary", boundary::check_repo(root))?;
-    let slang = slang::ensure()?;
-    run(
-        root,
-        &[("SLANG_PATH", slang.as_path())],
-        &["test", "--workspace", "--locked"],
-    )
+    run(root, &["test", "--workspace", "--locked"])
 }
 
 fn explain(root: &Path, code: &str) -> Result<(), String> {
@@ -84,9 +74,8 @@ fn main() -> ExitCode {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = match args.as_slice() {
         ["ci"] => ci(&root),
-        ["slang"] => slang::ensure().map(|p| println!("{}", p.display())),
         ["explain", code] => explain(&root, code),
-        _ => Err("usage: cargo xtask <ci | slang | explain <CODE>>".to_string()),
+        _ => Err("usage: cargo xtask <ci | explain <CODE>>".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
