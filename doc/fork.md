@@ -141,15 +141,19 @@ path and keeps the exact version requirements (`=0.22.0`, `=0.65.0`).
   and update the base above.
 - Upstreaming: `git subtree push --prefix crates/slang-rs <fork-url> <branch>`
   or `git format-patch` on commits touching `crates/slang-rs/`.
-- Divergences: runs Slang in-process through `slang-sys`; upstream subprocess
-  and JSON changes are ported by hand. `tests/spdx_test.rs` scans only the crate directory
+- Divergences: runs Slang in-process through `slang-sys` and reads the
+  elaborated design from its typed snapshot (no JSON AST, `serde`, `pest` or
+  `regex`); upstream changes to the subprocess and the JSON extractors cannot
+  be applied and are reimplemented by hand. `tests/spdx_test.rs` scans only the crate directory
   (`CARGO_MANIFEST_DIR`) instead of the whole workspace root;
   `tests/version_test.rs` is deleted (it compared the root package version with
   crates.io and needed network) together with the dev-dependencies only it
   used (`curl`, `toml`, `semver`, `cargo_metadata`, `log`, `env_logger`);
   `[lints.clippy]` allows `collapsible_if`, `unneeded_wildcard_pattern` and
   `while_let_loop` for pre-existing upstream code.
-- Sandstitch extensions:
+- Sandstitch extensions (made on the upstream JSON extractors; the functions
+  named below no longer exist, and `Design` answers the same questions, see
+  `doc/design/slang-in-process.md`):
   - `feat(slang-rs): resolve type parameters, add locations and interface ports`.
   - `feat(slang-rs): parse integral atom types, keep enum and struct signedness
     and list unparsable ports`: the grammar accepts `byte`, `shortint`,

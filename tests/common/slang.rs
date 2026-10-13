@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use slang_rs::str2tmpfile;
-use slang_rs::sys::{self, AstJson, Request, Severity, Stage};
+use slang_rs::sys::{self, Request, Severity, Stage};
 use tempfile::NamedTempFile;
 use topstitch::*;
 
@@ -20,7 +20,6 @@ fn run_slang(files: &[&Path], args: Vec<String>, design: sys::DesignQuery) -> sy
     sys::run(&Request {
         args: all,
         stage: Stage::Elaborate,
-        ast_json: AstJson::None,
         design,
     })
     .unwrap_or_else(|e| panic!("running Slang: {e}"))

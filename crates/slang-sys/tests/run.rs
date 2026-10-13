@@ -7,7 +7,7 @@ use std::io::Write as _;
 use std::path::Path;
 
 use slang_sys::{
-    AstJson, DesignQuery, Diag, Request, Response, Severity, Stage, run, trigger_library_assert,
+    DesignQuery, Diag, Request, Response, Severity, Stage, run, trigger_library_assert,
 };
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
@@ -20,20 +20,12 @@ fn request(args: &[&str], stage: Stage) -> Request {
     Request {
         args: args.iter().map(|a| a.to_string()).collect(),
         stage,
-        ast_json: AstJson::None,
         design: DesignQuery::None,
     }
 }
 
 fn elaborate(args: &[&str]) -> Response {
     run(&request(args, Stage::Elaborate)).unwrap()
-}
-
-/// Like `elaborate`, asking for the AST as JSON.
-fn elaborate_json(args: &[&str]) -> Response {
-    let mut req = request(args, Stage::Elaborate);
-    req.ast_json = AstJson::Json { source_info: false };
-    run(&req).unwrap()
 }
 
 /// A source file with `text`, deleted when dropped.
@@ -59,11 +51,10 @@ fn elaborates_and_lists_deps() {
     let uses = fixture("uses_header.sv");
     let inc = fixture("inc");
     let mut req = request(&["-I", &inc, &uses], Stage::Elaborate);
-    req.ast_json = AstJson::Json { source_info: true };
+    req.design = DesignQuery::Structure;
     let r = run(&req).unwrap();
     assert!(r.ok, "{}", r.rendered);
-    let ast: serde_json::Value = serde_json::from_str(&r.ast_json).unwrap();
-    assert!(ast["design"]["members"].is_array());
+    assert!(r.design.is_some());
     assert!(r.deps.contains(&uses), "{:?}", r.deps);
     assert!(r.deps.contains(&fixture("inc/defs.svh")), "{:?}", r.deps);
     let unique: HashSet<&String> = r.deps.iter().collect();
@@ -102,14 +93,13 @@ fn macro_error_reports_original_location() {
 
 #[test]
 fn missing_source_is_fatal() {
-    let r = elaborate_json(&["/nonexistent/x.sv"]);
+    let r = elaborate(&["/nonexistent/x.sv"]);
     assert!(!r.ok);
     let fatal = with_severity(&r, Severity::Fatal);
     assert_eq!(fatal.len(), 1, "{:?}", r.diagnostics);
     assert!(fatal[0].file.is_empty());
     assert!(fatal[0].message.contains("/nonexistent/x.sv"), "{fatal:?}");
     assert!(r.rendered.contains("/nonexistent/x.sv"), "{}", r.rendered);
-    assert!(r.ast_json.is_empty());
 }
 
 #[test]
@@ -158,7 +148,7 @@ fn missing_include_dir_is_a_warning() {
 
 #[test]
 fn binary_only_option_is_fatal() {
-    let r = elaborate_json(&["--ast-json", "x.json", &fixture("width.sv")]);
+    let r = elaborate(&["--ast-json", "x.json", &fixture("width.sv")]);
     assert!(!r.ok);
     let fatal = with_severity(&r, Severity::Fatal);
     assert!(
@@ -166,7 +156,6 @@ fn binary_only_option_is_fatal() {
         "{:?}",
         r.diagnostics
     );
-    assert!(r.ast_json.is_empty());
 }
 
 #[test]
@@ -188,7 +177,7 @@ fn dependency_file_options_are_fatal() {
     for case in cases {
         let mut args: Vec<&str> = case.to_vec();
         args.push(&width);
-        let r = elaborate_json(&args);
+        let r = elaborate(&args);
         assert!(!r.ok, "{case:?}");
         let fatal = with_severity(&r, Severity::Fatal);
         assert!(
@@ -198,7 +187,6 @@ fn dependency_file_options_are_fatal() {
             "{case:?}: {:?}",
             r.diagnostics
         );
-        assert!(r.ast_json.is_empty(), "{case:?}");
         assert!(!Path::new(out).exists(), "{case:?} wrote a file");
     }
 }
@@ -209,7 +197,7 @@ fn rejected_option_is_rendered() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("deps.txt");
     let out = out.to_str().unwrap();
-    let r = elaborate_json(&["--Mall", out, &width]);
+    let r = elaborate(&["--Mall", out, &width]);
     assert!(!r.ok);
     let fatal = with_severity(&r, Severity::Fatal);
     assert!(
@@ -283,7 +271,6 @@ fn request_owned(args: &[String]) -> Request {
     Request {
         args: args.to_vec(),
         stage: Stage::Elaborate,
-        ast_json: AstJson::None,
         design: DesignQuery::None,
     }
 }

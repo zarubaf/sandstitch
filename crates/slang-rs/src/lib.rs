@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::Deserialize;
-use serde_json::Value;
-use slang_sys::{AstJson, Request, Response, Stage};
+use slang_sys::{Request, Response, Stage};
 use std::fmt;
 use std::fs::write;
 use std::path::{Path, PathBuf};
@@ -11,24 +9,10 @@ use std::path::{Path, PathBuf};
 pub use slang_sys as sys;
 pub use slang_sys::{Design, Diag, Instance, Package, Parameter, Severity};
 
-#[cfg(feature = "differential")]
-mod differential;
-mod extract;
-pub use extract::{
-    Field, InterfacePort, ParameterDef, Port, PortDir, Range, SourceLoc, Type, UnsupportedPort,
-    Variant, extract_instance_interface_ports_from_value,
-    extract_instance_ports_checked_from_value, extract_instance_ports_from_value,
-    extract_interface_ports_from_value, extract_modules, extract_modules_from_value,
-    extract_parameter_defs, extract_parameter_defs_from_value, extract_ports,
-    extract_ports_from_value, extract_type_parameter_names_from_value, parse_type_definition,
+pub use slang_sys::{
+    Field, InterfacePort, ParameterDef, ParameterKind, Port, PortDir, Range, SourceLoc, Type,
+    UnsupportedPort, Variant,
 };
-pub use extract::{
-    ParameterKind, extract_instance_parameter_defs_from_value,
-    extract_overridable_parameters_from_value,
-};
-
-mod hierarchy;
-pub use hierarchy::extract_hierarchy;
 
 mod package;
 pub use package::extract_packages;
@@ -108,38 +92,9 @@ pub const BINARY_ONLY_OPTIONS: [&str; 5] = [
     "-q",
 ];
 
-/// Slang's AST as JSON. It dereferences to [`Value`]. Dropping it is
-/// iterative: a plain `Value` frees nested objects recursively, which
-/// overflows the stack of a small thread for a deeply nested design.
-#[derive(Debug)]
-pub struct Ast(Value);
-
-impl std::ops::Deref for Ast {
-    type Target = Value;
-
-    fn deref(&self) -> &Value {
-        &self.0
-    }
-}
-
-impl Drop for Ast {
-    fn drop(&mut self) {
-        let mut stack = vec![std::mem::take(&mut self.0)];
-        while let Some(value) = stack.pop() {
-            match value {
-                Value::Object(object) => stack.extend(object.into_iter().map(|(_, child)| child)),
-                Value::Array(array) => stack.extend(array),
-                _ => {}
-            }
-        }
-    }
-}
-
 /// The result of a Slang run.
 #[derive(Debug)]
 pub struct SlangOutput {
-    /// Slang's AST, with absolute source paths.
-    pub ast: Ast,
     /// The elaborated design: instances and their ports.
     pub design: Design,
     /// No error or fatal diagnostics.
@@ -215,7 +170,7 @@ pub fn slang_version() -> String {
 
 /// Runs Slang; an error unless the design elaborated without errors.
 pub fn run_slang(cfg: &SlangConfig) -> Result<SlangOutput, SlangError> {
-    let response = request(cfg, Stage::Elaborate, source_info())?;
+    let response = request(cfg, Stage::Elaborate)?;
     if !response.ok {
         return Err(SlangError::from_response(response));
     }
@@ -229,17 +184,17 @@ pub fn run_slang(cfg: &SlangConfig) -> Result<SlangOutput, SlangError> {
 /// source. Returns the failure only if Slang created no compilation (a
 /// missing source, an unknown option).
 pub fn run_slang_keep_design(cfg: &SlangConfig) -> Result<SlangOutput, SlangError> {
-    let response = request(cfg, Stage::Elaborate, source_info())?;
+    let response = request(cfg, Stage::Elaborate)?;
     if response.design.is_none() {
         return Err(SlangError::from_response(response));
     }
     output(response)
 }
 
-/// Runs Slang to parse the sources only, without an AST. Returns the failure
-/// as [`run_slang`] does.
+/// Runs Slang to parse the sources only. Returns the failure as
+/// [`run_slang`] does.
 pub fn check_slang(cfg: &SlangConfig) -> Result<(), SlangError> {
-    let response = request(cfg, Stage::ParseOnly, AstJson::None)?;
+    let response = request(cfg, Stage::ParseOnly)?;
     if response.ok {
         Ok(())
     } else {
@@ -247,26 +202,16 @@ pub fn check_slang(cfg: &SlangConfig) -> Result<(), SlangError> {
     }
 }
 
-/// Source info adds `source_file`/`source_line`/`source_column` to each
-/// symbol, which is used to fill in declaration locations (e.g. `Port::loc`).
-fn source_info() -> AstJson {
-    AstJson::Json { source_info: true }
-}
-
-fn request(cfg: &SlangConfig, stage: Stage, ast_json: AstJson) -> Result<Response, SlangError> {
-    let response = slang_sys::run(&Request {
+fn request(cfg: &SlangConfig, stage: Stage) -> Result<Response, SlangError> {
+    Ok(slang_sys::run(&Request {
         args: arguments(cfg),
         stage,
-        ast_json,
         design: match stage {
             Stage::Elaborate if cfg.signals => slang_sys::DesignQuery::WithSignals,
             Stage::Elaborate => slang_sys::DesignQuery::Structure,
             Stage::ParseOnly => slang_sys::DesignQuery::None,
         },
-    })?;
-    #[cfg(feature = "differential")]
-    differential::check_agreement(&response);
-    Ok(response)
+    })?)
 }
 
 fn arguments(cfg: &SlangConfig) -> Vec<String> {
@@ -326,75 +271,19 @@ fn arguments(cfg: &SlangConfig) -> Vec<String> {
     args
 }
 
-/// Turns a response that carries an AST and a design into the output.
+/// Turns a response of an elaborated run into the output.
 fn output(mut response: Response) -> Result<SlangOutput, SlangError> {
     let Some(design) = response.design.take() else {
         return Err(SlangError::fatal(
             "Slang returned no design for an elaborated run".to_string(),
         ));
     };
-    // Slang reports source paths relative to its working directory, which is
-    // this process's; capture it so they can be made absolute.
-    let ast = std::env::current_dir()
-        .map_err(|e| e.to_string())
-        .and_then(|dir| parse_ast(&response.ast_json, &dir).map_err(|e| e.to_string()));
-    match ast {
-        Ok(ast) => {
-            #[cfg(feature = "differential")]
-            differential::check(&ast, &design);
-            Ok(SlangOutput {
-                ast,
-                design,
-                ok: response.ok,
-                deps: paths(response.deps),
-                diagnostics: response.diagnostics,
-            })
-        }
-        Err(message) => Err(SlangError::fatal(format!("reading Slang's AST: {message}"))),
-    }
-}
-
-/// Parses the AST Slang serialized.
-fn parse_ast(json: &str, working_dir: &Path) -> Result<Ast, serde_json::Error> {
-    let mut json_deserializer = serde_json::Deserializer::from_str(json);
-    // The recursion limit needs to be disabled since slang can produce
-    // deeply nested objects.
-    // Follows the example code here:
-    // https://docs.rs/serde_json/latest/serde_json/struct.Deserializer.html#method.disable_recursion_limit
-    json_deserializer.disable_recursion_limit();
-
-    let stacked_deserializer = serde_stacker::Deserializer::new(&mut json_deserializer);
-    let mut ast = Ast(Value::deserialize(stacked_deserializer)?);
-    absolutize_source_files(&mut ast.0, working_dir);
-
-    Ok(ast)
-}
-
-/// Rewrites the `source_file*` fields added by `--ast-json-source-info`
-/// (relative to Slang's working directory) to absolute, lexically normalized
-/// paths. Pseudo-files such as `<command-line>` are left unchanged.
-fn absolutize_source_files(value: &mut Value, working_dir: &Path) {
-    // Iterative: the AST can be nested deeper than the native stack allows.
-    let mut stack = vec![value];
-    while let Some(value) = stack.pop() {
-        match value {
-            Value::Object(object) => {
-                for (key, child) in object.iter_mut() {
-                    if key.starts_with("source_file") {
-                        if let Value::String(path) = child {
-                            if !path.starts_with('<') {
-                                *path = absolute_path(working_dir, path);
-                            }
-                        }
-                    } else {
-                        stack.push(child);
-                    }
-                }
-            }
-            Value::Array(array) => stack.extend(array.iter_mut()),
-            _ => {}
-        }
-    }
+    Ok(SlangOutput {
+        design,
+        ok: response.ok,
+        deps: paths(response.deps),
+        diagnostics: response.diagnostics,
+    })
 }
 
 /// Joins `path` onto `working_dir` and normalizes `.` and `..` lexically

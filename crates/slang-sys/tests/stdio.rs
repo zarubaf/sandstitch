@@ -7,13 +7,12 @@
 use std::io::Write as _;
 use std::os::fd::RawFd;
 
-use slang_sys::{AstJson, DesignQuery, Request, Response, Stage, run};
+use slang_sys::{DesignQuery, Request, Response, Stage, run};
 
 fn elaborate(args: &[&str]) -> Response {
     run(&Request {
         args: args.iter().map(|a| a.to_string()).collect(),
         stage: Stage::Elaborate,
-        ast_json: AstJson::None,
         design: DesignQuery::None,
     })
     .unwrap()

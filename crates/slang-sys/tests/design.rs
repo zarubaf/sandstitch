@@ -6,8 +6,8 @@ use std::io::Write as _;
 
 use num_bigint::BigInt;
 use slang_sys::{
-    AstJson, DesignQuery, Field, ParameterDef, ParameterKind, Port, PortDir, Range, Request,
-    Signal, Stage, Type, UnsupportedPort, Variant, run,
+    DesignQuery, Field, ParameterDef, ParameterKind, Port, PortDir, Range, Request, Signal, Stage,
+    Type, UnsupportedPort, Variant, run,
 };
 
 /// The ports of top `top` in a design made of `text`.
@@ -21,7 +21,6 @@ fn ports(text: &str, top: &str) -> Vec<Result<Port, UnsupportedPort>> {
             top.to_string(),
         ],
         stage: Stage::Elaborate,
-        ast_json: AstJson::None,
         design: DesignQuery::Structure,
     })
     .unwrap();
@@ -342,7 +341,6 @@ fn design_with(text: &str, top: &str, extra: &[&str], query: DesignQuery) -> sla
     let r = run(&Request {
         args,
         stage: Stage::Elaborate,
-        ast_json: AstJson::None,
         design: query,
     })
     .unwrap();
@@ -597,7 +595,6 @@ fn no_design_without_compilation() {
     let missing = run(&Request {
         args: vec!["/nonexistent/sandstitch/missing.sv".to_string()],
         stage: Stage::Elaborate,
-        ast_json: AstJson::None,
         design: DesignQuery::Structure,
     })
     .unwrap();
@@ -609,7 +606,6 @@ fn no_design_without_compilation() {
     let none = run(&Request {
         args: vec![file.path().to_str().unwrap().to_string()],
         stage: Stage::Elaborate,
-        ast_json: AstJson::None,
         design: DesignQuery::None,
     })
     .unwrap();
@@ -652,6 +648,95 @@ fn anonymous_enum_name() {
         !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()),
         "{name}"
     );
+}
+
+/// The variants' names of the first field of the aggregate `ty`, which must
+/// be an enum named like an anonymous one.
+fn enum_field_variants(ty: &Type) -> Vec<String> {
+    let (Type::Struct { fields, .. } | Type::Union { fields, .. }) = ty else {
+        panic!("not an aggregate: {ty:?}");
+    };
+    match &fields[0].ty {
+        Type::Enum { name, variants, .. } => {
+            assert!(name.contains(".e$"), "{name}");
+            variants.iter().map(|v| v.name.clone()).collect()
+        }
+        other => panic!("not an enum: {other:?}"),
+    }
+}
+
+#[test]
+fn anonymous_enum_in_struct_and_union_ports() {
+    let ports = ports(
+        "module top (\n\
+           input struct packed { enum logic [1:0] {A, B} e; logic f; } s,\n\
+           input union packed { enum logic [1:0] {C, D} e; logic [1:0] g; } u,\n\
+           input struct { enum {E} e; } n);\n\
+         endmodule\n",
+        "top",
+    );
+    let s = ty(&ports, "s");
+    assert_eq!(enum_field_variants(&s), ["A", "B"]);
+    assert_eq!(s.width(), Ok(3));
+    let u = ty(&ports, "u");
+    assert_eq!(enum_field_variants(&u), ["C", "D"]);
+    assert_eq!(u.width(), Ok(2));
+    assert_eq!(enum_field_variants(&ty(&ports, "n")), ["E"]);
+}
+
+#[test]
+fn anonymous_enum_in_package_typedef() {
+    let design = design_with(
+        "package p;\n\
+           typedef struct { enum {A, B} e; logic f; } t;\n\
+         endpackage\n\
+         module top (input p::t x); endmodule\n",
+        "top",
+        &[],
+        DesignQuery::Structure,
+    );
+    let t = &design.packages()["p"]["t"];
+    assert_eq!(t.value, "p::t");
+    let ty = t.ty.as_ref().expect("the alias's type");
+    assert_eq!(enum_field_variants(ty), ["A", "B"]);
+    let port = &design.ports("top").unwrap()[0];
+    assert_eq!(enum_field_variants(&port.as_ref().unwrap().ty), ["A", "B"]);
+}
+
+#[test]
+fn ansi_enum_port_before_aggregate_port() {
+    // Slang v11 resolves the enum port to the error type, without a
+    // diagnostic, when an anonymous struct or union port follows it; the
+    // port is reported as unsupported.
+    for aggregate in ["struct packed { logic f; }", "union packed { logic f; }"] {
+        let ports = ports(
+            &format!("module top (input enum {{A}} e, input {aggregate} a); endmodule\n"),
+            "top",
+        );
+        let e = unsupported(&ports, "e");
+        assert_eq!(e.type_text, "<error>");
+        assert_eq!(e.error, "only integral (bit-vector) types are supported");
+        assert!(matches!(
+            ty(&ports, "a"),
+            Type::Struct { .. } | Type::Union { .. }
+        ));
+    }
+
+    // Declared in the other order, or in the body, both resolve.
+    let reordered = ports(
+        "module top (input struct packed { logic f; } a, input enum {A} e); endmodule\n",
+        "top",
+    );
+    assert!(matches!(ty(&reordered, "e"), Type::Enum { .. }));
+    let in_body = ports(
+        "module top (e, a);\n\
+           input enum {A} e;\n\
+           input struct packed { logic f; } a;\n\
+         endmodule\n",
+        "top",
+    );
+    assert!(matches!(ty(&in_body, "e"), Type::Enum { .. }));
+    assert!(matches!(ty(&in_body, "a"), Type::Struct { .. }));
 }
 
 fn def(name: &str, ty: Type) -> ParameterDef {

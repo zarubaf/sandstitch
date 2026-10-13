@@ -28,8 +28,6 @@ mod ffi {
         args: Vec<String>,
         /// 0: parse only; 1: elaborate.
         stage: u8,
-        ast_json: bool,
-        source_info: bool,
         /// 0: no design; 1: structure; 2: structure and signals.
         design: u8,
     }
@@ -46,7 +44,6 @@ mod ffi {
 
     struct FfiResponse {
         ok: bool,
-        ast_json: String,
         /// Whether a compilation was created and `design` is its snapshot
         /// (the tables are empty when the request asked for no design).
         has_design: bool,
@@ -277,27 +274,15 @@ pub enum Stage {
     Elaborate,
 }
 
-/// Whether a [`run`] serializes the AST, as `slang --ast-json` does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AstJson {
-    None,
-    /// With `source_info`, symbols carry `source_file`, `source_line` and
-    /// `source_column` (`--ast-json-source-info`).
-    Json {
-        source_info: bool,
-    },
-}
-
 /// One Slang run.
 #[derive(Clone, Debug)]
 pub struct Request {
     /// Options of Slang's driver and the sources, as on `slang`'s command
     /// line without the program name. Options only the `slang` binary
     /// defines (`--ast-json`, `--parse-only`, ...) are not accepted; `stage`
-    /// and `ast_json` replace them.
+    /// replaces `--parse-only`.
     pub args: Vec<String>,
     pub stage: Stage,
-    pub ast_json: AstJson,
     /// The design snapshot to build; only a [`Stage::Elaborate`] run builds
     /// one.
     pub design: DesignQuery,
@@ -308,10 +293,6 @@ pub struct Request {
 pub struct Response {
     /// No error or fatal diagnostics in the stages run.
     pub ok: bool,
-    /// Empty unless requested. Also produced after errors, but not after a
-    /// fatal error in option processing (a missing source, an unknown
-    /// option).
-    pub ast_json: String,
     /// `Some` when requested and a compilation was created, also after
     /// errors; `None` when options failed or `design` was not requested.
     pub design: Option<Design>,
@@ -368,18 +349,12 @@ pub fn run(request: &Request) -> Result<Response, Error> {
     if !sets_threads(&args) {
         args.extend(["--threads".to_string(), "1".to_string()]);
     }
-    let (ast_json, source_info) = match request.ast_json {
-        AstJson::None => (false, false),
-        AstJson::Json { source_info } => (true, source_info),
-    };
     let ffi_request = ffi::FfiRequest {
         args,
         stage: match request.stage {
             Stage::ParseOnly => 0,
             Stage::Elaborate => 1,
         },
-        ast_json,
-        source_info,
         design: match request.design {
             DesignQuery::None => 0,
             DesignQuery::Structure => 1,
@@ -416,7 +391,6 @@ pub fn run(request: &Request) -> Result<Response, Error> {
     }
     Ok(Response {
         ok: response.ok,
-        ast_json: response.ast_json,
         design,
         deps,
         diagnostics: response

@@ -1,6 +1,6 @@
 # Slang in-process
 
-Status: accepted, 2026-10-13; step 1 implemented (#17), step 2 (#18) designed. Tracks #5.
+Status: accepted, 2026-10-13; step 1 implemented (#17), step 2 implemented (#18). Tracks #5.
 
 ## Goal
 
@@ -11,7 +11,7 @@ Sandstitch links Slang into the library and calls it in-process. Sandstitch is u
 1. **Link, don't spawn.** Slang is compiled from pinned vendored source and linked statically. The crate does not use any `slang` the user has installed; a project's own Slang for linting or simulation is independent, as with any other frontend.
 1. **Three layers.** `topstitch` import (model concepts) → `slang-rs` (safe typed Rust API, no model concepts) → `slang-sys` (vendored C++, build, `cxx` shim). Slang details stay out of the model and out of the library boundary; `topstitch` does not depend on `slang-sys` directly.
 1. **A narrow shim, not general bindings.** The shim answers the importer's questions and returns plain data. Binding Slang's object graph to Rust is out of scope.
-1. **Two steps.** Step 1 (#17) is implemented: Slang runs in-process and the JSON extractors are kept, so every existing test checks the integration. Step 2 (#18) replaces the JSON AST with a typed snapshot of the elaborated design, checked against the JSON path until it is removed.
+1. **Two steps.** Step 1 (#17): Slang runs in-process. Step 2 (#18): the importer reads a typed snapshot of the elaborated design that the shim builds; there is no JSON AST.
 1. **`slang-rs` diverges from upstream.** xlsynth's `slang-rs` stays subprocess and JSON based. Its fixes are ported by hand; `doc/fork.md` records this.
 1. **One way to build.** The crate always builds its vendored Slang. Linking a prebuilt library is left out until someone needs it: a foreign build can differ in allocator, Boost, position independence and assertion settings in ways that cannot be checked reliably at link time.
 
@@ -45,12 +45,12 @@ One C++ file and a `cxx` bridge in `slang-sys`:
 pub struct Request {
     pub args: Vec<String>,   // Driver options: sources, -I, -D, -G, --top, -y, ... (no argv[0])
     pub stage: Stage,        // ParseOnly | Elaborate
-    pub ast_json: AstJson,   // None | Json { source_info: bool }
+    pub design: DesignQuery, // None | Structure | WithSignals; see step 2
 }
 
 pub struct Response {
     pub ok: bool,                // no error diagnostics in the stages run
-    pub ast_json: String,        // empty unless requested; also produced when !ok
+    pub design: Option<Design>,  // Some when requested and a compilation was created, also when !ok
     pub deps: Vec<String>,       // loaded files: absolute, deduplicated, no macro buffers
     pub diagnostics: Vec<Diag>,  // all diagnostics, including option and file errors
     pub rendered: String,        // the same diagnostics as Slang's plain text
@@ -69,16 +69,16 @@ pub fn run(req: &Request) -> Result<Response, Error>;  // Error: the exception's
 pub const SLANG_VERSION: &str = "11.0";                // the vendored release
 ```
 
-**Options.** `args` holds only options registered by `driver::Driver`, parsed by `Driver::parseCommandLine` as the `slang` binary parses them. Options that only the binary's `main` defines (`--ast-json`, `--ast-json-source-info`, `--parse-only`, `--disable-analysis`, `-q`) are not accepted in `args`; `stage` and `ast_json` replace them. Unless `args` sets the thread count in any form (`-j4`, `-j 4`, `--threads 4`, `--threads=4`), the shim adds `--threads 1`, so concurrent calls do not each start a thread pool.
+**Options.** `args` holds only options registered by `driver::Driver`, parsed by `Driver::parseCommandLine` as the `slang` binary parses them. Options that only the binary's `main` defines (`--ast-json`, `--ast-json-source-info`, `--parse-only`, `--disable-analysis`, `-q`) are not accepted in `args`; `stage` and `design` take their place. Unless `args` sets the thread count in any form (`-j4`, `-j 4`, `--threads 4`, `--threads=4`), the shim adds `--threads 1`, so concurrent calls do not each start a thread pool.
 
 **Stages,** in the order `slang` runs them:
 
 1. Process options and load and parse all sources. Option, file and parse errors are recorded. With `Stage::ParseOnly`, stop here.
 1. Create the compilation and elaborate.
 1. Run analysis, as the binary does without `--disable-analysis`.
-1. If requested, serialize the AST with Slang's `ASTSerializer` and `JsonWriter` (the code behind `--ast-json`), including after errors, so that `run_slang_keep_design` keeps working.
+1. If requested, walk the elaborated design into the snapshot (step 2), including after errors, so that `run_slang_keep_design` keeps working.
 
-**Diagnostics.** `Driver` prints some problems directly instead of reporting them as diagnostics: unknown options, missing source files, a bad `--timescale` and unreadable `-f` files as errors; a missing include directory or `--suppress-warnings` path as warnings; and parse progress to stdout. These are captured: constructing the `Driver`, turning colors off, option processing and stage 1 run under one process-wide mutex with `OS::captureOutput` on, and both captured streams are drained before the mutex is released. The captured stderr is split at the `error: `, `warning: ` and `note: ` prefixes `Driver` writes; errors become `Fatal` diagnostics without a file, warnings and notes keep their severity, so an import that the binary accepts with a warning still succeeds. Diagnostics reach the shim through Slang's diagnostic engine, so `-W…`, `-Werror`, `--suppress-warnings`, pragmas and the error limit apply: the shim replaces the driver's text client with a recording client and an uncolored text client of its own, issues the syntax trees' diagnostics itself for `ParseOnly`, and the compilation's (which include the parse diagnostics) for `Elaborate`. Command line errors become `Fatal`. A source that fails to load is `Fatal` but, as in `slang`, the run elaborates the rest; only failed option processing skips elaboration. Elaboration, analysis and serialization run outside the mutex, in parallel; this is sound only because nothing after stage 1 prints, so the shim never calls Slang's reporting functions (`reportParseDiags`, `reportCompilation`, `reportDiagnostics`, `runFullCompilation`, `optionallyWriteDepFiles`), whose output would land in another call's capture. The mutex serializes parsing across concurrent imports. Locations are mapped to where the text is written (inside a macro, its definition; `rendered` keeps Slang's use-site context), and file names are made absolute lexically by the Rust side of `slang-sys` (`absolute_path`, without resolving symbolic links), the same function `slang-rs` applies to AST source paths, so all three agree. Options whose effect lives only in those functions (`--Mall`, `--Minclude`, `--Mmodule`, `--depfile-target`, `--diag-json`, in either spelling) would silently do nothing, so the shim reports each as `Fatal`, in `diagnostics` and in `rendered`, after option processing and skips elaboration. All text fields cross the boundary with `rust::String::lossy`, so invalid UTF-8 in a diagnostic becomes U+FFFD instead of failing the run. `rendered` uses Slang's text client with colors forced off; the shim never writes to the process's stdout or stderr.
+**Diagnostics.** `Driver` prints some problems directly instead of reporting them as diagnostics: unknown options, missing source files, a bad `--timescale` and unreadable `-f` files as errors; a missing include directory or `--suppress-warnings` path as warnings; and parse progress to stdout. These are captured: constructing the `Driver`, turning colors off, option processing and stage 1 run under one process-wide mutex with `OS::captureOutput` on, and both captured streams are drained before the mutex is released. The captured stderr is split at the `error: `, `warning: ` and `note: ` prefixes `Driver` writes; errors become `Fatal` diagnostics without a file, warnings and notes keep their severity, so an import that the binary accepts with a warning still succeeds. Diagnostics reach the shim through Slang's diagnostic engine, so `-W…`, `-Werror`, `--suppress-warnings`, pragmas and the error limit apply: the shim replaces the driver's text client with a recording client and an uncolored text client of its own, issues the syntax trees' diagnostics itself for `ParseOnly`, and the compilation's (which include the parse diagnostics) for `Elaborate`. Command line errors become `Fatal`. A source that fails to load is `Fatal` but, as in `slang`, the run elaborates the rest; only failed option processing skips elaboration. Elaboration, analysis and the design walk run outside the mutex, in parallel; this is sound only because nothing after stage 1 prints, so the shim never calls Slang's reporting functions (`reportParseDiags`, `reportCompilation`, `reportDiagnostics`, `runFullCompilation`, `optionallyWriteDepFiles`), whose output would land in another call's capture. The mutex serializes parsing across concurrent imports. Locations are mapped to where the text is written (inside a macro, its definition; `rendered` keeps Slang's use-site context), and file names are made absolute lexically by the Rust side of `slang-sys` (`absolute_path`, without resolving symbolic links), the same function that makes the snapshot's source paths absolute, so all agree. Options whose effect lives only in those functions (`--Mall`, `--Minclude`, `--Mmodule`, `--depfile-target`, `--diag-json`, in either spelling) would silently do nothing, so the shim reports each as `Fatal`, in `diagnostics` and in `rendered`, after option processing and skips elaboration. All text fields cross the boundary with `rust::String::lossy`, so invalid UTF-8 in a diagnostic becomes U+FFFD instead of failing the run. `rendered` uses Slang's text client with colors forced off; the shim never writes to the process's stdout or stderr.
 
 **Isolation.** Each call runs on its own thread with a 64 MiB stack, joined before `run` returns, so deep nesting does not depend on the caller's stack size (2 MiB for test and spawned threads). Each call builds its own `Driver` and `Compilation`; after constructing the `Driver` the shim turns terminal colors off, since the constructor sets them from whether stderr is a terminal. A C++ exception, including a failed internal assertion, becomes `Err`, except where Slang asserts inside a `noexcept` function or destructor, which terminates. A crash in Slang that is not an exception still ends the host process; this is the cost of running in-process.
 
@@ -87,7 +87,7 @@ pub const SLANG_VERSION: &str = "11.0";                // the vendored release
 The run functions return typed results:
 
 ```rust
-pub struct SlangOutput { pub ast: Ast, pub design: Design, pub ok: bool, pub deps: Vec<PathBuf>, pub diagnostics: Vec<Diag> }
+pub struct SlangOutput { pub design: Design, pub ok: bool, pub deps: Vec<PathBuf>, pub diagnostics: Vec<Diag> }
 pub struct SlangError  { pub diagnostics: Vec<Diag>, pub rendered: String, pub deps: Vec<PathBuf> }
 
 pub fn run_slang(cfg: &SlangConfig) -> Result<SlangOutput, SlangError>;           // ok is true
@@ -95,7 +95,7 @@ pub fn run_slang_keep_design(cfg: &SlangConfig) -> Result<SlangOutput, SlangErro
 pub fn check_slang(cfg: &SlangConfig) -> Result<(), SlangError>;                 // Stage::ParseOnly
 ```
 
-`Ast` is a newtype over `serde_json::Value` that dereferences to it and drops iteratively, so deep ASTs do not overflow small stacks; it derives only `Debug`. Dependencies are always collected from the shim's `deps`, without a `--Mall` file. The S0102 check rejects `--Mall` and the binary-only options listed above in user arguments. A `slang_sys::Error` becomes a `SlangError` with one `Fatal` diagnostic carrying the exception text, `rendered` set to that text, and empty `deps`. Source paths in the AST are made absolute. `slang_version()` returns `SLANG_VERSION`, so specialization cache keys include the version. `Diag` is re-exported from `slang-sys`. No `slang` executable or `SLANG_PATH` is used, and no temporary JSON or dependency files are written. Type structure is still read from the JSON AST and parsed with a regex resolver and a pest grammar; #18 replaces this. `str2tmpfile` is used by the parser and tests.
+Dependencies are always collected from the shim's `deps`, without a `--Mall` file. The S0102 check rejects `--Mall` and the binary-only options listed above in user arguments. A `slang_sys::Error` becomes a `SlangError` with one `Fatal` diagnostic carrying the exception text, `rendered` set to that text, and empty `deps`. `slang_version()` returns `SLANG_VERSION`, so specialization cache keys include the version. `Diag` is re-exported from `slang-sys`. No `slang` executable or `SLANG_PATH` is used, and no temporary JSON or dependency files are written. Types, ports, parameters, the hierarchy and packages come from the snapshot (step 2). `str2tmpfile` is used by the parser and tests.
 
 ### Sandstitch
 
@@ -128,27 +128,11 @@ The shim walks Slang's elaborated symbols and returns a typed snapshot of the de
 
 A `run` with `Stage::Elaborate` and `design` requested builds the snapshot before it returns, on the same thread; nothing of Slang outlives the call, so isolation is as in step 1. A live handle to the `Compilation` would tie Rust lifetimes to Slang's object graph and call into Slang outside that thread; the snapshot holds only what the importer reads.
 
-```rust
-pub struct Request {
-    pub args: Vec<String>,
-    pub stage: Stage,
-    pub design: DesignQuery,     // None | Structure | WithSignals
-}
-
-pub struct Response {
-    pub ok: bool,
-    pub design: Option<Design>,  // Some when requested and a compilation was created
-    pub deps: Vec<String>,
-    pub diagnostics: Vec<Diag>,
-    pub rendered: String,
-}
-```
-
-`DesignQuery::Structure` collects instances, ports, parameters and packages; `WithSignals` adds the nets and variables of each body, which the tests that check emitted RTL and the corpus read. A run whose options fail or that creates no compilation returns `design: None` whatever was requested. While the JSON path exists (see Migration), `Request` also carries `ast_json` and `Response` the serialized AST.
+`DesignQuery::Structure` collects instances, ports, parameters and packages; `WithSignals` adds the nets and variables of each body, which the tests that check emitted RTL and the corpus read. A run whose options fail or that creates no compilation returns `design: None` whatever was requested, and so does one that requests `DesignQuery::None`.
 
 ### What the shim walks
 
-The walker (`shim/design.cc`) follows Slang's AST serializer in what it visits, so that the snapshot covers what the JSON AST covered:
+The walker (`shim/design.cc`) visits:
 
 - **Tops.** `root.topInstances`, in order.
 - **Bodies.** Each `InstanceBodySymbol` once; instances that share a body refer to it. An instance whose body is flagged `InstanceFlags::Uninstantiated` is left out entirely, body and child entry alike. A body's direct members give:
@@ -156,9 +140,9 @@ The walker (`shim/design.cc`) follows Slang's AST serializer in what it visits, 
   - parameters: `ParameterSymbol` (name, type, local flag) and `TypeParameterSymbol` (name, local flag);
   - children: `InstanceSymbol` (instance name, definition name, body), `UninstantiatedDefSymbol` (instance name, definition name), and the members of instantiated `GenerateBlockSymbol`s and valid `GenerateBlockArraySymbol`s, flattened into the body with a hierarchical prefix. A loop generate element's prefix is `name[index]` with the genvar value (`arrayIndex`). Each element of an `InstanceArraySymbol` is a child named by the array and its indices as declared, `u[3]`, or `u[1][0]` for a multi-dimensional array;
   - with `WithSignals`, `NetSymbol` and `VariableSymbol` among the body's direct members (name, Slang's display of the type, `getBitstreamWidth()`); ports appear as their internal symbols, and members of generate blocks are not included.
-- **Packages.** The `PackageSymbol` members of `root.compilationUnits`: value parameters (name, value as `toString(SVInt::MAX_BITS, true, true)`, the serializer's form) and `TypeAliasType` members (name, target type, and the alias printed by Slang's type printer with `skipTypeDefs` off, such as `struct packed{logic[1:0] a;}my_pkg::my_struct_t`).
+- **Packages.** The `PackageSymbol` members of `root.compilationUnits`: value parameters (name, value as `toString(SVInt::MAX_BITS, true, true)`) and `TypeAliasType` members (name, target type, and the alias printed by Slang's type printer with `skipTypeDefs` off, such as `struct packed{logic[1:0] a;}my_pkg::my_struct_t`). Slang's printer asserts that every member of a struct or union is a variable, which fails for one that declares an anonymous enum (the enum's values are members of the struct's scope); the value of such an alias is its package-qualified name.
 
-**Locations** are those of the JSON source info: the file name and line of the symbol's fully expanded location (`getFileName`, `getLineNumber`, so `` `line `` directives apply), the column of its raw location (`getColumnNumber`, 0 inside a macro, which becomes `None`). File names are made absolute with `absolute_path`, except pseudo-files such as `<command-line>`.
+**Locations** are the file name and line of the symbol's fully expanded location (`getFileName`, `getLineNumber`, so `` `line `` directives apply), the column of its raw location (`getColumnNumber`, 0 inside a macro, which becomes `None`). File names are made absolute with `absolute_path`, except pseudo-files such as `<command-line>`.
 
 ### Types
 
@@ -175,7 +159,7 @@ Types are walked as written, not canonicalized, so that names survive:
 
 **Names.** A struct, union or enum is named by the outermost alias that reaches it through aliases only, as Slang's type printer writes that alias (`cfg_pkg::flit_t`; `top.byte_t` for a typedef in a module). An alias whose target is an array names the array, not the element, so the element keeps its own name (`typedef flit_t [1:0] pair_t` gives elements named `flit_t`). An enum declared in a typedef is named by that typedef, as Slang names it, also when the typedef adds dimensions (`typedef enum {A} e_t [2]` gives elements named `e_t`). The alias a type parameter introduces is transparent: a port of type `T` with `T = cfg_pkg::flit_t` is named `cfg_pkg::flit_t`. A struct, union or enum without an alias is named as Slang names anonymous types: the lexical path of its scope followed by `s$`, `u$` or `e$` and Slang's numeric id (`m.s$3`).
 
-Any other type (`real`, `string`, dynamic and associative arrays, queues, `chandle`, class and virtual interface types, an error type) makes the port unsupported, with Slang's display of the type as `type_text` and the reason as `error`; so does an enum value with X or Z bits.
+Any other type (`real`, `string`, dynamic and associative arrays, queues, `chandle`, class and virtual interface types, an error type) makes the port unsupported, with Slang's display of the type as `type_text` and the reason as `error`; so does an enum value with X or Z bits. Slang v11 resolves an anonymous enum port to the error type, without a diagnostic, when an anonymous struct or union port follows it in an ANSI port list (`module top (input enum {A} e, input struct packed {logic f;} s);`); that port is unsupported with `type_text` `<error>`. An anonymous enum declared in a struct or union, in a port or in a package typedef, is walked as any other member type.
 
 ### Bridge
 
@@ -197,38 +181,36 @@ impl Design {
 }
 ```
 
-`child_instances` lists the instantiated children outside generate blocks (array elements as `u[3]`), which the differential comparison uses to walk the hierarchy. `path` is a top-level module name or a dot-separated path of instance names through child instances that are not inside generate blocks; an instance array element is named as in the hierarchy (`top.u[3]`). `ports` excludes interface ports, which `interface_ports` returns. `parameters` includes localparams and leaves out parameters whose type is unsupported, which callers report as having no integer literal form (S0105); `overridable_parameters` lists the non-local value and type parameters, whatever their types. `Type`, `Field`, `Range`, `Variant`, `Port`, `PortDir`, `InterfacePort`, `UnsupportedPort`, `ParameterDef`, `ParameterKind`, `SourceLoc` and `Instance` keep their current shape. A package `Parameter` has `name`, `value` (the constant, or the alias as printed above; `logic[33:22]` for a plain vector) and `ty: Option<Type>`, set for aliases. Sandstitch's own `Parameter` (`src/import/package.rs`) keeps `slang-rs` types out of its API (decision 2): it stores the width of an alias's type in a private field at import, `calc_type_width` returns it, and `Parameter::new(name, value)` builds a parameter without one.
+`child_instances` lists the instantiated children outside generate blocks (array elements as `u[3]`), which the corpus test uses to walk the hierarchy. `path` is a top-level module name or a dot-separated path of instance names through child instances that are not inside generate blocks; an instance array element is named as in the hierarchy (`top.u[3]`). `ports` excludes interface ports, which `interface_ports` returns. `parameters` includes localparams and leaves out parameters whose type is unsupported, which callers report as having no integer literal form (S0105); `overridable_parameters` lists the non-local value and type parameters, whatever their types. `Type`, `Field`, `Range`, `Variant`, `Port`, `PortDir`, `InterfacePort`, `UnsupportedPort`, `ParameterDef`, `ParameterKind`, `SourceLoc` and `Instance` keep their current shape. A package `Parameter` has `name`, `value` (the constant, or the alias as printed above; `logic[33:22]` for a plain vector) and `ty: Option<Type>`, set for aliases. Sandstitch's own `Parameter` (`src/import/package.rs`) keeps `slang-rs` types out of its API (decision 2): it stores the width of an alias's type in a private field at import, `calc_type_width` returns it, and `Parameter::new(name, value)` builds a parameter without one.
 
 ### `slang-rs`
 
-`SlangOutput` holds `design: Design` in place of the AST. `run_slang` returns it when the design elaborated without errors. `run_slang_keep_design` returns it whenever a compilation was created, with `ok` false after errors; every declared member is kept, and members whose types Slang could not resolve are unsupported. It returns the failure when no compilation was created (failed options, a missing source), so S0102 still reports Slang's text. `check_slang` is unchanged. `SlangConfig::signals` (default false) makes `run_slang` and `run_slang_keep_design` request `DesignQuery::WithSignals`, so that `Design::signals` answers. `extract_packages` runs Slang and returns `packages()`.
+`SlangOutput` holds the `design: Design`. `run_slang` returns it when the design elaborated without errors. `run_slang_keep_design` returns it whenever a compilation was created, with `ok` false after errors; every declared member is kept, and members whose types Slang could not resolve are unsupported. It returns the failure when no compilation was created (failed options, a missing source), so S0102 still reports Slang's text. `check_slang` stops after parsing and builds no design. `SlangConfig::signals` (default false) makes `run_slang` and `run_slang_keep_design` request `DesignQuery::WithSignals`, so that `Design::signals` answers. `extract_packages` runs Slang and returns `packages()`.
 
 `slang-rs` has no JSON AST, `TypeResolver`, type grammar or literal parsing, and depends on neither `serde`, `serde_json`, `serde_stacker`, `pest`, `pest_derive` nor `regex`. The shim does not call `ASTSerializer`.
 
 ### Fixed behavior
 
-The JSON path's results differ from the snapshot's in these cases, each a defect of the JSON path, each covered by its own test:
+The snapshot behaves as follows in these cases, each covered by its own test:
 
 1. `UnsupportedPort::type_text` and `error` are Slang's display of the type and the reason.
-1. A loop generate block's prefix uses the genvar value: `for (genvar i = 2; ...) begin : g` gives `g[2]`, not `g[0]`.
-1. A typedef of a type parameter resolves to the parameter's type instead of being unsupported.
-1. A `ref` port is unsupported instead of panicking; a `MultiPortSymbol` port is unsupported instead of dropped.
-1. Instance array elements are part of the hierarchy instead of being dropped.
-1. A package alias of a struct, union or enum prints with its package-qualified name (`...}my_pkg::my_struct_t`), as port types are named, instead of the bare alias name.
-1. A typedef that reaches a type parameter through aliases only (`typedef T tt;`, `typedef tt tt2;`) names the struct, union or enum the parameter resolves to, as any alias does (`c.tt`), instead of leaving it the parameter value's name.
-1. A value parameter whose type is a type parameter, or a typedef of one (`parameter T P = '0`), is listed by `parameters` with the type the type parameter resolves to, instead of being dropped.
+1. A loop generate block's prefix uses the genvar value: `for (genvar i = 2; ...) begin : g` gives `g[2]`.
+1. A typedef of a type parameter resolves to the parameter's type.
+1. A `ref` port and a `MultiPortSymbol` port are unsupported ports; none panics or is dropped.
+1. Instance array elements are part of the hierarchy.
+1. A package alias of a struct, union or enum prints with its package-qualified name (`...}my_pkg::my_struct_t`), as port types are named.
+1. A typedef that reaches a type parameter through aliases only (`typedef T tt;`, `typedef tt tt2;`) names the struct, union or enum the parameter resolves to, as any alias does (`c.tt`).
+1. A value parameter whose type is a type parameter, or a typedef of one (`parameter T P = '0`), is listed by `parameters` with the type the type parameter resolves to.
 
-### Migration
+### One path
 
-Areas move in this order, one commit each: instance paths with ports and types, parameters, packages, hierarchy, signals, then removal of the JSON path. Each commit switches Sandstitch's callers for its area to the snapshot, so the existing tests exercise the typed values from the first commit on.
-
-While both paths exist, the `differential` feature of `slang-rs`, enabled by the dev-dependencies of `slang-rs`, Sandstitch and `designs/floonoc`, requests both the JSON AST and the snapshot from every run and panics if any switched area differs. The comparison builds the JSON extractors' answers once per run for all tops and instances and applies the fixed-behavior list above as an explicit normalization. It also requires both paths to agree on whether a run fails. Library builds without the feature run only the snapshot.
+Every query reads the snapshot: there is no second implementation to compare it with and no feature that switches between them. Sandstitch's callers (`src/import/typed.rs`, `src/import/specialize.rs`, `src/import/parser.rs`, `src/import/package.rs`, `src/import/hierarchy.rs`) take ports, parameters, packages and the hierarchy from the `Design` of `run_slang` or `run_slang_keep_design`.
 
 ### Testing
 
-- **Generated designs** (`crates/slang-rs/tests/generated/`, `proptest`). A strategy generates a model of a package and a module hierarchy: ports and parameters of nested packed and unpacked structs and unions, enums (implicit, explicit, negative and wide values; signed and unsigned base types), packed and unpacked arrays with ascending, descending and negative ranges, typedefs in packages and modules, typedefs of arrays of named types, widths from parameters, type parameters with typedefs of them, child instances, instance arrays with ascending, descending and multi-dimensional ranges, and loop generate blocks with non-zero start values. A printer writes it as SystemVerilog. Every generated design must elaborate without diagnostics; a diagnostic fails the case as a generator defect. The test compares every query with the model, which encodes SystemVerilog's meaning, not either implementation; names of anonymous types are compared up to Slang's numeric id; while the JSON path exists the cases also run the differential comparison. CI runs proptest's default case count; `PROPTEST_CASES` raises it; failures shrink and are kept in `proptest-regressions/`.
-- **Corpus** (`crates/slang-rs/tests/corpus.rs`). Three runs, one per library: `third_party/common_cells/src`, `third_party/axi/src` and `third_party/floonoc/hw`, without `deprecated/`, `test/`, `tb/`, `formal/` and `synth/`, each with its dependencies and include directories as in `designs/floonoc/src/lib.rs`. Every module of the library is passed as a `--top`, with `--allow-toplevel-iface-ports`, through `run_slang_keep_design`, and every query is answered for every top and instance. Tops defined in a file with an error diagnostic are left out of the comparison, and the test asserts that at least a recorded number of tops remain, so that a regression in options or sources cannot reduce it to comparing error recovery. The test stays under 30 seconds in a debug build with the differential comparison on. While the JSON path exists this is the differential test on real code.
-- The existing `slang-rs`, import, diagnostic and FlooNoC tests, ported from the removed functions to the queries, with expectations changed only by the fixed-behavior list.
+- **Generated designs** (`crates/slang-rs/tests/generated/`, `proptest`). A strategy generates a model of a package and a module hierarchy: ports and parameters of nested packed and unpacked structs and unions, enums (implicit, explicit, negative and wide values; signed and unsigned base types), packed and unpacked arrays with ascending, descending and negative ranges, typedefs in packages and modules, typedefs of arrays of named types, widths from parameters, type parameters with typedefs of them, child instances, instance arrays with ascending, descending and multi-dimensional ranges, and loop generate blocks with non-zero start values. A printer writes it as SystemVerilog. Every generated design must elaborate without diagnostics; a diagnostic fails the case as a generator defect. The test compares every query with the model, which encodes SystemVerilog's meaning, not either implementation; names of anonymous types are compared up to Slang's numeric id. CI runs proptest's default case count; `PROPTEST_CASES` raises it; failures shrink and are kept in `proptest-regressions/`.
+- **Corpus** (`crates/slang-rs/tests/corpus.rs`). Three runs, one per library: `third_party/common_cells/src`, `third_party/axi/src` and `third_party/floonoc/hw`, without `deprecated/`, `test/`, `tb/`, `formal/` and `synth/`, each with its dependencies and include directories as in `designs/floonoc/src/lib.rs`. Every module of the library is passed as a `--top`, with `--allow-toplevel-iface-ports`, through `run_slang_keep_design`, and every query is answered for every top and instance. Tops defined in a file with an error diagnostic are not answered, and the test asserts that at least a recorded number of tops remain, so that a regression in options or sources cannot reduce it to checking error recovery. The test stays under 30 seconds in a debug build.
+- The `slang-rs`, import, diagnostic and FlooNoC tests, which read the queries.
 - A `slang-sys` unit test feeds tables with out-of-range and forward indices to the conversion and expects `Error`.
 
 ### Measurement
