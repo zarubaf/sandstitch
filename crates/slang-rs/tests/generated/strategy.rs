@@ -784,19 +784,6 @@ impl Lower {
                 inline: true,
                 inline_enum: true,
             };
-            // TODO: the element of a typedef of an array of an anonymous
-            // enum (`typedef enum { E2 } t3 [0:0];` in `pkg1`) is
-            // `pkg1::e$1` in the design, while Slang's type printer, and with
-            // it the JSON path, names it `pkg1::t3`: Slang names an enum
-            // declared in a typedef by the typedef (`EnumType::fromSyntax`).
-            // Which name is right is undecided; such typedefs add no
-            // dimensions until it is.
-            let mut raw_ty = raw.ty.clone();
-            let mut raw_unpacked = raw.unpacked.as_slice();
-            if let RawType::Enum(_, dims) = &mut raw_ty {
-                dims.clear();
-                raw_unpacked = &[];
-            }
             let type_parameters: Vec<_> = refs
                 .iter()
                 .filter(|(r, _)| matches!(r, TypeRef::TypeParam(_)))
@@ -812,8 +799,8 @@ impl Lower {
                     (ty, props, vec![])
                 }
                 _ => {
-                    let (ty, props) = self.ty(&raw_ty, &ctx);
-                    (ty, props, self.unpacked_dims(raw_unpacked, &ctx))
+                    let (ty, props) = self.ty(&raw.ty, &ctx);
+                    (ty, props, self.unpacked_dims(&raw.unpacked, &ctx))
                 }
             };
             if !unpacked.is_empty() {
