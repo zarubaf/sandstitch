@@ -14,7 +14,7 @@ use proptest::prelude::*;
 use crate::model::{
     Aggregate, Base, DataType, Design, Dim, Dir, Enum, EnumBase, EnumVariant, Expr, Instance,
     IntKind, LocalParam, LocalTypeParam, Member, Module, Package, Param, PortDecl, TypeParam,
-    TypeRef, Typedef, VectorKw, enum_base_width, int_width,
+    TypeRef, TypedParam, Typedef, VectorKw, enum_base_width, int_width,
 };
 
 /// Instances nest at most this deep, the top included.
@@ -910,6 +910,14 @@ fn lower(raw: RawDesign) -> Design {
             });
         }
         classes.push(raw_module.type_params.iter().map(|p| p.class).collect());
+        let typed_params = (0..type_params.len())
+            .filter(|&i| raw_module.type_params[i].class != TypeClass::Any)
+            .take(2)
+            .map(|type_param| TypedParam {
+                name: lower.name("V"),
+                type_param,
+            })
+            .collect();
         let local_params = (0..params.len().min(2))
             .map(|param| LocalParam {
                 name: lower.name("L"),
@@ -927,6 +935,7 @@ fn lower(raw: RawDesign) -> Design {
             ansi: raw_module.ansi,
             params,
             type_params,
+            typed_params,
             local_params,
             local_type_params,
             typedefs: vec![],

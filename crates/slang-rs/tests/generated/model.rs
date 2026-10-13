@@ -35,6 +35,8 @@ pub struct Module {
     pub ansi: bool,
     pub params: Vec<Param>,
     pub type_params: Vec<TypeParam>,
+    /// `parameter T NAME = T'('0)` in the header, after the type parameters.
+    pub typed_params: Vec<TypedParam>,
     /// Declared in the body, after the header.
     pub local_params: Vec<LocalParam>,
     pub local_type_params: Vec<LocalTypeParam>,
@@ -56,6 +58,15 @@ pub struct Param {
 pub struct TypeParam {
     pub name: String,
     pub default: DataType,
+}
+
+/// `parameter T NAME = T'('0)`, where `T` is the packed type parameter
+/// `type_param` of the module.
+#[derive(Clone, Debug)]
+pub struct TypedParam {
+    pub name: String,
+    /// Index into the module's `type_params`.
+    pub type_param: usize,
 }
 
 /// `localparam logic [W-1:0] NAME = '0;`, where `W` is the value parameter

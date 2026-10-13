@@ -55,6 +55,10 @@ fn module_sv(design: &Design, module: &Module, out: &mut String) {
             at.ty(&param.default)
         ));
     }
+    for param in &module.typed_params {
+        let ty = &module.type_params[param.type_param].name;
+        header.push(format!("parameter {ty} {} = {ty}'('0)", param.name));
+    }
     if !header.is_empty() {
         write!(out, " #({})", header.join(", ")).unwrap();
     }

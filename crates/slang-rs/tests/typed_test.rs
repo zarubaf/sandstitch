@@ -834,3 +834,44 @@ fn typedef_of_type_parameter_names_its_struct() {
     assert_eq!(name(&fields[0].ty), "c.tt");
     assert_eq!(name(&ty(3)), "c.tt2");
 }
+
+#[test]
+fn parameter_typed_by_type_parameter_is_listed() {
+    let child = "
+module c #(parameter type T = logic [3:0], parameter T P = '0) ();
+  typedef T tt;
+  localparam tt Q = '0;
+endmodule
+";
+    let top = "
+module mid #(parameter type D = logic [5:0]) ();
+  c #(.T(D)) w ();
+endmodule
+module top;
+  c u ();
+  c #(.T(logic [7:0])) v ();
+  mid m ();
+endmodule
+";
+    let files = [str2tmpfile(child).unwrap(), str2tmpfile(top).unwrap()];
+    let paths: Vec<&str> = files.iter().map(|f| f.path().to_str().unwrap()).collect();
+    let output = run_slang(&SlangConfig {
+        sources: &paths,
+        tops: &["top"],
+        ..Default::default()
+    })
+    .unwrap();
+    let logic = |msb| Type::Logic {
+        signed: false,
+        packed_dimensions: vec![Range { msb, lsb: 0 }],
+        unpacked_dimensions: vec![],
+    };
+    for (path, msb) in [("top.u", 3), ("top.v", 7), ("top.m.w", 5)] {
+        let parameters = output.design.parameters(path).unwrap();
+        let listed: Vec<_> = parameters
+            .iter()
+            .map(|p| (p.name.as_str(), &p.ty))
+            .collect();
+        assert_eq!(listed, [("P", &logic(msb)), ("Q", &logic(msb))], "{path}");
+    }
+}
