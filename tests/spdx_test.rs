@@ -62,15 +62,20 @@ fn find_missing_spdx_files(root: &Path) -> Vec<PathBuf> {
 
             if path.is_dir() {
                 // Exclude directories that should not be checked
-                // `third_party/` and `crates/slang-rs/` (which has its own SPDX
-                // test) keep their upstream headers.
+                // `third_party/`, `crates/slang-rs/` (which has its own SPDX
+                // test) and the Slang and fmt sources in
+                // `crates/slang-sys/vendor/` keep their upstream headers.
                 let is_vendored = path.strip_prefix(root).is_ok_and(|rel| {
-                    rel == Path::new("third_party") || rel == Path::new("crates/slang-rs")
+                    rel == Path::new("third_party")
+                        || rel == Path::new("crates/slang-rs")
+                        || rel == Path::new("crates/slang-sys/vendor")
                 });
-                // `.claude/` holds local, git-ignored agent settings.
+                // `.claude/` and `.superpowers/` hold local, git-ignored agent
+                // settings and scratch files.
                 if entry.file_name() != "target"
                     && entry.file_name() != ".git"
                     && entry.file_name() != ".claude"
+                    && entry.file_name() != ".superpowers"
                     && !is_vendored
                     && !(entry.file_name() == "output"
                         && entry.path().parent().and_then(|p| p.file_name())

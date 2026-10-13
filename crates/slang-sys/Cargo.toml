@@ -1,0 +1,18 @@
+[package]
+name = "slang-sys"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+description = "Slang v11, built from vendored source and called in-process through a narrow C++ shim"
+links = "svlang"
+
+[dependencies]
+cxx = "1"
+
+[build-dependencies]
+cc = "1.2"
+cmake = "0.1"
+cxx-build = "1"
+filetime = "0.2"
+which = "7"
