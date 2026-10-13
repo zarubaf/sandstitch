@@ -3,8 +3,10 @@
 //! The data a design import reports: ports, their types, parameter
 //! declarations and packages.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Index;
+use std::rc::Rc;
 use std::str::FromStr;
 
 use num_bigint::BigInt;
@@ -307,4 +309,18 @@ impl Index<&str> for Package {
     fn index(&self, key: &str) -> &Self::Output {
         &self.parameters[key]
     }
+}
+
+/// An instance in the hierarchy of a design.
+#[derive(Debug, PartialEq)]
+pub struct Instance {
+    /// The definition's name.
+    pub def_name: String,
+    /// The instance's name; for an instance array element `u[3]`.
+    pub inst_name: String,
+    /// The generate blocks the instance is in: empty outside them, otherwise
+    /// a leading dot and the block names dot-joined, loop elements named by
+    /// the genvar's value (`.g[2].h`).
+    pub hier_prefix: String,
+    pub contents: Vec<Rc<RefCell<Instance>>>,
 }

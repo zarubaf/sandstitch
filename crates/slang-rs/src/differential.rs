@@ -9,11 +9,11 @@
 //! each is normalized away explicitly here and nowhere else (see
 //! `doc/design/slang-in-process.md`, "Fixed behavior").
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use regex::Regex;
-use slang_sys::{Design, Response};
+use slang_sys::{Design, Instance, Response};
 
 use crate::extract::{
     TypeResolver, extract_instance_interface_ports_with,
@@ -21,6 +21,7 @@ use crate::extract::{
     extract_instance_ports_checked_with, instance_child_names_with, instance_has_ref_port_with,
     instance_unparsed_parameters_with, top_names_with,
 };
+use crate::hierarchy::json as json_hierarchy;
 use crate::package::json;
 use crate::{Ast, Field, ParameterDef, Port, Type, UnsupportedPort};
 
@@ -133,6 +134,7 @@ fn body_type_parameter_aliases(body: &serde_json::Value, aliases: &mut HashSet<S
 impl Checker<'_> {
     fn run(&mut self) {
         self.packages();
+        self.hierarchy();
         let json_tops = top_names_with(&self.resolver, self.value);
         let json: BTreeSet<_> = json_tops.iter().map(String::as_str).collect();
         let typed: BTreeSet<_> = self.design.tops().collect();
@@ -411,5 +413,89 @@ impl Checker<'_> {
         for name in json {
             self.instance(&format!("{path}.{name}"));
         }
+    }
+
+    /// Compares the instance trees. Two defects of the JSON path are
+    /// normalized away: it names a loop element of a generate block by its
+    /// position in the loop (`g[0]`, `g[1]`) where the design uses the
+    /// genvar's value (`g[2]`, `g[3]`), so both sides' indices are replaced
+    /// by the order they appear in under their instance (an element without
+    /// instances is in neither); and it lists no element of an instance array
+    /// (`u[3]`), so those are dropped from the design's trees.
+    fn hierarchy(&mut self) {
+        let json = json_hierarchy::extract_hierarchy_from_value(self.value);
+        let typed = self.design.hierarchy();
+        let json_names: BTreeSet<_> = json.keys().map(String::as_str).collect();
+        let typed_names: BTreeSet<_> = typed.keys().map(String::as_str).collect();
+        if !self.same_names("hierarchy", &json_names, &typed_names) {
+            return;
+        }
+        for (name, json) in &json {
+            let mut json_lines = Vec::new();
+            flatten(json, "", 0, &mut json_lines);
+            let mut typed_lines = Vec::new();
+            flatten(&typed[name], "", 0, &mut typed_lines);
+            if json_lines != typed_lines {
+                self.report(
+                    &format!("hierarchy of {name}"),
+                    "instance trees differ",
+                    &json_lines,
+                    &typed_lines,
+                );
+            }
+        }
+    }
+}
+
+/// One line per instance, depth first: `depth definition name prefix`.
+fn line(depth: usize, instance: &Instance, prefix: &str) -> String {
+    format!(
+        "{depth} {} {} {prefix}",
+        instance.def_name, instance.inst_name
+    )
+}
+
+/// The tree under `instance` as lines, with generate indices normalized
+/// (see [`Checker::hierarchy`]) and array elements dropped.
+fn flatten(instance: &Instance, prefix: &str, depth: usize, out: &mut Vec<String>) {
+    out.push(line(depth, instance, prefix));
+    let mut positions = Positions::default();
+    for child in &instance.contents {
+        let child = child.borrow();
+        if child.inst_name.contains('[') {
+            continue;
+        }
+        let prefix = positions.normalize(&child.hier_prefix);
+        flatten(&child, &prefix, depth + 1, out);
+    }
+}
+
+/// The indices of each loop seen so far under one instance, in order of
+/// appearance; the key is the loop's normalized path.
+#[derive(Default)]
+struct Positions(HashMap<String, Vec<String>>);
+
+impl Positions {
+    /// Replaces each `[value]` of a generate prefix by the position of the
+    /// value among those of that loop seen under the same instance.
+    fn normalize(&mut self, prefix: &str) -> String {
+        let mut normalized = String::new();
+        for segment in prefix.split('.').filter(|s| !s.is_empty()) {
+            let (name, value) = match segment.split_once('[') {
+                Some((name, value)) => (name, Some(value.trim_end_matches(']'))),
+                None => (segment, None),
+            };
+            normalized.push('.');
+            normalized.push_str(name);
+            if let Some(value) = value {
+                let seen = self.0.entry(normalized.clone()).or_default();
+                let position = seen.iter().position(|v| v == value).unwrap_or_else(|| {
+                    seen.push(value.to_string());
+                    seen.len() - 1
+                });
+                normalized.push_str(&format!("[{position}]"));
+            }
+        }
+        normalized
     }
 }

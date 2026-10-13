@@ -121,6 +121,23 @@ fn module_sv(design: &Design, module: &Module, out: &mut String) {
     }
     for instance in &module.instances {
         let child = &design.modules[instance.module];
+        let end = match &instance.generate {
+            Some(generate) => {
+                let (relation, step, bound) = if generate.descending {
+                    (">", "--", generate.start - generate.count as i32)
+                } else {
+                    ("<", "++", generate.start + generate.count as i32)
+                };
+                writeln!(
+                    out,
+                    "  for (genvar i = {}; i {relation} {bound}; i{step}) begin : {}",
+                    generate.start, generate.name
+                )
+                .unwrap();
+                "\n  end"
+            }
+            None => "",
+        };
         write!(out, "  {}", child.name).unwrap();
         let mut overrides = Vec::new();
         for (i, value) in &instance.params {
@@ -139,7 +156,7 @@ fn module_sv(design: &Design, module: &Module, out: &mut String) {
             .collect();
         writeln!(
             out,
-            " {}{} ({});",
+            " {}{} ({});{end}",
             instance.name,
             at.dims(&instance.array),
             connections.join(", ")

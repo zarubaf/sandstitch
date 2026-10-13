@@ -5,11 +5,14 @@
 //! (`ffi::FfiDesign`) and queried by instance path. See
 //! `doc/design/slang-in-process.md`, "Step 2".
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 
 use num_bigint::{BigInt, BigUint, Sign};
 
+use crate::types::Instance;
 use crate::types::{
     Field, InterfacePort, Package, Parameter, ParameterDef, ParameterKind, Port, PortDir, Range,
     SourceLoc, Type, UnsupportedPort, Variant,
@@ -57,6 +60,8 @@ struct Body {
 #[derive(Clone, Debug)]
 struct Child {
     name: String,
+    /// The definition's name.
+    definition: String,
     /// Generate-block prefix; empty outside generate blocks.
     prefix: String,
     /// `None` for an instance of an uninstantiated definition.
@@ -150,6 +155,49 @@ impl Design {
     /// parameters and type aliases.
     pub fn packages(&self) -> HashMap<String, Package> {
         self.packages.clone()
+    }
+
+    /// The instance trees of the top-level instances, keyed by definition
+    /// name. An instance's children are those outside and inside generate
+    /// blocks, in the order Slang lists them, each with the generate blocks'
+    /// prefix (`.g[2]`, `.g[2].h`; empty outside generate blocks, a leading
+    /// dot otherwise, loop elements named by the genvar's value). The
+    /// elements of an instance array are children named as declared (`u[3]`).
+    /// An instance of an undefined module is a child without children;
+    /// instances of uninstantiated generate blocks are not listed.
+    pub fn hierarchy(&self) -> HashMap<String, Instance> {
+        self.tops
+            .iter()
+            .map(|top| {
+                let instance = Instance {
+                    def_name: top.name.clone(),
+                    inst_name: top.name.clone(),
+                    hier_prefix: String::new(),
+                    contents: self.contents(top.body),
+                };
+                (top.name.clone(), instance)
+            })
+            .collect()
+    }
+
+    fn contents(&self, body: usize) -> Vec<Rc<RefCell<Instance>>> {
+        self.bodies[body]
+            .children
+            .iter()
+            .map(|child| {
+                let hier_prefix = if child.prefix.is_empty() {
+                    String::new()
+                } else {
+                    format!(".{}", child.prefix)
+                };
+                Rc::new(RefCell::new(Instance {
+                    def_name: child.definition.clone(),
+                    inst_name: child.name.clone(),
+                    hier_prefix,
+                    contents: child.body.map(|b| self.contents(b)).unwrap_or_default(),
+                }))
+            })
+            .collect()
     }
 
     fn body(&self, path: &str) -> Option<&Body> {
@@ -453,6 +501,7 @@ pub(crate) fn from_ffi(tables: ffi::FfiDesign, cwd: &Path) -> Result<Design, Err
             };
             children.push(Child {
                 name: child.name.clone(),
+                definition: child.definition.clone(),
                 prefix: child.prefix.clone(),
                 body,
             });

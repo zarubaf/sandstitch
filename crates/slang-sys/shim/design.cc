@@ -306,13 +306,13 @@ private:
     }
 
     /// Adds each element of `array` as a child named `name` and its indices
-    /// as declared. Element 0 is at the range's right bound.
+    /// as declared. Element 0 is at the range's left bound.
     void addArray(const InstanceArraySymbol& array, const std::string& name,
                   const std::string& prefix, FfiBody& body) {
-        int step = array.range.left >= array.range.right ? 1 : -1;
+        int step = array.range.left >= array.range.right ? -1 : 1;
         for (size_t i = 0; i < array.elements.size(); i++) {
             auto element =
-                name + "[" + std::to_string(array.range.right + step * int(i)) + "]";
+                name + "[" + std::to_string(array.range.left + step * int(i)) + "]";
             auto symbol = array.elements[i];
             if (symbol->kind == SymbolKind::InstanceArray)
                 addArray(symbol->as<InstanceArraySymbol>(), element, prefix, body);

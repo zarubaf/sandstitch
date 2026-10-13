@@ -3,7 +3,8 @@
 //! The vendored real-world SystemVerilog (`common_cells`, `axi`, FlooNoC)
 //! elaborated through `run_slang_keep_design`, with every query answered on
 //! every top and on every instance reachable by path (instances inside
-//! generate blocks are not). Under the `differential` feature each run also
+//! generate blocks are not), and the hierarchy of every top checked against
+//! the child lists. Under the `differential` feature each run also
 //! compares the typed design with the JSON extractors.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,6 +30,10 @@ const MIN_FLOONOC_TOPS: usize = 6;
 // below the first run.
 const MIN_PACKAGES: usize = 4;
 const MIN_ALIASES: usize = 35;
+
+// Lower bound on the instances in the hierarchies of the whole FlooNoC run,
+// generate blocks and array elements included, a few below the first run.
+const MIN_HIERARCHY_INSTANCES: usize = 900;
 
 fn third_party(name: &str) -> PathBuf {
     // Canonical, like the absolute paths of the diagnostics.
@@ -232,12 +237,93 @@ fn answer_all(design: &Design, path: &str) -> usize {
         .sum::<usize>()
 }
 
+/// Checks the hierarchy below `node` and returns the number of instances in
+/// it. `path` is the node's instance path, `None` for an instance without
+/// one: below a generate block or of an undefined module. Everything reachable by path must agree with the child
+/// lists.
+fn check_tree(design: &Design, path: Option<&str>, node: &Instance) -> usize {
+    let at = path.unwrap_or("<generate>");
+    let mut seen = BTreeSet::new();
+    for child in &node.contents {
+        let child = child.borrow();
+        assert!(
+            !child.def_name.is_empty() && !child.inst_name.is_empty(),
+            "unnamed instance below {at}"
+        );
+        let prefix = &child.hier_prefix;
+        assert!(
+            prefix.is_empty() || (prefix.starts_with('.') && !prefix.ends_with('.')),
+            "malformed generate prefix {prefix:?} below {at}"
+        );
+        assert_eq!(
+            child.inst_name.contains('['),
+            child.inst_name.ends_with(']'),
+            "malformed instance name {:?} below {at}",
+            child.inst_name
+        );
+        assert!(
+            seen.insert((prefix.clone(), child.inst_name.clone())),
+            "duplicate instance {prefix}.{} below {at}",
+            child.inst_name
+        );
+    }
+    let listed: BTreeSet<&str> = path
+        .map(|path| {
+            design
+                .child_instances(path)
+                .unwrap_or_else(|| panic!("no children at {path}"))
+                .into_iter()
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(path) = path {
+        let outside: BTreeSet<_> = node
+            .contents
+            .iter()
+            .filter(|c| c.borrow().hier_prefix.is_empty())
+            .map(|c| c.borrow().inst_name.clone())
+            .collect();
+        for name in &listed {
+            assert!(
+                outside.contains(*name),
+                "{path}.{name} is a child but not in the hierarchy"
+            );
+        }
+        // What is in the hierarchy only is an instance of an undefined module.
+        for child in node.contents.iter().map(|c| c.borrow()) {
+            if child.hier_prefix.is_empty() && !listed.contains(child.inst_name.as_str()) {
+                assert!(
+                    child.contents.is_empty(),
+                    "{path}.{} has children but is not a child",
+                    child.inst_name
+                );
+            }
+        }
+    }
+    1 + node
+        .contents
+        .iter()
+        .map(|child| {
+            let child = child.borrow();
+            let below = path
+                .filter(|_| {
+                    child.hier_prefix.is_empty() && listed.contains(child.inst_name.as_str())
+                })
+                .map(|path| format!("{path}.{}", child.inst_name));
+            check_tree(design, below.as_deref(), &child)
+        })
+        .sum::<usize>()
+}
+
 struct RunResult {
     packages: usize,
     aliases: usize,
     /// The files defining the answered tops.
     answered_files: Vec<String>,
     instances: usize,
+    /// The instances in the hierarchies of the answered tops, below a
+    /// generate block and array elements included.
+    hierarchy_instances: usize,
 }
 
 impl RunResult {
@@ -280,26 +366,36 @@ fn run_corpus(name: &str, files: &[PathBuf], incdirs: &[PathBuf]) -> RunResult {
         aliases,
         answered_files: Vec::new(),
         instances: 0,
+        hierarchy_instances: 0,
     };
+    let hierarchy = output.design.hierarchy();
+    assert_eq!(
+        hierarchy.len(),
+        output.design.tops().count(),
+        "{name}: a top is missing from the hierarchy"
+    );
     let mut skipped = Vec::new();
     for top in output.design.tops() {
         match modules.get(top) {
             Some(file) if !bad_files.contains(file.as_str()) => {
                 result.instances += answer_all(&output.design, top);
+                result.hierarchy_instances +=
+                    check_tree(&output.design, Some(top), &hierarchy[top]);
                 result.answered_files.push(file.clone());
             }
             _ => skipped.push(top),
         }
     }
     println!(
-        "{name}: {} packages ({} aliases), {} modules, {} tops elaborated, {} answered ({} instances), {} skipped, \
-         {} files with errors",
+        "{name}: {} packages ({} aliases), {} modules, {} tops elaborated, {} answered ({} instances, {} in the hierarchy), \
+         {} skipped, {} files with errors",
         result.packages,
         result.aliases,
         modules.len(),
         output.design.tops().count(),
         result.answered_files.len(),
         result.instances,
+        result.hierarchy_instances,
         skipped.len(),
         bad_files.len(),
     );
@@ -342,5 +438,6 @@ fn corpus_answers_every_query() {
     assert!(floo_tops >= MIN_FLOONOC_TOPS);
     assert!(floonoc.packages >= MIN_PACKAGES);
     assert!(floonoc.aliases >= MIN_ALIASES);
+    assert!(floonoc.hierarchy_instances >= MIN_HIERARCHY_INSTANCES);
     assert!(elapsed < TIME_LIMIT, "corpus took {elapsed:?}");
 }

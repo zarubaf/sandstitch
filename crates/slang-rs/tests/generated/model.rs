@@ -142,11 +142,39 @@ pub struct Instance {
     pub module: usize,
     /// Instance array dimensions, outermost first; constant.
     pub array: Vec<Dim>,
+    /// The generate loop the instance is in, if any.
+    pub generate: Option<GenerateLoop>,
     /// Overridden value parameters: index into the child's `params`, value.
     pub params: Vec<(usize, i32)>,
     /// Overridden type parameters: index into the child's `type_params`,
     /// type written in the instantiating module.
     pub type_params: Vec<(usize, DataType)>,
+}
+
+/// `for (genvar i = start; i < start + count; i++) begin : name`, or
+/// descending, `for (genvar i = start; i > start - count; i--)`, around one
+/// instance.
+#[derive(Clone, Debug)]
+pub struct GenerateLoop {
+    pub name: String,
+    pub start: i32,
+    pub count: u32,
+    pub descending: bool,
+}
+
+impl GenerateLoop {
+    /// The genvar's values, in iteration order.
+    pub fn values(&self) -> Vec<i32> {
+        (0..self.count as i32)
+            .map(|k| {
+                if self.descending {
+                    self.start - k
+                } else {
+                    self.start + k
+                }
+            })
+            .collect()
+    }
 }
 
 /// A data type as written: a base and its packed dimensions, outermost

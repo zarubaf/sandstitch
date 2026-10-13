@@ -8,8 +8,8 @@ mod design;
 mod types;
 pub use design::{Design, DesignQuery};
 pub use types::{
-    Field, InterfacePort, Package, Parameter, ParameterDef, ParameterKind, Port, PortDir, Range,
-    SourceLoc, Type, UnsupportedPort, Variant,
+    Field, Instance, InterfacePort, Package, Parameter, ParameterDef, ParameterKind, Port, PortDir,
+    Range, SourceLoc, Type, UnsupportedPort, Variant,
 };
 
 use std::fmt;
