@@ -29,15 +29,27 @@ pub fn identify(version_output: &str) -> Option<CompilerId> {
     }
 }
 
-/// The version number in a compiler's first `--version` line: the word
-/// after `version` (Clang), else the last word (GCC).
-fn compiler_version(first_line: &str) -> &str {
-    first_line
-        .split_whitespace()
-        .skip_while(|w| *w != "version")
-        .nth(1)
-        .or_else(|| first_line.split_whitespace().last())
+/// The first `\d+\.\d+(\.\d+)?` token of `text`, or "".
+fn first_version(text: &str) -> &str {
+    text.split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|t| {
+            let parts: Vec<&str> = t.split('.').collect();
+            (2..=3).contains(&parts.len()) && parts.iter().all(|p| !p.is_empty())
+        })
         .unwrap_or("")
+}
+
+/// The version number in a compiler's first `--version` line: the first
+/// version-shaped token after the word `version` (Clang), else after the
+/// closing parenthesis of the vendor text (GCC).
+fn compiler_version(first_line: &str) -> &str {
+    if let Some(i) = first_line.find("version ") {
+        return first_version(&first_line[i + "version ".len()..]);
+    }
+    match first_line.find(')') {
+        Some(i) => first_version(&first_line[i + 1..]),
+        None => first_version(first_line),
+    }
 }
 
 /// The leading number of `version` (`14` of `14.2.0`).
@@ -96,6 +108,31 @@ pub fn launcher(path_lookup: Option<PathBuf>, no_ccache: bool) -> Option<PathBuf
     if no_ccache { None } else { path_lookup }
 }
 
+/// The value of `CMAKE_{C,CXX}_COMPILER_LAUNCHER`: always defined, so an
+/// empty value clears a launcher cached in `CMakeCache.txt`.
+pub fn launcher_value(launcher: Option<&PathBuf>) -> String {
+    launcher
+        .map(|p| p.display().to_string())
+        .unwrap_or_default()
+}
+
+/// The generator recorded in `CMakeCache.txt` text.
+pub fn cached_generator(cache: &str) -> Option<String> {
+    cache
+        .lines()
+        .find_map(|l| l.strip_prefix("CMAKE_GENERATOR:INTERNAL="))
+        .map(str::to_string)
+}
+
+/// The generator to configure with: the one an existing build directory
+/// recorded (CMake rejects a change), else Ninja if present, else CMake's
+/// default (`None`).
+pub fn generator(cache: Option<&str>, ninja_present: bool) -> Option<String> {
+    cache
+        .and_then(cached_generator)
+        .or_else(|| ninja_present.then(|| "Ninja".to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,6 +143,17 @@ mod tests {
         assert!(gcc("g++ (Debian 14.2.0-19) 14.2.0").is_ok());
         let e = gcc("g++ (GCC) 10.5.0").unwrap_err();
         assert!(e.contains("GCC 11") && e.contains("10.5.0"), "{e}");
+    }
+
+    #[test]
+    fn gcc_version_is_the_number_after_the_vendor_text() {
+        let gcc = |out| check_compiler(CompilerId::Gcc, out);
+        // A revision hash in brackets after the version.
+        assert!(gcc("gcc (SUSE Linux) 14.2.1 20250220 [revision 0bc9abc]").is_ok());
+        // A parenthesised suffix after the version.
+        assert!(gcc("g++ (GCC) 16.0.0 20250601 (experimental)").is_ok());
+        // The date must not be read as the major version.
+        assert!(gcc("g++ (GCC) 10.2.0 20200723").is_err());
     }
 
     #[test]
@@ -155,5 +203,29 @@ mod tests {
         assert_eq!(launcher(Some(p.clone()), false), Some(p.clone()));
         assert_eq!(launcher(Some(p), true), None);
         assert_eq!(launcher(None, false), None);
+    }
+
+    #[test]
+    fn launcher_value_is_empty_when_off() {
+        // An empty value overrides a launcher cached by an earlier configure.
+        assert_eq!(launcher_value(None), "");
+        let p = PathBuf::from("/usr/bin/ccache");
+        assert_eq!(launcher_value(Some(&p)), "/usr/bin/ccache");
+    }
+
+    #[test]
+    fn generator_comes_from_the_cache_or_ninja() {
+        let cache = "# comment\nCMAKE_BUILD_TYPE:STRING=Release\n\
+                     CMAKE_GENERATOR:INTERNAL=Unix Makefiles\nOTHER:INTERNAL=x\n";
+        assert_eq!(cached_generator(cache).as_deref(), Some("Unix Makefiles"));
+        assert_eq!(cached_generator("CMAKE_BUILD_TYPE:STRING=Release\n"), None);
+        // A recorded generator wins over Ninja appearing on PATH.
+        assert_eq!(
+            generator(Some(cache), true).as_deref(),
+            Some("Unix Makefiles")
+        );
+        // A fresh build directory takes Ninja if present, else the default.
+        assert_eq!(generator(None, true).as_deref(), Some("Ninja"));
+        assert_eq!(generator(None, false), None);
     }
 }

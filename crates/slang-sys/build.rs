@@ -18,7 +18,13 @@ fn main() {
     for path in ["vendor", "shim", "build", "src/lib.rs"] {
         println!("cargo:rerun-if-changed={path}");
     }
-    for var in ["SLANG_SYS_NO_CCACHE", "CXX", "CC", "CMAKE"] {
+    for var in [
+        "SLANG_SYS_NO_CCACHE",
+        "CXX",
+        "CC",
+        "CMAKE",
+        "CMAKE_GENERATOR",
+    ] {
         println!("cargo:rerun-if-env-changed={var}");
     }
 
@@ -47,13 +53,18 @@ fn main() {
         .define("FETCHCONTENT_FULLY_DISCONNECTED", "ON")
         .define("FETCHCONTENT_TRY_FIND_PACKAGE_MODE", "NEVER")
         .define("CMAKE_DISABLE_FIND_PACKAGE_Boost", "ON");
-    if which::which("ninja").is_ok() {
-        cmake.generator("Ninja");
+    // CMake rejects a generator that differs from the build directory's.
+    let cache = fs::read_to_string(out.join("build/CMakeCache.txt")).ok();
+    if let Some(generator) = support::generator(cache.as_deref(), which::which("ninja").is_ok()) {
+        cmake.generator(generator);
     }
-    if let Some(launcher) = &launcher {
+    // Always defined: an empty value overrides a launcher cached earlier.
+    let launcher_value = support::launcher_value(launcher.as_ref());
+    cmake
+        .define("CMAKE_C_COMPILER_LAUNCHER", &launcher_value)
+        .define("CMAKE_CXX_COMPILER_LAUNCHER", &launcher_value);
+    if launcher.is_some() {
         cmake
-            .define("CMAKE_C_COMPILER_LAUNCHER", launcher)
-            .define("CMAKE_CXX_COMPILER_LAUNCHER", launcher)
             .env("CCACHE_BASEDIR", &out)
             .env("CCACHE_NOHASHDIR", "1");
     }
