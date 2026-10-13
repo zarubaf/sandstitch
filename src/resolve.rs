@@ -8,6 +8,7 @@
 //! original [`PortSlice`], including its typed selection.
 
 pub(crate) mod def;
+pub(crate) mod design;
 
 use crate::PortSlice;
 use crate::model::connection::connected_item::{ConnectedItem, Tieoff, Unused, Wire};

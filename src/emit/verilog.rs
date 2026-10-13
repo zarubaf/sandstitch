@@ -12,7 +12,7 @@ use xlsynth_vast::{
 
 use super::net_types::{End, NetTypes, declarable, typed_path};
 use crate::model::connection::connected_item::ConnectedItem;
-use crate::resolve::def::resolve_def;
+use crate::resolve::design::{DesignResolution, resolve_design};
 use crate::resolve::{EndResolution, Resolution, Segment, Source};
 use crate::{Dim, IO, ModDef, ModDefCore, Port, PortSlice, PortType, Select, Usage};
 
@@ -303,9 +303,10 @@ impl ModDef {
         if options.validate {
             self.validate();
         }
+        let design = resolve_design(self);
         let mut emitted_module_names = IndexMap::new();
         let mut file = VastFile::new(VastFileType::SystemVerilog);
-        self.emit_recursive(&mut emitted_module_names, &mut file, &options);
+        self.emit_recursive(&design, &mut emitted_module_names, &mut file, &options);
         let emit_result = file.emit();
         let mut leaf_text = Vec::new();
         if !emit_result.is_empty() {
@@ -316,11 +317,12 @@ impl ModDef {
 
     fn emit_recursive(
         &self,
+        design: &DesignResolution,
         emitted_module_names: &mut IndexMap<String, Arc<RwLock<ModDefCore>>>,
         file: &mut VastFile,
         options: &EmitOptions,
     ) {
-        let mut core = self.core.read();
+        let core = self.core.read();
 
         if core.usage == Usage::EmitNothingAndStop || core.usage == Usage::EmitDefinitionAndStop {
             return;
@@ -344,7 +346,12 @@ impl ModDef {
 
         if core.usage == Usage::EmitDefinitionAndDescend {
             for inst in core.instances.values() {
-                ModDef { core: inst.clone() }.emit_recursive(emitted_module_names, file, options);
+                ModDef { core: inst.clone() }.emit_recursive(
+                    design,
+                    emitted_module_names,
+                    file,
+                    options,
+                );
             }
         }
 
@@ -361,12 +368,25 @@ impl ModDef {
         let resolved = if stub {
             None
         } else {
-            // Tracing locks this definition's core, so release the guard.
-            drop(core);
-            let resolution = resolve_def(&self.core);
-            core = self.core.read();
-            let assignments = plan_assignments(&resolution, options);
-            record_uses(&mut types, &resolution, &assignments);
+            let resolution = design
+                .get(&self.core)
+                .expect("every emitted definition is resolved by resolve_design");
+            debug_assert_eq!(
+                core.instances.len(),
+                resolution.instances.len(),
+                "resolution instance count differs from the definition's"
+            );
+            for ((inst_name, inst), ends) in core.instances.iter().zip(&resolution.instances) {
+                debug_assert!(
+                    inst.read()
+                        .ports
+                        .keys()
+                        .eq(ends.iter().map(|end| &end.name)),
+                    "resolution ports of instance {inst_name} differ from the instance's ports"
+                );
+            }
+            let assignments = plan_assignments(resolution, options);
+            record_uses(&mut types, resolution, &assignments);
             Some((resolution, assignments))
         };
 
