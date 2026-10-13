@@ -160,8 +160,9 @@ FfiLoc location(const SourceManager& sourceManager, const Symbol& symbol) {
 
 class Walker {
 public:
-    Walker(Compilation& compilation, const SourceManager& sourceManager, FfiDesign& out) :
-        compilation(compilation), sourceManager(sourceManager), out(out) {}
+    Walker(Compilation& compilation, const SourceManager& sourceManager, bool signals,
+           FfiDesign& out) :
+        compilation(compilation), sourceManager(sourceManager), signals(signals), out(out) {}
 
     void top(const InstanceSymbol& instance) {
         if (instance.body.flags.has(InstanceFlags::Uninstantiated))
@@ -247,11 +248,28 @@ private:
             else if (member.kind == SymbolKind::TypeParameter)
                 body.parameters.push_back(typeParameter(member.as<TypeParameterSymbol>()));
         }
+        if (signals)
+            addSignals(symbol, body);
         addChildren(symbol, "", body);
         auto index = uint32_t(out.bodies.size());
         out.bodies.push_back(std::move(body));
         bodies.emplace(&symbol, index);
         return index;
+    }
+
+    /// Adds the nets and variables declared directly in `symbol` to `body`;
+    /// a port appears as its internal net or variable.
+    void addSignals(const InstanceBodySymbol& symbol, FfiBody& body) {
+        for (auto& member : symbol.members()) {
+            if (member.kind != SymbolKind::Net && member.kind != SymbolKind::Variable)
+                continue;
+            auto& type = member.as<ValueSymbol>().getType();
+            FfiSignal signal{};
+            signal.name = str(member.name);
+            signal.type_text = str(typeText(type));
+            signal.width = type.getBitstreamWidth();
+            body.signals.push_back(std::move(signal));
+        }
     }
 
     static std::string join(const std::string& prefix, const std::string& name) {
@@ -553,6 +571,7 @@ private:
 
     Compilation& compilation;
     const SourceManager& sourceManager;
+    bool signals;
     FfiDesign& out;
     std::map<std::pair<const Type*, std::string>, uint32_t> types;
     /// The reason of each unsupported entry, by index; always one of the
@@ -565,10 +584,8 @@ private:
 
 void walkDesign(Compilation& compilation, const SourceManager& sourceManager, bool signals,
                 FfiDesign& out) {
-    // Bodies carry ports, parameters and children only, whatever `signals`
-    // asks.
-    (void)signals;
-    Walker walker(compilation, sourceManager, out);
+    out.has_signals = signals;
+    Walker walker(compilation, sourceManager, signals, out);
     for (auto instance : compilation.getRoot().topInstances)
         walker.top(*instance);
     walker.packages();

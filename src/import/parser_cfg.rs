@@ -56,6 +56,7 @@ impl ParserConfig<'_> {
             ignore_protected: self.ignore_protected,
             timescale: self.timescale,
             extra_arguments: self.extra_arguments,
+            signals: false,
         }
     }
 }

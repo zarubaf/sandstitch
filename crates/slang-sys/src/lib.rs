@@ -9,7 +9,7 @@ mod types;
 pub use design::{Design, DesignQuery};
 pub use types::{
     Field, Instance, InterfacePort, Package, Parameter, ParameterDef, ParameterKind, Port, PortDir,
-    Range, SourceLoc, Type, UnsupportedPort, Variant,
+    Range, Signal, SourceLoc, Type, UnsupportedPort, Variant,
 };
 
 use std::fmt;
@@ -220,13 +220,25 @@ mod ffi {
         body: u32,
     }
 
+    /// A net or variable declared directly in a body, in declaration order;
+    /// a port appears as its internal net or variable. `type_text` is
+    /// Slang's display of the type, with type-parameter aliases seen
+    /// through; `width` is `getBitstreamWidth()`.
+    #[derive(Default)]
+    struct FfiSignal {
+        name: String,
+        type_text: String,
+        width: u64,
+    }
+
     /// An instance body, numbered after every body it refers to
-    /// (post-order). Signals join these tables as a further `Vec` field.
+    /// (post-order). `signals` is empty unless the design has signals.
     #[derive(Default)]
     struct FfiBody {
         ports: Vec<FfiPort>,
         parameters: Vec<FfiParameter>,
         children: Vec<FfiChild>,
+        signals: Vec<FfiSignal>,
     }
 
     /// A top-level instance: its name (the definition's name) and body.
@@ -239,6 +251,8 @@ mod ffi {
     /// The design snapshot.
     #[derive(Default)]
     struct FfiDesign {
+        /// Whether the walk collected signals (`FfiRequest::design` 2).
+        has_signals: bool,
         types: Vec<FfiType>,
         bodies: Vec<FfiBody>,
         tops: Vec<FfiTop>,

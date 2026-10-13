@@ -6,8 +6,8 @@ use std::io::Write as _;
 
 use num_bigint::BigInt;
 use slang_sys::{
-    AstJson, DesignQuery, Field, ParameterDef, ParameterKind, Port, PortDir, Range, Request, Stage,
-    Type, UnsupportedPort, Variant, run,
+    AstJson, DesignQuery, Field, ParameterDef, ParameterKind, Port, PortDir, Range, Request,
+    Signal, Stage, Type, UnsupportedPort, Variant, run,
 };
 
 /// The ports of top `top` in a design made of `text`.
@@ -327,6 +327,10 @@ fn nested_packed_array_of_structs() {
 
 /// Elaborates `text` with `extra` options and `top` as the top; the design.
 fn design(text: &str, top: &str, extra: &[&str]) -> slang_sys::Design {
+    design_with(text, top, extra, DesignQuery::Structure)
+}
+
+fn design_with(text: &str, top: &str, extra: &[&str], query: DesignQuery) -> slang_sys::Design {
     let mut file = tempfile::Builder::new().suffix(".sv").tempfile().unwrap();
     file.write_all(text.as_bytes()).unwrap();
     let mut args = vec![
@@ -339,7 +343,7 @@ fn design(text: &str, top: &str, extra: &[&str]) -> slang_sys::Design {
         args,
         stage: Stage::Elaborate,
         ast_json: AstJson::None,
-        design: DesignQuery::Structure,
+        design: query,
     })
     .unwrap();
     assert!(r.ok, "{}", r.rendered);
@@ -729,5 +733,43 @@ fn macro_parameter() {
     assert_eq!(
         design.overridable_parameters("m").unwrap(),
         [("M".to_string(), ParameterKind::Value)]
+    );
+}
+
+fn signal(name: &str, type_text: &str, width: usize) -> Signal {
+    Signal {
+        name: name.to_string(),
+        type_text: type_text.to_string(),
+        width,
+    }
+}
+
+#[test]
+fn signals_with_type_and_width() {
+    let text = "package p; typedef struct packed { logic [3:0] a; logic b; } s_t; endpackage\n\
+                module m(input logic [3:0] a); wire [7:0] w; p::s_t v; endmodule\n";
+    let design = design_with(text, "m", &[], DesignQuery::WithSignals);
+    assert_eq!(
+        design.signals("m").unwrap(),
+        [
+            signal("a", "logic[3:0]", 4),
+            signal("w", "logic[7:0]", 8),
+            signal("v", "p::s_t", 5),
+        ]
+    );
+    assert!(design.signals("nope").is_none());
+    let design = design_with(text, "m", &[], DesignQuery::Structure);
+    assert!(design.signals("m").is_none());
+}
+
+#[test]
+fn signals_of_child_and_generate_blocks() {
+    let text = "module c(output logic o); logic t; endmodule\n\
+                module m; logic x; c u(); if (1) begin : g logic y; end endmodule\n";
+    let design = design_with(text, "m", &[], DesignQuery::WithSignals);
+    assert_eq!(design.signals("m").unwrap(), [signal("x", "logic", 1)]);
+    assert_eq!(
+        design.signals("m.u").unwrap(),
+        [signal("o", "logic", 1), signal("t", "logic", 1)]
     );
 }

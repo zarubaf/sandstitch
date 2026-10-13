@@ -15,7 +15,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use crate::types::Instance;
 use crate::types::{
     Field, InterfacePort, Package, Parameter, ParameterDef, ParameterKind, Port, PortDir, Range,
-    SourceLoc, Type, UnsupportedPort, Variant,
+    Signal, SourceLoc, Type, UnsupportedPort, Variant,
 };
 use crate::{Error, absolute_path, ffi};
 
@@ -37,6 +37,7 @@ pub struct Design {
     bodies: Vec<Body>,
     tops: Vec<Top>,
     packages: HashMap<String, Package>,
+    has_signals: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +56,7 @@ struct Body {
     /// The non-local parameters, whatever their types.
     overridable: Vec<(String, ParameterKind)>,
     children: Vec<Child>,
+    signals: Vec<Signal>,
 }
 
 #[derive(Clone, Debug)]
@@ -149,6 +151,18 @@ impl Design {
                 .map(|c| c.name.as_str())
                 .collect()
         })
+    }
+
+    /// The nets and variables declared directly in the instance at `path`,
+    /// in declaration order; a port appears as its internal net or variable.
+    /// Declarations inside generate blocks are not included. `None` when
+    /// the run did not request [`DesignQuery::WithSignals`] or `path` names
+    /// no instantiated instance; see [`ports`](Self::ports) for `path`.
+    pub fn signals(&self, path: &str) -> Option<&[Signal]> {
+        if !self.has_signals {
+            return None;
+        }
+        self.body(path).map(|b| b.signals.as_slice())
     }
 
     /// The packages of the compilation units by name, each with its value
@@ -506,7 +520,17 @@ pub(crate) fn from_ffi(tables: ffi::FfiDesign, cwd: &Path) -> Result<Design, Err
                 body,
             });
         }
+        let signals = body
+            .signals
+            .iter()
+            .map(|s| Signal {
+                name: s.name.clone(),
+                type_text: s.type_text.clone(),
+                width: s.width as usize,
+            })
+            .collect();
         bodies.push(Body {
+            signals,
             ports,
             interface_ports,
             parameters,
@@ -571,6 +595,7 @@ pub(crate) fn from_ffi(tables: ffi::FfiDesign, cwd: &Path) -> Result<Design, Err
         bodies,
         tops,
         packages,
+        has_signals: tables.has_signals,
     })
 }
 
