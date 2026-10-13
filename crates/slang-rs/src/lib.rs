@@ -249,6 +249,7 @@ fn request(cfg: &SlangConfig, stage: Stage, ast_json: AstJson) -> Result<Respons
         args: arguments(cfg),
         stage,
         ast_json,
+        design: slang_sys::DesignQuery::None,
     })?)
 }
 

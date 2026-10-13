@@ -10,7 +10,6 @@ links = "svlang"
 [dependencies]
 cxx = "1"
 num-bigint = "0.4.3"
-num-traits = "0.2"
 
 [dev-dependencies]
 libc = "0.2"

@@ -6,7 +6,9 @@ use std::collections::HashSet;
 use std::io::Write as _;
 use std::path::Path;
 
-use slang_sys::{AstJson, Diag, Request, Response, Severity, Stage, run, trigger_library_assert};
+use slang_sys::{
+    AstJson, DesignQuery, Diag, Request, Response, Severity, Stage, run, trigger_library_assert,
+};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
@@ -19,6 +21,7 @@ fn request(args: &[&str], stage: Stage) -> Request {
         args: args.iter().map(|a| a.to_string()).collect(),
         stage,
         ast_json: AstJson::None,
+        design: DesignQuery::None,
     }
 }
 
@@ -281,6 +284,7 @@ fn request_owned(args: &[String]) -> Request {
         args: args.to_vec(),
         stage: Stage::Elaborate,
         ast_json: AstJson::None,
+        design: DesignQuery::None,
     }
 }
 
@@ -327,4 +331,33 @@ fn deep_nesting_on_a_small_stack() {
 fn library_assert_is_an_error() {
     let e = trigger_library_assert().unwrap_err();
     assert!(e.to_string().contains("Assertion"), "{e}");
+}
+
+#[test]
+fn design_is_returned_only_when_requested_and_compiled() {
+    let ok = fixture("uses_header.sv");
+    let with = |args: &[&str], stage, design| {
+        let mut req = request(args, stage);
+        req.design = design;
+        run(&req).unwrap()
+    };
+    let args = [ok.as_str(), "-I", "tests/fixtures/inc"];
+    assert!(
+        with(&args, Stage::Elaborate, DesignQuery::None)
+            .design
+            .is_none()
+    );
+    let got = with(&args, Stage::Elaborate, DesignQuery::Structure);
+    assert!(got.design.is_some());
+    assert!(
+        with(&args, Stage::ParseOnly, DesignQuery::Structure)
+            .design
+            .is_none()
+    );
+    let bad = with(
+        &["--no-such-option"],
+        Stage::Elaborate,
+        DesignQuery::Structure,
+    );
+    assert!(bad.design.is_none());
 }

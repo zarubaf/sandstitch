@@ -241,6 +241,10 @@ FfiResponse run(const FfiRequest& request) {
         response.ast_json = str(writer.view());
     }
 
+    // The walker that fills `response.design` is not in place yet: a
+    // requested design is the empty table set.
+    response.has_design = compilation && request.design != 0;
+
     auto& sourceManager = driver->sourceManager;
     for (auto buffer : sourceManager.getAllBuffers()) {
         if (sourceManager.getFullPath(buffer).empty())

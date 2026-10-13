@@ -4,7 +4,9 @@
 //! through a narrow C++ shim (`shim/`). See
 //! `doc/design/slang-in-process.md`, "Step 1".
 
+mod design;
 mod types;
+pub use design::{Design, DesignQuery};
 pub use types::{
     Field, InterfacePort, ParameterDef, ParameterKind, Port, PortDir, Range, SourceLoc, Type,
     UnsupportedPort, Variant,
@@ -28,6 +30,8 @@ mod ffi {
         stage: u8,
         ast_json: bool,
         source_info: bool,
+        /// 0: no design; 1: structure; 2: structure and signals.
+        design: u8,
     }
 
     struct FfiDiag {
@@ -43,9 +47,162 @@ mod ffi {
     struct FfiResponse {
         ok: bool,
         ast_json: String,
+        /// Whether a compilation was created and `design` is its snapshot
+        /// (the tables are empty when the request asked for no design).
+        has_design: bool,
+        design: FfiDesign,
         deps: Vec<String>,
         diagnostics: Vec<FfiDiag>,
         rendered: String,
+    }
+
+    // The design snapshot as flat tables. Every index is a position in the
+    // table it names, as a `u32`. Strings are UTF-8 (`str()` in the shim).
+    // See `design.rs` for how the tables are validated and converted.
+
+    /// A dimension, `[msb:lsb]`.
+    #[derive(Default)]
+    struct FfiRange {
+        msb: i32,
+        lsb: i32,
+    }
+
+    /// A struct or union member.
+    #[derive(Default)]
+    struct FfiField {
+        name: String,
+        /// Index into `FfiDesign::types`, smaller than the owning type's
+        /// own index. Never an unsupported type (kind 4).
+        ty: u32,
+    }
+
+    /// An enum member.
+    #[derive(Default)]
+    struct FfiVariant {
+        name: String,
+        /// The value's low `width` bits, little-endian, in exactly
+        /// `ceil(width / 8)` bytes; the bits above `width` in the last
+        /// byte are ignored. With `is_signed`, it is two's complement over
+        /// `width` bits (bit `width - 1` is the sign).
+        value: Vec<u8>,
+        /// Bit width of the enum's base type; at least 1.
+        width: u32,
+        /// Whether the base type is signed.
+        is_signed: bool,
+    }
+
+    /// A source position: `line` 0 means no location; `column` 0 means no
+    /// column (a macro expansion). `file` is as Slang names it; Rust makes
+    /// it absolute, except pseudo-files starting with `<`.
+    #[derive(Default)]
+    struct FfiLoc {
+        file: String,
+        line: u32,
+        column: u32,
+    }
+
+    /// One type, as written (see "Types" in the design document).
+    ///
+    /// `kind`:
+    /// - 0 logic (`ScalarType`, `PredefinedIntegerType`, packed and unpacked
+    ///   arrays of them): uses `is_signed`, `packed_dims`, `unpacked_dims`.
+    /// - 1 struct, 2 union: `name`, `is_signed`, `packed`, `fields`, dims.
+    /// - 3 enum: `name`, `variants`, dims.
+    /// - 4 unsupported: only `type_text` (Slang's display of the whole
+    ///   type) and `error` (the reason, one of the texts in the design
+    ///   document). Everything that contains an unsupported type is itself
+    ///   one entry of kind 4 rather than a struct, union or enum whose
+    ///   field is unsupported; no `FfiField::ty` refers to a kind 4 entry.
+    ///
+    /// Dimensions are outermost first; array types contribute their range
+    /// to the element type's entry. An entry refers only to entries with a
+    /// smaller index (`fields[*].ty`); the table is therefore in
+    /// dependency order and acyclic.
+    #[derive(Default)]
+    struct FfiType {
+        kind: u8,
+        name: String,
+        is_signed: bool,
+        packed: bool,
+        packed_dims: Vec<FfiRange>,
+        unpacked_dims: Vec<FfiRange>,
+        fields: Vec<FfiField>,
+        variants: Vec<FfiVariant>,
+        type_text: String,
+        error: String,
+    }
+
+    /// A port of a body, in declaration order.
+    ///
+    /// `kind`:
+    /// - 0 data port: `dir` and `ty` are used. If `types[ty]` has kind 4
+    ///   the port is unsupported, with that entry's `type_text` and
+    ///   `error`.
+    /// - 1 interface port: `interface` (empty when generic) and `modport`
+    ///   (`has_modport` says whether one was written).
+    /// - 2 unsupported port (a `ref` port, a multi-port): `type_text` and
+    ///   `error` are used; `ty` is ignored.
+    ///
+    /// `dir`: 0 in, 1 out, 2 inout.
+    #[derive(Default)]
+    struct FfiPort {
+        name: String,
+        kind: u8,
+        dir: u8,
+        ty: u32,
+        interface: String,
+        modport: String,
+        has_modport: bool,
+        type_text: String,
+        error: String,
+        loc: FfiLoc,
+    }
+
+    /// An instance inside a body.
+    ///
+    /// `name` is the instance name; an element of an instance array is one
+    /// child named by the array and its indices as declared (`u[3]`,
+    /// `u[1][0]`). `prefix` is the hierarchical prefix of the generate
+    /// blocks the instance is in, empty outside generate blocks, otherwise
+    /// the block names dot-joined with loop elements as `name[index]`
+    /// (`g[2].h`). `definition` is the definition name.
+    ///
+    /// `has_body` is false for an instance of an uninstantiated or unknown
+    /// definition (`UninstantiatedDefSymbol`): it has no entry in `bodies`
+    /// and `body` is ignored. Otherwise `body` indexes `FfiDesign::bodies`
+    /// and is smaller than the parent body's own index. Instances that
+    /// share a body refer to the same entry.
+    #[derive(Default)]
+    struct FfiChild {
+        name: String,
+        definition: String,
+        prefix: String,
+        has_body: bool,
+        body: u32,
+    }
+
+    /// An instance body, numbered after every body it refers to
+    /// (post-order). Parameters, signals and packages join these tables
+    /// as further `Vec` fields.
+    #[derive(Default)]
+    struct FfiBody {
+        ports: Vec<FfiPort>,
+        children: Vec<FfiChild>,
+    }
+
+    /// A top-level instance: its name (the definition's name) and body.
+    #[derive(Default)]
+    struct FfiTop {
+        name: String,
+        body: u32,
+    }
+
+    /// The design snapshot.
+    #[derive(Default)]
+    struct FfiDesign {
+        types: Vec<FfiType>,
+        bodies: Vec<FfiBody>,
+        tops: Vec<FfiTop>,
     }
 
     unsafe extern "C++" {
@@ -87,6 +244,9 @@ pub struct Request {
     pub args: Vec<String>,
     pub stage: Stage,
     pub ast_json: AstJson,
+    /// The design snapshot to build; only a [`Stage::Elaborate`] run builds
+    /// one.
+    pub design: DesignQuery,
 }
 
 /// The result of a [`run`].
@@ -98,6 +258,9 @@ pub struct Response {
     /// fatal error in option processing (a missing source, an unknown
     /// option).
     pub ast_json: String,
+    /// `Some` when requested and a compilation was created, also after
+    /// errors; `None` when options failed or `design` was not requested.
+    pub design: Option<Design>,
     /// Every file Slang loaded, included headers too: absolute,
     /// deduplicated, in load order.
     pub deps: Vec<String>,
@@ -163,6 +326,11 @@ pub fn run(request: &Request) -> Result<Response, Error> {
         },
         ast_json,
         source_info,
+        design: match request.design {
+            DesignQuery::None => 0,
+            DesignQuery::Structure => 1,
+            DesignQuery::WithSignals => 2,
+        },
     };
     let thread = std::thread::Builder::new()
         .name("slang".into())
@@ -181,6 +349,11 @@ pub fn run(request: &Request) -> Result<Response, Error> {
             absolute_path(&cwd, &path)
         }
     };
+    let design = if response.has_design {
+        Some(design::from_ffi(response.design, &cwd)?)
+    } else {
+        None
+    };
     let mut deps: Vec<String> = Vec::new();
     for dep in response.deps.into_iter().map(absolute) {
         if !deps.contains(&dep) {
@@ -190,6 +363,7 @@ pub fn run(request: &Request) -> Result<Response, Error> {
     Ok(Response {
         ok: response.ok,
         ast_json: response.ast_json,
+        design,
         deps,
         diagnostics: response
             .diagnostics
