@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::model::intf::IntfMember;
-use crate::{ConvertibleToPortSlice, IO, Intf, ModDef};
+use crate::{ConvertibleToPortSlice, IO, Intf, ModDef, Port};
 
 impl Intf {
     /// Creates a new interface on the parent module and connects it to this
@@ -15,8 +15,8 @@ impl Intf {
     ///
     /// Exported ports keep the member's type. When the interface has a name
     /// in both directions, the ports are named `<prefix><name>_i` and
-    /// `<prefix><name>_o` (`_io` for an inout), and the new interface has
-    /// the name in both directions too.
+    /// `<prefix><name>_o` after the exported port's direction (`_io` for an
+    /// inout), and the new interface has the name in both directions too.
     #[track_caller]
     pub fn export_with_prefix(&self, name: impl AsRef<str>, prefix: impl AsRef<str>) -> Intf {
         let members = self.members();
@@ -25,7 +25,12 @@ impl Intf {
             .iter()
             .map(|(member, slice)| {
                 let port_name = if repeated(member) {
-                    let suffix = match slice.port.io() {
+                    // Exporting a port of the module itself flips it.
+                    let io = match slice.port {
+                        Port::ModDef { .. } => slice.port.io().flip(),
+                        Port::ModInst { .. } => slice.port.io(),
+                    };
+                    let suffix = match io {
                         IO::Input(_) => "i",
                         IO::Output(_) => "o",
                         IO::InOut(_) => "io",

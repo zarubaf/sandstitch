@@ -308,3 +308,20 @@ fn def_intf_resolves_ports_when_used() {
     m.add_port("a_i", IO::Input(4));
     assert_eq!(intf.get("a").unwrap().width(), 4);
 }
+
+#[test]
+fn export_of_module_interface_names_the_exported_direction() {
+    // Exporting a port of the module itself flips its direction, and the
+    // suffix names the exported port's direction.
+    let m = ModDef::new("w");
+    let a_i = m.add_port("a_i", IO::Input(9));
+    let a_o = m.add_port("a_o", IO::Output(9));
+    m.def_intf_members(
+        "x",
+        [("a", a_i.to_port_slice()), ("a", a_o.to_port_slice())],
+    )
+    .export_with_prefix("y", "e_");
+    let io = |name: &str| format!("{:?}", m.get_port(name).io());
+    assert_eq!(io("e_a_o"), format!("{:?}", IO::Output(9)));
+    assert_eq!(io("e_a_i"), format!("{:?}", IO::Input(9)));
+}
