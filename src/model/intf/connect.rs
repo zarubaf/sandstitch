@@ -37,6 +37,7 @@ impl Intf {
     /// Jam-connects this interface and `other` LSB-first over the ordered
     /// `PortSlice` lists and marks any remainder on either side with
     /// `unused_or_tieoff(0)`.
+    #[track_caller]
     pub fn todo_jam_connect<T: ConvertibleToPortSliceVec>(&self, other: &T) {
         let left = self.to_port_slice_vec();
         let right = other.to_port_slice_vec();
