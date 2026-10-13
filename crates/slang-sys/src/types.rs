@@ -216,7 +216,9 @@ pub struct InterfacePort {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnsupportedPort {
     pub name: String,
-    /// The port's type text, after type-parameter and alias resolution.
+    /// Slang's display of the port's type, with type-parameter aliases seen
+    /// through (`real` for a port of type `T = real`, `real$[0:1]` for
+    /// `T r [2]`); typedef names stay as written (`e_t`, `u_t$[0:1]`).
     pub type_text: String,
     /// Why the port is not supported.
     pub error: String,

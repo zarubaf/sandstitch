@@ -289,3 +289,52 @@ fn struct_with_unsupported_field_is_unsupported() {
         assert_eq!(port.error, "only integral (bit-vector) types are supported");
     }
 }
+
+#[test]
+fn unsupported_type_text_sees_through_type_parameters() {
+    let ports = ports(
+        "module c #(parameter type T = real)(input T r, input T r2 [2]); endmodule\n",
+        "c",
+    );
+    for (name, text) in [("r", "real"), ("r2", "real$[0:1]")] {
+        let port = unsupported(&ports, name);
+        assert_eq!(port.type_text, text);
+        assert_eq!(port.error, "only integral (bit-vector) types are supported");
+    }
+}
+
+#[test]
+fn alias_of_alias_named_by_outermost() {
+    let ports = ports(
+        &format!(
+            "{PKG}module m(x);\n\
+             typedef p::s_t a_t; typedef a_t b_t;\n\
+             input b_t x;\nendmodule\n"
+        ),
+        "m",
+    );
+    assert_eq!(struct_name(&ty(&ports, "x")), "m.b_t");
+}
+
+#[test]
+fn nested_packed_array_of_structs() {
+    let ports = ports(
+        &format!("{PKG}module m(input p::s_t [1:0][2:0] x); endmodule\n"),
+        "m",
+    );
+    assert_eq!(ty(&ports, "x"), s_t(&[range(1, 0), range(2, 0)]));
+}
+
+#[test]
+fn anonymous_enum_name() {
+    let ports = ports("module m(input enum logic {A, B} x); endmodule\n", "m");
+    let ty = ty(&ports, "x");
+    let name = struct_name(&ty);
+    let id = name
+        .strip_prefix("m.e$")
+        .unwrap_or_else(|| panic!("{name}"));
+    assert!(
+        !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()),
+        "{name}"
+    );
+}
