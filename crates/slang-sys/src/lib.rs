@@ -173,7 +173,7 @@ mod ffi {
     /// type alias; other members are left out.
     ///
     /// `kind`: 0 value parameter, 1 type alias. `value` is the constant
-    /// printed as in Slang's JSON (`toString(SVInt::MAX_BITS, true, true)`)
+    /// printed with `toString(SVInt::MAX_BITS, true, true)`
     /// or, for an alias, the alias as Slang's type printer expands it with
     /// its package-qualified name (`struct packed{logic[1:0] a;}pkg::s_t`,
     /// `logic[33:22]`). For an alias `ty` indexes `types`, the entry named as

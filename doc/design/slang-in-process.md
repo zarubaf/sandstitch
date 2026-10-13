@@ -11,7 +11,7 @@ Sandstitch links Slang into the library and calls it in-process. Sandstitch is u
 1. **Link, don't spawn.** Slang is compiled from pinned vendored source and linked statically. The crate does not use any `slang` the user has installed; a project's own Slang for linting or simulation is independent, as with any other frontend.
 1. **Three layers.** `topstitch` import (model concepts) → `slang-rs` (safe typed Rust API, no model concepts) → `slang-sys` (vendored C++, build, `cxx` shim). Slang details stay out of the model and out of the library boundary; `topstitch` does not depend on `slang-sys` directly.
 1. **A narrow shim, not general bindings.** The shim answers the importer's questions and returns plain data. Binding Slang's object graph to Rust is out of scope.
-1. **Two steps.** Step 1 (#17): Slang runs in-process. Step 2 (#18): the importer reads a typed snapshot of the elaborated design that the shim builds; there is no JSON AST.
+1. **Two steps.** Step 1 (#17): Slang runs in-process. Step 2 (#18): the importer reads a typed snapshot of the elaborated design that the shim builds.
 1. **`slang-rs` diverges from upstream.** xlsynth's `slang-rs` stays subprocess and JSON based. Its fixes are ported by hand; `doc/fork.md` records this.
 1. **One way to build.** The crate always builds its vendored Slang. Linking a prebuilt library is left out until someone needs it: a foreign build can differ in allocator, Boost, position independence and assertion settings in ways that cannot be checked reliably at link time.
 
@@ -159,7 +159,7 @@ Types are walked as written, not canonicalized, so that names survive:
 
 **Names.** A struct, union or enum is named by the outermost alias that reaches it through aliases only, as Slang's type printer writes that alias (`cfg_pkg::flit_t`; `top.byte_t` for a typedef in a module). An alias whose target is an array names the array, not the element, so the element keeps its own name (`typedef flit_t [1:0] pair_t` gives elements named `flit_t`). An enum declared in a typedef is named by that typedef, as Slang names it, also when the typedef adds dimensions (`typedef enum {A} e_t [2]` gives elements named `e_t`). The alias a type parameter introduces is transparent: a port of type `T` with `T = cfg_pkg::flit_t` is named `cfg_pkg::flit_t`. A struct, union or enum without an alias is named as Slang names anonymous types: the lexical path of its scope followed by `s$`, `u$` or `e$` and Slang's numeric id (`m.s$3`).
 
-Any other type (`real`, `string`, dynamic and associative arrays, queues, `chandle`, class and virtual interface types, an error type) makes the port unsupported, with Slang's display of the type as `type_text` and the reason as `error`; so does an enum value with X or Z bits. Slang v11 resolves an anonymous enum port to the error type, without a diagnostic, when an anonymous struct or union port follows it in an ANSI port list (`module top (input enum {A} e, input struct packed {logic f;} s);`); that port is unsupported with `type_text` `<error>`. An anonymous enum declared in a struct or union, in a port or in a package typedef, is walked as any other member type.
+Any other type (`real`, `string`, dynamic and associative arrays, queues, `chandle`, class and virtual interface types, an error type) makes the port unsupported, with Slang's display of the type as `type_text` and the reason as `error`; so does an enum value with X or Z bits. Slang v11 resolves an anonymous enum port to the error type, without a diagnostic, when an anonymous struct or union port follows it in an ANSI port list (`module top (input enum {A} e, input struct packed {logic f;} s);`); that port is unsupported with `type_text` `<error>`. An anonymous enum declared in a struct or union, in a port or in a package typedef, is walked as any other member type. The same printer assertion applies wherever the walker shows a type as text (`type_text` of an unsupported port, a signal's type): an alias it cannot print is shown by its qualified name, an anonymous struct or union as `struct{...}` or `union{...}`.
 
 ### Bridge
 
@@ -187,8 +187,6 @@ impl Design {
 
 `SlangOutput` holds the `design: Design`. `run_slang` returns it when the design elaborated without errors. `run_slang_keep_design` returns it whenever a compilation was created, with `ok` false after errors; every declared member is kept, and members whose types Slang could not resolve are unsupported. It returns the failure when no compilation was created (failed options, a missing source), so S0102 still reports Slang's text. `check_slang` stops after parsing and builds no design. `SlangConfig::signals` (default false) makes `run_slang` and `run_slang_keep_design` request `DesignQuery::WithSignals`, so that `Design::signals` answers. `extract_packages` runs Slang and returns `packages()`.
 
-`slang-rs` has no JSON AST, `TypeResolver`, type grammar or literal parsing, and depends on neither `serde`, `serde_json`, `serde_stacker`, `pest`, `pest_derive` nor `regex`. The shim does not call `ASTSerializer`.
-
 ### Fixed behavior
 
 The snapshot behaves as follows in these cases, each covered by its own test:
@@ -204,7 +202,7 @@ The snapshot behaves as follows in these cases, each covered by its own test:
 
 ### One path
 
-Every query reads the snapshot: there is no second implementation to compare it with and no feature that switches between them. Sandstitch's callers (`src/import/typed.rs`, `src/import/specialize.rs`, `src/import/parser.rs`, `src/import/package.rs`, `src/import/hierarchy.rs`) take ports, parameters, packages and the hierarchy from the `Design` of `run_slang` or `run_slang_keep_design`.
+Every query reads the snapshot. Sandstitch's callers (`src/import/typed.rs`, `src/import/specialize.rs`, `src/import/parser.rs`, `src/import/package.rs`, `src/import/hierarchy.rs`) take ports, parameters, packages and the hierarchy from the `Design` of `run_slang` or `run_slang_keep_design`.
 
 ### Testing
 
