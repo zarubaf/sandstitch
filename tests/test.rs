@@ -4,6 +4,7 @@ mod basic;
 mod checks;
 mod common;
 mod connections;
+mod contract;
 mod diagnostics;
 mod emit;
 mod feedthroughs;
