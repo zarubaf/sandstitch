@@ -10,6 +10,7 @@
 pub(crate) mod component;
 pub(crate) mod def;
 pub(crate) mod design;
+pub(crate) mod key;
 
 use crate::PortSlice;
 use crate::model::connection::connected_item::{ConnectedItem, Tieoff, Unused, Wire};

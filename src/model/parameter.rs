@@ -3,7 +3,7 @@
 use num_bigint::{BigInt, BigUint};
 
 // Represents the type of a parameter
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParameterType {
     Signed(usize),
     Unsigned(usize),
@@ -25,7 +25,7 @@ impl ParameterType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParameterSpec {
     Integer {
         value: BigInt,
