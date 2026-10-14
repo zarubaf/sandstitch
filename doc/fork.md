@@ -26,11 +26,11 @@ Sandstitch is a hard fork of Topstitch.
   the root `Cargo.toml`. Before 1.0, a minor bump is a breaking change.
 - A release is an annotated tag `v<version>` on `main` with a GitHub release;
   pre-releases use SemVer pre-release identifiers (`v0.1.0-alpha.1`).
-- The crates are not published to crates.io (`publish = false`); downstream
-  projects depend on a tag through Cargo's git source, by the package name
-  `topstitch`:
-  `topstitch = { git = "https://github.com/zarubaf/sandstitch", tag = "v0.1.0-alpha.1" }`.
-  Publishing is planned for the pilot release (#9).
+- The crates are not published to crates.io (`publish = false`; publishing is
+  tracked in #67); downstream projects depend on a tag through Cargo's git
+  source, by the package name `topstitch`:
+  `topstitch = { git = "https://github.com/zarubaf/sandstitch", tag = "v0.1.0" }`.
+  See the [guide](guide.md) and the [compatibility policy](compatibility.md).
 
 ## Layout
 
