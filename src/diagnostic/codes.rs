@@ -72,6 +72,9 @@ codes! {
     /// Two different nets that the emitted module would declare under one
     /// name.
     S0407;
+    /// Two different definitions with one key, or an emitted definition and
+    /// another definition with one module name.
+    S0408;
     /// A connection between bits already joined by other connections, other
     /// than an identical repeat.
     S0409;

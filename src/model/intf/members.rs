@@ -14,7 +14,7 @@ use crate::{
 
 /// A stored interface member. `port` names a port of the module definition
 /// the interface is defined on.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct IntfMember {
     pub(crate) name: String,
     pub(crate) port: String,
@@ -24,7 +24,7 @@ pub(crate) struct IntfMember {
 }
 
 /// How a member's slice is formed when it is read.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum MemberSelect {
     /// From a `(port, msb, lsb)` mapping (`def_intf`), resolved when read
     /// as upstream, so the port may be added after the interface: the
