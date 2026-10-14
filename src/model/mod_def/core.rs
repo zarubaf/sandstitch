@@ -23,7 +23,7 @@ type MaxDistanceMap = IndexMap<String, Vec<Option<i64>>>;
 /// Contains the module's name, ports, interfaces, instances, etc. Not intended
 /// to be used directly; use `ModDef` instead, which contains a smart pointer to
 /// this struct.
-pub struct ModDefCore {
+pub(crate) struct ModDefCore {
     pub(crate) name: String,
     /// Where the module definition was created in Rust; [`Span::None`] for
     /// imported and specialized definitions.

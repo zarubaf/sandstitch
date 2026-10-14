@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::PortKind;
 use crate::model::connection::port_slice::{CallSite, ConnectionRecord};
 use crate::model::port::PortDirectionality;
 use crate::{
@@ -12,7 +13,10 @@ impl PortSlice {
     /// Specifies the net name to be used for this port slice.
     #[track_caller]
     pub fn specify_net_name(&self, net: &str) {
-        if let Port::ModInst { .. } = &self.port {
+        if let Port {
+            kind: PortKind::ModInst { .. },
+        } = &self.port
+        {
             // Record and enforce uniqueness of explicitly specified net names
             // within the containing ModDef.
             {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::IntfKind;
 use parking_lot::RwLock;
 use std::hash::{Hash, Hasher};
 
@@ -14,7 +15,7 @@ use crate::{
 /// Represents an instance of a module definition, like `<mod_def_name>
 /// <mod_inst_name> ( ... );` in Verilog.
 #[derive(Clone, Debug)]
-pub struct HierPathElem {
+pub(crate) struct HierPathElem {
     pub(crate) mod_def_core: Weak<RwLock<ModDefCore>>,
     pub(crate) inst_name: String,
 }
@@ -211,9 +212,11 @@ impl ModInst {
         let inst_core_borrowed = inst_core.read();
 
         if inst_core_borrowed.interfaces.contains_key(name.as_ref()) {
-            Intf::ModInst {
-                intf_name: name.as_ref().to_string(),
-                hierarchy: self.hierarchy.clone(),
+            Intf {
+                kind: IntfKind::ModInst {
+                    intf_name: name.as_ref().to_string(),
+                    hierarchy: self.hierarchy.clone(),
+                },
             }
         } else {
             panic!(
@@ -230,12 +233,14 @@ impl ModInst {
         self.get_mod_def()
             .get_intfs(prefix)
             .into_iter()
-            .map(|intf| match intf {
-                Intf::ModDef { name, .. } => Intf::ModInst {
-                    intf_name: name,
-                    hierarchy: self.hierarchy.clone(),
+            .map(|intf| match intf.kind {
+                IntfKind::ModDef { name, .. } => Intf {
+                    kind: IntfKind::ModInst {
+                        intf_name: name,
+                        hierarchy: self.hierarchy.clone(),
+                    },
                 },
-                Intf::ModInst { .. } => intf,
+                IntfKind::ModInst { .. } => intf,
             })
             .collect()
     }

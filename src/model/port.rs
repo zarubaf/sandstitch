@@ -39,7 +39,12 @@ impl PortDirectionality {
 
 /// Represents a port on a module definition or a module instance.
 #[derive(Clone, Debug)]
-pub enum Port {
+pub struct Port {
+    pub(crate) kind: PortKind,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum PortKind {
     ModDef {
         mod_def_core: Weak<RwLock<ModDefCore>>,
         name: String,
@@ -54,26 +59,38 @@ impl PartialEq for Port {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (
-                Port::ModDef {
-                    mod_def_core: a_core,
-                    name: a_name,
+                Port {
+                    kind:
+                        PortKind::ModDef {
+                            mod_def_core: a_core,
+                            name: a_name,
+                        },
                 },
-                Port::ModDef {
-                    mod_def_core: b_core,
-                    name: b_name,
+                Port {
+                    kind:
+                        PortKind::ModDef {
+                            mod_def_core: b_core,
+                            name: b_name,
+                        },
                 },
             ) => match (a_core.upgrade(), b_core.upgrade()) {
                 (Some(a_rc), Some(b_rc)) => Arc::ptr_eq(&a_rc, &b_rc) && (a_name == b_name),
                 _ => false,
             },
             (
-                Port::ModInst {
-                    hierarchy: a_hier,
-                    port_name: a_port,
+                Port {
+                    kind:
+                        PortKind::ModInst {
+                            hierarchy: a_hier,
+                            port_name: a_port,
+                        },
                 },
-                Port::ModInst {
-                    hierarchy: b_hier,
-                    port_name: b_port,
+                Port {
+                    kind:
+                        PortKind::ModInst {
+                            hierarchy: b_hier,
+                            port_name: b_port,
+                        },
                 },
             ) => a_hier == b_hier && (a_port == b_port),
             _ => false,
@@ -85,8 +102,8 @@ impl Eq for Port {}
 
 impl Hash for Port {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        match self {
-            Port::ModDef { name, mod_def_core } => {
+        match &self.kind {
+            PortKind::ModDef { name, mod_def_core } => {
                 // Hash pointer identity and name
                 if let Some(rc) = mod_def_core.upgrade() {
                     Arc::as_ptr(&rc).hash(state);
@@ -95,7 +112,7 @@ impl Hash for Port {
                 }
                 name.hash(state);
             }
-            Port::ModInst {
+            PortKind::ModInst {
                 port_name,
                 hierarchy,
             } => {
@@ -117,9 +134,9 @@ impl Hash for Port {
 impl Port {
     /// Returns the name this port has in its (parent) module definition.
     pub fn name(&self) -> &str {
-        match self {
-            Port::ModDef { name, .. } => name,
-            Port::ModInst { port_name, .. } => port_name,
+        match &self.kind {
+            PortKind::ModDef { name, .. } => name,
+            PortKind::ModInst { port_name, .. } => port_name,
         }
     }
 
@@ -130,8 +147,8 @@ impl Port {
     ) -> Self {
         let key = key.into();
         let value = value.into();
-        match self {
-            Port::ModDef { .. } => {
+        match &self.kind {
+            PortKind::ModDef { .. } => {
                 let core_rc = self.get_mod_def_core_where_declared();
                 let mut core = core_rc.write();
                 core.mod_def_port_metadata
@@ -139,10 +156,10 @@ impl Port {
                     .or_default()
                     .insert(key, value);
             }
-            Port::ModInst { .. } => {
+            PortKind::ModInst { .. } => {
                 let inst_name = self
                     .inst_name()
-                    .expect("Port::ModInst hierarchy cannot be empty")
+                    .expect("instance port hierarchy cannot be empty")
                     .to_string();
                 let core_rc = self.get_mod_def_core();
                 let mut core = core_rc.write();
@@ -158,17 +175,17 @@ impl Port {
     }
 
     pub fn get_metadata(&self, key: impl AsRef<str>) -> Option<MetadataValue> {
-        match self {
-            Port::ModDef { .. } => self
+        match &self.kind {
+            PortKind::ModDef { .. } => self
                 .get_mod_def_core_where_declared()
                 .read()
                 .mod_def_port_metadata
                 .get(self.name())
                 .and_then(|metadata| metadata.get(key.as_ref()).cloned()),
-            Port::ModInst { .. } => {
+            PortKind::ModInst { .. } => {
                 let inst_name = self
                     .inst_name()
-                    .expect("Port::ModInst hierarchy cannot be empty");
+                    .expect("instance port hierarchy cannot be empty");
                 self.get_mod_def_core()
                     .read()
                     .mod_inst_port_metadata
@@ -180,8 +197,8 @@ impl Port {
     }
 
     pub fn clear_metadata(&self, key: impl AsRef<str>) -> Self {
-        match self {
-            Port::ModDef { .. } => {
+        match &self.kind {
+            PortKind::ModDef { .. } => {
                 let core_rc = self.get_mod_def_core_where_declared();
                 let mut core = core_rc.write();
                 if let Some(metadata) = core.mod_def_port_metadata.get_mut(self.name()) {
@@ -191,10 +208,10 @@ impl Port {
                     }
                 }
             }
-            Port::ModInst { .. } => {
+            PortKind::ModInst { .. } => {
                 let inst_name = self
                     .inst_name()
-                    .expect("Port::ModInst hierarchy cannot be empty")
+                    .expect("instance port hierarchy cannot be empty")
                     .to_string();
                 let core_rc = self.get_mod_def_core();
                 let mut core = core_rc.write();
@@ -216,18 +233,18 @@ impl Port {
 
     /// Returns the IO enum associated with this Port.
     pub fn io(&self) -> IO {
-        match self {
-            Port::ModDef { mod_def_core, name } => {
+        match &self.kind {
+            PortKind::ModDef { mod_def_core, name } => {
                 mod_def_core.upgrade().unwrap().read().ports[name].clone()
             }
-            Port::ModInst {
+            PortKind::ModInst {
                 hierarchy,
                 port_name,
                 ..
             } => {
                 let inst_frame = hierarchy
                     .last()
-                    .expect("Port::ModInst hierarchy cannot be empty");
+                    .expect("instance port hierarchy cannot be empty");
                 inst_frame.mod_def_core.upgrade().unwrap().read().instances
                     [inst_frame.inst_name.as_str()]
                 .read()
@@ -261,28 +278,30 @@ impl Port {
     }
 
     pub(crate) fn assign_to_inst(&self, inst: &ModInst) -> Port {
-        match self {
-            Port::ModDef { name, .. } => Port::ModInst {
-                hierarchy: inst.hierarchy.clone(),
-                port_name: name.clone(),
+        match &self.kind {
+            PortKind::ModDef { name, .. } => Port {
+                kind: PortKind::ModInst {
+                    hierarchy: inst.hierarchy.clone(),
+                    port_name: name.clone(),
+                },
             },
             _ => panic!("Already assigned to an instance."),
         }
     }
 
     pub(crate) fn is_driver(&self) -> bool {
-        match self {
-            Port::ModDef { .. } => matches!(self.io(), IO::Input(_)),
-            Port::ModInst { .. } => matches!(self.io(), IO::Output(_)),
+        match &self.kind {
+            PortKind::ModDef { .. } => matches!(self.io(), IO::Input(_)),
+            PortKind::ModInst { .. } => matches!(self.io(), IO::Output(_)),
         }
     }
 
     pub(crate) fn get_mod_def_core(&self) -> Arc<RwLock<ModDefCore>> {
-        match self {
-            Port::ModDef { mod_def_core, .. } => mod_def_core.upgrade().unwrap(),
-            Port::ModInst { hierarchy, .. } => hierarchy
+        match &self.kind {
+            PortKind::ModDef { mod_def_core, .. } => mod_def_core.upgrade().unwrap(),
+            PortKind::ModInst { hierarchy, .. } => hierarchy
                 .last()
-                .expect("Port::ModInst hierarchy cannot be empty")
+                .expect("instance port hierarchy cannot be empty")
                 .mod_def_core
                 .upgrade()
                 .expect("Containing ModDefCore has been dropped"),
@@ -296,9 +315,9 @@ impl Port {
     }
 
     pub(crate) fn get_mod_def_core_where_declared(&self) -> Arc<RwLock<ModDefCore>> {
-        match self {
-            Port::ModDef { mod_def_core, .. } => mod_def_core.upgrade().unwrap(),
-            Port::ModInst { hierarchy, .. } => {
+        match &self.kind {
+            PortKind::ModDef { mod_def_core, .. } => mod_def_core.upgrade().unwrap(),
+            PortKind::ModInst { hierarchy, .. } => {
                 let last = hierarchy.last().unwrap();
                 last.mod_def_core
                     .upgrade()
@@ -312,25 +331,29 @@ impl Port {
         }
     }
 
-    /// Returns a new [`Port::ModInst`] with the same port name, but the
+    /// Returns a new [`PortKind::ModInst`] with the same port name, but the
     /// provided hierarchy.
     pub(crate) fn as_mod_inst_port(&self, hierarchy: Vec<HierPathElem>) -> Port {
-        Port::ModInst {
-            hierarchy,
-            port_name: self.name().to_string(),
+        Port {
+            kind: PortKind::ModInst {
+                hierarchy,
+                port_name: self.name().to_string(),
+            },
         }
     }
 
-    /// Returns a new [`Port::ModDef`] with the same port name, but a module
+    /// Returns a new [`PortKind::ModDef`] with the same port name, but a module
     /// definition pointer that corresponds to the module where the port is
     /// declared. For example, if `top` instantiates `a` as `a_inst` and
     /// `a_inst` has a port `x`, calling this function on `top.a_inst.x` will
     /// return effectively return `a.x` (i.e., the port on the module definition
     /// of `a`).
     pub(crate) fn as_mod_def_port(&self) -> Port {
-        Port::ModDef {
-            mod_def_core: Arc::downgrade(&self.get_mod_def_core_where_declared()),
-            name: self.name().to_string(),
+        Port {
+            kind: PortKind::ModDef {
+                mod_def_core: Arc::downgrade(&self.get_mod_def_core_where_declared()),
+                name: self.name().to_string(),
+            },
         }
     }
 
@@ -339,13 +362,13 @@ impl Port {
     ) -> Arc<RwLock<PortSliceConnections>> {
         let core_rc = self.get_mod_def_core();
         let mut core = core_rc.write();
-        match self {
-            Port::ModDef { .. } => core
+        match &self.kind {
+            PortKind::ModDef { .. } => core
                 .mod_def_connections
                 .entry(self.name().to_string())
                 .or_default()
                 .clone(),
-            Port::ModInst { .. } => core
+            PortKind::ModInst { .. } => core
                 .mod_inst_connections
                 .entry(self.inst_name().unwrap().to_string())
                 .or_default()
@@ -358,12 +381,12 @@ impl Port {
     pub(crate) fn get_port_connections(&self) -> Option<Arc<RwLock<PortSliceConnections>>> {
         let core_rc = self.get_mod_def_core();
         let core = core_rc.read();
-        match self {
-            Port::ModDef { .. } => core
+        match &self.kind {
+            PortKind::ModDef { .. } => core
                 .mod_def_connections
                 .get(&self.name().to_string())
                 .cloned(),
-            Port::ModInst { .. } => core
+            PortKind::ModInst { .. } => core
                 .mod_inst_connections
                 .get(&self.inst_name().unwrap().to_string())
                 .and_then(|connections| connections.get(&self.name().to_string()).cloned()),
@@ -371,8 +394,8 @@ impl Port {
     }
 
     pub fn get_mod_inst(&self) -> Option<ModInst> {
-        match self {
-            Port::ModInst { hierarchy, .. } => Some(ModInst {
+        match &self.kind {
+            PortKind::ModInst { hierarchy, .. } => Some(ModInst {
                 hierarchy: hierarchy.clone(),
             }),
             _ => None,
@@ -380,8 +403,8 @@ impl Port {
     }
 
     pub(crate) fn inst_name(&self) -> Option<&str> {
-        match self {
-            Port::ModInst { hierarchy, .. } => {
+        match &self.kind {
+            PortKind::ModInst { hierarchy, .. } => {
                 hierarchy.last().map(|frame| frame.inst_name.as_str())
             }
             _ => None,
@@ -389,21 +412,21 @@ impl Port {
     }
 
     pub(crate) fn get_port_name(&self) -> String {
-        match self {
-            Port::ModDef { name, .. } => name.clone(),
-            Port::ModInst { port_name, .. } => port_name.clone(),
+        match &self.kind {
+            PortKind::ModDef { name, .. } => name.clone(),
+            PortKind::ModInst { port_name, .. } => port_name.clone(),
         }
     }
 
     pub(crate) fn debug_string(&self) -> String {
-        match self {
-            Port::ModDef { name, mod_def_core } => {
+        match &self.kind {
+            PortKind::ModDef { name, mod_def_core } => {
                 format!("{}.{}", mod_def_core.upgrade().unwrap().read().name, name)
             }
-            Port::ModInst { port_name, .. } => {
+            PortKind::ModInst { port_name, .. } => {
                 let inst = self
                     .get_mod_inst()
-                    .expect("Port::ModInst hierarchy cannot be empty");
+                    .expect("instance port hierarchy cannot be empty");
                 format!("{}.{}", inst.debug_string(), port_name)
             }
         }
@@ -465,13 +488,13 @@ impl Port {
     }
 
     pub(crate) fn get_directionality(&self) -> PortDirectionality {
-        match self {
-            Port::ModDef { .. } => match self.io() {
+        match &self.kind {
+            PortKind::ModDef { .. } => match self.io() {
                 IO::Input(_) => PortDirectionality::Driver,
                 IO::Output(_) => PortDirectionality::Receiver,
                 IO::InOut(_) => PortDirectionality::InOut,
             },
-            Port::ModInst { .. } => match self.io() {
+            PortKind::ModInst { .. } => match self.io() {
                 IO::Input(_) => PortDirectionality::Receiver,
                 IO::Output(_) => PortDirectionality::Driver,
                 IO::InOut(_) => PortDirectionality::InOut,

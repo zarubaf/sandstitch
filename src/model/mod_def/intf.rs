@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::IntfKind;
+use crate::PortKind;
 use indexmap::IndexMap;
 use regex::Regex;
 use std::sync::{Arc, Weak};
@@ -7,7 +9,7 @@ use std::sync::{Arc, Weak};
 use crate::diagnostic::codes;
 use crate::model::intf::IntfMember;
 use crate::model::intf::members::{describe, direction};
-use crate::{Diagnostic, Intf, Label, ModDef, Port, PortSlice, Severity, Span};
+use crate::{Diagnostic, Intf, Label, ModDef, PortSlice, Severity, Span};
 
 impl ModDef {
     /// Defines an interface with the given name. `mapping` is a map from
@@ -58,8 +60,8 @@ impl ModDef {
         let this = Arc::downgrade(&self.core);
         for (member, slice) in &members {
             let on_this = matches!(
-                &slice.port,
-                Port::ModDef { mod_def_core, .. } if Weak::ptr_eq(mod_def_core, &this)
+                &slice.port.kind,
+                PortKind::ModDef { mod_def_core, .. } if Weak::ptr_eq(mod_def_core, &this)
             );
             assert!(
                 on_this,
@@ -118,9 +120,11 @@ impl ModDef {
             panic!("Interface {} already exists in module {}", name, core.name);
         }
         core.interfaces.insert(name.to_string(), members);
-        Intf::ModDef {
-            name: name.to_string(),
-            mod_def_core: Arc::downgrade(&self.core),
+        Intf {
+            kind: IntfKind::ModDef {
+                name: name.to_string(),
+                mod_def_core: Arc::downgrade(&self.core),
+            },
         }
     }
 
@@ -255,9 +259,11 @@ impl ModDef {
     pub fn get_intf(&self, name: impl AsRef<str>) -> Intf {
         let core = self.core.read();
         if core.interfaces.contains_key(name.as_ref()) {
-            Intf::ModDef {
-                name: name.as_ref().to_string(),
-                mod_def_core: Arc::downgrade(&self.core),
+            Intf {
+                kind: IntfKind::ModDef {
+                    name: name.as_ref().to_string(),
+                    mod_def_core: Arc::downgrade(&self.core),
+                },
             }
         } else {
             panic!(
@@ -281,9 +287,11 @@ impl ModDef {
         let mut result = Vec::new();
         for name in inner.interfaces.keys() {
             if prefix.is_none_or(|pfx| name.starts_with(pfx)) {
-                result.push(Intf::ModDef {
-                    name: name.clone(),
-                    mod_def_core: Arc::downgrade(&self.core),
+                result.push(Intf {
+                    kind: IntfKind::ModDef {
+                        name: name.clone(),
+                        mod_def_core: Arc::downgrade(&self.core),
+                    },
                 });
             }
         }

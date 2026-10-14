@@ -3,6 +3,7 @@
 //! Physical-design methods of [`Port`]: pins, tracks, placement and maximum
 //! connection distance.
 
+use crate::PortKind;
 use crate::{ConvertibleToPortSlice, Coordinate, PhysicalPin, PinPlacementError, Port, PortSlice};
 
 impl Port {
@@ -23,7 +24,12 @@ impl Port {
     /// Returns an error for instance ports, missing pins, or missing track setup.
     /// If any bit fails, no reservations are changed.
     pub fn block_tracks(&self) -> Result<(), PinPlacementError> {
-        if !matches!(self, Port::ModDef { .. }) {
+        if !matches!(
+            self,
+            Port {
+                kind: PortKind::ModDef { .. }
+            }
+        ) {
             return Err(PinPlacementError::RequiresModDef);
         }
         self.get_mod_def_where_declared()

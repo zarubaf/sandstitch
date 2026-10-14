@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::PortKind;
 use indexmap::map::Entry;
 use std::sync::Arc;
 
@@ -24,9 +25,11 @@ impl ModDef {
             }
             Entry::Vacant(entry) => {
                 entry.insert(io);
-                Port::ModDef {
-                    name: name.as_ref().to_string(),
-                    mod_def_core: Arc::downgrade(&self.core),
+                Port {
+                    kind: PortKind::ModDef {
+                        name: name.as_ref().to_string(),
+                        mod_def_core: Arc::downgrade(&self.core),
+                    },
                 }
             }
         }
@@ -42,9 +45,11 @@ impl ModDef {
     pub fn get_port(&self, name: impl AsRef<str>) -> Port {
         let inner = self.core.read();
         if inner.ports.contains_key(name.as_ref()) {
-            Port::ModDef {
-                name: name.as_ref().to_string(),
-                mod_def_core: Arc::downgrade(&self.core),
+            Port {
+                kind: PortKind::ModDef {
+                    name: name.as_ref().to_string(),
+                    mod_def_core: Arc::downgrade(&self.core),
+                },
             }
         } else {
             panic!("Port {}.{} does not exist", inner.name, name.as_ref())
@@ -65,9 +70,11 @@ impl ModDef {
         let mut result = Vec::new();
         for name in inner.ports.keys() {
             if prefix.is_none_or(|pfx| name.starts_with(pfx)) {
-                result.push(Port::ModDef {
-                    name: name.clone(),
-                    mod_def_core: Arc::downgrade(&self.core),
+                result.push(Port {
+                    kind: PortKind::ModDef {
+                        name: name.clone(),
+                        mod_def_core: Arc::downgrade(&self.core),
+                    },
                 });
             }
         }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::Intf;
+use crate::IntfKind;
 
 impl std::fmt::Debug for Intf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -20,11 +21,11 @@ impl std::fmt::Debug for Intf {
 
 impl Intf {
     pub(crate) fn debug_string(&self) -> String {
-        match self {
-            Intf::ModDef { name, .. } => {
+        match &self.kind {
+            IntfKind::ModDef { name, .. } => {
                 format!("{}.{}", self.get_mod_def_core().read().name, name)
             }
-            Intf::ModInst {
+            IntfKind::ModInst {
                 intf_name,
                 hierarchy,
                 ..

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::PortKind;
 use crate::{Port, PortSlice, Usage};
 use std::collections::HashSet;
 
@@ -30,9 +31,9 @@ impl PortSlice {
     ) -> Option<PortSlice> {
         let width = self.width();
 
-        let mut hierarchy = match &self.port {
-            Port::ModDef { .. } => vec![],
-            Port::ModInst { hierarchy, .. } => hierarchy.clone(),
+        let mut hierarchy = match &self.port.kind {
+            PortKind::ModDef { .. } => vec![],
+            PortKind::ModInst { hierarchy, .. } => hierarchy.clone(),
         };
 
         let mut current = self.clone();
@@ -68,19 +69,24 @@ impl PortSlice {
                 }
             };
 
-            if matches!(current.port, Port::ModInst { .. }) {
+            if matches!(
+                current.port,
+                Port {
+                    kind: PortKind::ModInst { .. }
+                }
+            ) {
                 hierarchy.pop();
             }
 
-            current = match &connection.port {
-                Port::ModDef { .. } => {
+            current = match &connection.port.kind {
+                PortKind::ModDef { .. } => {
                     if hierarchy.is_empty() {
                         return Some(connection.clone());
                     } else {
                         connection.as_mod_inst_port_slice(hierarchy.clone())
                     }
                 }
-                Port::ModInst {
+                PortKind::ModInst {
                     hierarchy: connection_hierarchy,
                     ..
                 } => {

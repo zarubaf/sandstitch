@@ -48,9 +48,9 @@ A member's *driving direction* says which side drives it when seen from the modu
 
 | Interface on | Member port | Drives |
 | --- | --- | --- |
-| an instance (`Intf::ModInst`) | output | out of the instance |
+| an instance's interface | output | out of the instance |
 | an instance | input | into the instance |
-| the module being built (`Intf::ModDef`) | input | into the module's body |
+| the module's interface | input | into the module's body |
 | the module being built | output | out of the module's body |
 
 So an input port of the parent drives the parent's body, like an output of a child. This is `PortDirectionality` (`Driver`, `Receiver`, `InOut`). `connect` pairs a driving member with a driven one, and an inout with an inout.

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::PortKind;
 use crate::{IO, ModDef, Port, PortSlice, Span};
 
 impl PortSlice {
@@ -25,9 +26,9 @@ impl PortSlice {
     /// port of the same type.
     #[track_caller]
     pub fn export_as(&self, name: impl AsRef<str>) -> Port {
-        let io = match self.port {
-            Port::ModDef { .. } => self.port.io().with_width(self.width()).flip(),
-            Port::ModInst { .. } => self.port.io().with_width(self.width()),
+        let io = match &self.port.kind {
+            PortKind::ModDef { .. } => self.port.io().with_width(self.width()).flip(),
+            PortKind::ModInst { .. } => self.port.io().with_width(self.width()),
         };
 
         let core = self.get_mod_def_core();
@@ -58,12 +59,12 @@ impl PortSlice {
     /// slice on a module definition.
     #[track_caller]
     pub fn export(&self) -> Port {
-        let name = match &self.port {
-            Port::ModDef { .. } => panic!(
+        let name = match &self.port.kind {
+            PortKind::ModDef { .. } => panic!(
                 "Use export_as() to export {}, specifying the new name of the exported port.",
                 self.debug_string()
             ),
-            Port::ModInst { port_name, .. } => port_name.clone(),
+            PortKind::ModInst { port_name, .. } => port_name.clone(),
         };
         self.export_as(&name)
     }

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::{Intf, MetadataKey, MetadataValue, Port, Span, Usage};
 
 mod core;
-pub use core::ModDefCore;
+pub(crate) use core::ModDefCore;
 
 mod feedthrough;
 mod hierarchy;

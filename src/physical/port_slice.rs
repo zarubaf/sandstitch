@@ -3,6 +3,7 @@
 //! Physical-design methods of [`PortSlice`]: pins, placement relative to
 //! connected pins, and maximum connection distance.
 
+use crate::PortKind;
 use std::sync::Arc;
 
 use indexmap::map::Entry;
@@ -14,7 +15,12 @@ use crate::{
 
 impl PortSlice {
     fn is_mod_def_port_slice(&self) -> bool {
-        matches!(self.port, Port::ModDef { .. })
+        matches!(
+            self.port,
+            Port {
+                kind: PortKind::ModDef { .. }
+            }
+        )
     }
 
     /// Places this port based on what has been connected to it.
@@ -220,9 +226,11 @@ impl PortSlice {
                 PhysicalPin::from_transform(&src_pin.layer, src_pin.polygon.clone(), transform);
 
             PortSlice {
-                port: Port::ModDef {
-                    mod_def_core: Arc::downgrade(&dst_mod_def_core),
-                    name: self.port.name().to_string(),
+                port: Port {
+                    kind: PortKind::ModDef {
+                        mod_def_core: Arc::downgrade(&dst_mod_def_core),
+                        name: self.port.name().to_string(),
+                    },
                 },
                 msb: self.msb,
                 lsb: self.lsb,
@@ -248,13 +256,13 @@ impl PortSlice {
         self.check_validity();
         assert!(self.width() == 1, "place_from requires single-bit slices");
 
-        let (target_mod_def, target_transform) = match &self.port {
-            Port::ModDef { .. } => (self.get_mod_def(), Mat3::identity()),
-            Port::ModInst { .. } => {
+        let (target_mod_def, target_transform) = match &self.port.kind {
+            PortKind::ModDef { .. } => (self.get_mod_def(), Mat3::identity()),
+            PortKind::ModInst { .. } => {
                 let inst = self
                     .port
                     .get_mod_inst()
-                    .expect("Port::ModInst hierarchy cannot be empty");
+                    .expect("instance port hierarchy cannot be empty");
                 (inst.get_mod_def(), inst.get_transform())
             }
         };
@@ -283,13 +291,13 @@ impl PortSlice {
         self.check_validity();
         assert!(self.width() == 1, "place_from requires single-bit slices");
 
-        let (target_mod_def, target_transform) = match &self.port {
-            Port::ModDef { .. } => (self.get_mod_def(), Mat3::identity()),
-            Port::ModInst { .. } => {
+        let (target_mod_def, target_transform) = match &self.port.kind {
+            PortKind::ModDef { .. } => (self.get_mod_def(), Mat3::identity()),
+            PortKind::ModInst { .. } => {
                 let inst = self
                     .port
                     .get_mod_inst()
-                    .expect("Port::ModInst hierarchy cannot be empty");
+                    .expect("instance port hierarchy cannot be empty");
                 (inst.get_mod_def(), inst.get_transform())
             }
         };
@@ -405,17 +413,17 @@ impl PortSlice {
             );
         }
 
-        match &self.port {
-            Port::ModDef { mod_def_core, name } => mod_def_core
+        match &self.port.kind {
+            PortKind::ModDef { mod_def_core, name } => mod_def_core
                 .upgrade()
                 .unwrap()
                 .read()
                 .get_physical_pin(name, self.lsb),
-            Port::ModInst { .. } => {
+            PortKind::ModInst { .. } => {
                 let mod_inst = self
                     .port
                     .get_mod_inst()
-                    .expect("Port::ModInst hierarchy cannot be empty");
+                    .expect("instance port hierarchy cannot be empty");
                 let transform = mod_inst.get_transform();
                 let pin = mod_inst
                     .get_mod_def()
@@ -486,7 +494,12 @@ impl PortSlice {
     ) -> Option<(PortSlice, i64)> {
         self.check_validity();
         assert!(
-            matches!(self.port, Port::ModInst { .. }),
+            matches!(
+                self.port,
+                Port {
+                    kind: PortKind::ModInst { .. }
+                }
+            ),
             "get_connected_bit_and_distance_with_self_transform requires a port slice on a module instance"
         );
 

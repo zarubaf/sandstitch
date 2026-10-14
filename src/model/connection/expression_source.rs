@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::port_slice::PortSliceConnections;
+use crate::PortKind;
 use crate::{IO, Port, PortSlice};
 
 use super::connected_item::{ConnectedItem, Unused};
@@ -51,10 +52,27 @@ impl PortSliceConnections {
                 assert!(
                     matches!(
                         (&this.port, io),
-                        (Port::ModDef { .. }, IO::Input(_))
-                            | (Port::ModInst { .. }, IO::Output(_))
-                            | (Port::ModDef { .. }, IO::InOut(_))
-                            | (Port::ModInst { .. }, IO::InOut(_))
+                        (
+                            Port {
+                                kind: PortKind::ModDef { .. }
+                            },
+                            IO::Input(_)
+                        ) | (
+                            Port {
+                                kind: PortKind::ModInst { .. }
+                            },
+                            IO::Output(_)
+                        ) | (
+                            Port {
+                                kind: PortKind::ModDef { .. }
+                            },
+                            IO::InOut(_)
+                        ) | (
+                            Port {
+                                kind: PortKind::ModInst { .. }
+                            },
+                            IO::InOut(_)
+                        )
                     ),
                     "{this_debug_string} cannot be marked as unused because it has an incompatible directionality"
                 );
@@ -83,10 +101,30 @@ impl PortSliceConnections {
                 );
                 let io = this.port.io();
                 match (&this.port, io) {
-                    (Port::ModDef { .. }, IO::Output(_))
-                    | (Port::ModInst { .. }, IO::Input(_))
-                    | (Port::ModDef { .. }, IO::InOut(_))
-                    | (Port::ModInst { .. }, IO::InOut(_)) => {
+                    (
+                        Port {
+                            kind: PortKind::ModDef { .. },
+                        },
+                        IO::Output(_),
+                    )
+                    | (
+                        Port {
+                            kind: PortKind::ModInst { .. },
+                        },
+                        IO::Input(_),
+                    )
+                    | (
+                        Port {
+                            kind: PortKind::ModDef { .. },
+                        },
+                        IO::InOut(_),
+                    )
+                    | (
+                        Port {
+                            kind: PortKind::ModInst { .. },
+                        },
+                        IO::InOut(_),
+                    ) => {
                         return Some(PortSliceConnection {
                             this,
                             other: ConnectedItem::Tieoff(tieoffs[0].clone()),
@@ -115,14 +153,44 @@ impl PortSliceConnections {
         let mut mod_inst_inouts = Vec::new();
         for port_slice in port_slices {
             match (&port_slice.port, port_slice.port.io()) {
-                (Port::ModDef { .. }, IO::Input(_)) => mod_def_inputs.push(port_slice),
-                (Port::ModDef { .. }, IO::Output(_)) => mod_def_outputs.push(port_slice),
-                (Port::ModDef { .. }, IO::InOut(_)) => mod_def_inouts.push(port_slice),
-                (Port::ModInst { .. }, IO::Output(_)) => mod_inst_outputs.push(port_slice),
-                (Port::ModInst { .. }, IO::InOut(_)) => mod_inst_inouts.push(port_slice),
+                (
+                    Port {
+                        kind: PortKind::ModDef { .. },
+                    },
+                    IO::Input(_),
+                ) => mod_def_inputs.push(port_slice),
+                (
+                    Port {
+                        kind: PortKind::ModDef { .. },
+                    },
+                    IO::Output(_),
+                ) => mod_def_outputs.push(port_slice),
+                (
+                    Port {
+                        kind: PortKind::ModDef { .. },
+                    },
+                    IO::InOut(_),
+                ) => mod_def_inouts.push(port_slice),
+                (
+                    Port {
+                        kind: PortKind::ModInst { .. },
+                    },
+                    IO::Output(_),
+                ) => mod_inst_outputs.push(port_slice),
+                (
+                    Port {
+                        kind: PortKind::ModInst { .. },
+                    },
+                    IO::InOut(_),
+                ) => mod_inst_inouts.push(port_slice),
                 // No action needed in this case, because ModInst inputs never control
                 // the net name.
-                (Port::ModInst { .. }, IO::Input(_)) => {}
+                (
+                    Port {
+                        kind: PortKind::ModInst { .. },
+                    },
+                    IO::Input(_),
+                ) => {}
             }
         }
 
@@ -250,7 +318,12 @@ impl PortSliceConnections {
                 assert!(
                     !matches!(
                         (prevailing_port_slice.port, io),
-                        (Port::ModDef { .. }, IO::Input(_))
+                        (
+                            Port {
+                                kind: PortKind::ModDef { .. }
+                            },
+                            IO::Input(_)
+                        )
                     ),
                     "A wire cannot be attached to {this_debug_string} because it is a ModDef Input"
                 );

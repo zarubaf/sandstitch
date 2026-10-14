@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::PortKind;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -627,9 +628,12 @@ fn plan_assignments(resolution: &Resolution, options: &EmitOptions) -> Assignmen
             let other = ConnectedItem::from(&segment.source);
             let other_width = match &other {
                 ConnectedItem::PortSlice(port_slice) => {
-                    if let Port::ModDef {
-                        name: port_slice_port_name,
-                        ..
+                    if let Port {
+                        kind:
+                            PortKind::ModDef {
+                                name: port_slice_port_name,
+                                ..
+                            },
                     } = &port_slice.port
                         && port_slice_port_name == &end.name
                     {

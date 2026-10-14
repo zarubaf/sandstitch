@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::IntfKind;
 use indexmap::IndexMap;
 
 use crate::{Intf, ModDef};
@@ -32,8 +33,8 @@ impl Intf {
         }
 
         for i in 0..n {
-            let intf = match self {
-                Intf::ModDef { name, .. } => {
+            let intf = match &self.kind {
+                IntfKind::ModDef { name, .. } => {
                     let name = format!("{name}_{i}");
                     ModDef {
                         core: self.get_mod_def_core(),

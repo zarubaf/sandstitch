@@ -3,6 +3,7 @@
 //! Physical-design methods of [`Intf`]: tracks, pin placement and maximum
 //! connection distance.
 
+use crate::IntfKind;
 use std::collections::HashSet;
 
 use crate::model::intf::crossover::find_crossover_matches;
@@ -23,7 +24,12 @@ impl Intf {
     /// If any member bit fails, no reservations are changed.
     #[track_caller]
     pub fn block_tracks(&self) -> Result<(), PinPlacementError> {
-        if !matches!(self, Intf::ModDef { .. }) {
+        if !matches!(
+            self,
+            Intf {
+                kind: IntfKind::ModDef { .. }
+            }
+        ) {
             return Err(PinPlacementError::RequiresModDef);
         }
         let slices = self.get_port_slices();
