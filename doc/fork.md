@@ -166,6 +166,29 @@ typing rule. For the unpacked union of `test_unions` the old flat output
 did not elaborate (Slang: a vector cannot be assigned to an unpacked union;
 see `slang_check_rejects_flat_union_connection` in `tests/typed/emit.rs`).
 
+## Public API
+
+The public API is the composition operations (import, instantiate, connect,
+expose, check, emit) and the whole physical-design API (LEF/DEF, placement,
+pins, tracks, shapes), plus the types they need. Internals and dependency
+types are crate-private. Changes from upstream and their replacements:
+
+- `Port` and `Intf` are opaque structs; the `ModDef`/`ModInst` variants are
+  crate-private. Use `Port::name`, `Port::io` and the other methods, which are
+  unchanged.
+- `ModDefCore` and `HierPathElem` are crate-private; use `ModDef` and
+  `ModInst`.
+- `ParserConfig::to_slang_config` and `PipelineConfig::to_mod_def` are
+  crate-private; use the import functions and `ModDef` constructors that take
+  the configuration.
+- `Polygon::to_geo_polygon` is removed and `Polygon::to_geo_polygon_f64` is
+  crate-private, so `geo` types stay out of the API.
+- `Mat3` keeps its constructors and operators; its `nalgebra` field is
+  crate-private.
+- `ModDef::get_track_definitions` returns a copy (`Option<TrackDefinitions>`)
+  and `get_track_definitions_mut` is removed. Clone, mutate, then call
+  `ModDef::set_track_definitions`, which also resizes occupancy.
+
 ## Forked dependencies
 
 Both live under `crates/` as workspace members, and the library depends on them

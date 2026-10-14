@@ -8,9 +8,6 @@ use crate::physical::tracks::{
     TrackDefinition, TrackDefinitions, TrackOccupancies, TrackOccupancy,
 };
 use crate::{ModDef, for_each_edge_direction};
-use parking_lot::{
-    MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLockReadGuard, RwLockWriteGuard,
-};
 
 macro_rules! define_keepout_on_named_edge {
     ($edge_name:ident, $const_name:path) => {
@@ -147,16 +144,10 @@ impl ModDef {
         }
     }
 
-    /// Returns a shared reference to this module's track definitions, if set.
-    pub fn get_track_definitions(&self) -> Option<MappedRwLockReadGuard<'_, TrackDefinitions>> {
-        RwLockReadGuard::try_map(self.core.read(), |core| core.track_definitions.as_ref()).ok()
-    }
-
-    /// Returns a mutable reference to this module's track definitions, if set.
-    pub fn get_track_definitions_mut(
-        &self,
-    ) -> Option<MappedRwLockWriteGuard<'_, TrackDefinitions>> {
-        RwLockWriteGuard::try_map(self.core.write(), |core| core.track_definitions.as_mut()).ok()
+    /// Returns a copy of this module's track definitions, if set. Change them
+    /// with [`ModDef::set_track_definitions`].
+    pub fn get_track_definitions(&self) -> Option<TrackDefinitions> {
+        self.core.read().track_definitions.clone()
     }
 
     /// Looks up the [`TrackDefinition`] for `name`, if one has been registered.

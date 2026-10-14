@@ -750,19 +750,7 @@ impl Polygon {
         }
     }
 
-    pub fn to_geo_polygon(&self) -> geo::Polygon<i64> {
-        geo::Polygon::new(
-            geo::LineString::from(
-                self.0
-                    .iter()
-                    .map(|p| geo::Point::new(p.x, p.y))
-                    .collect::<Vec<_>>(),
-            ),
-            vec![],
-        )
-    }
-
-    pub fn to_geo_polygon_f64(&self) -> geo::Polygon<f64> {
+    pub(crate) fn to_geo_polygon_f64(&self) -> geo::Polygon<f64> {
         geo::Polygon::new(
             geo::LineString::from(
                 self.0
@@ -879,7 +867,7 @@ impl Placement {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct Mat3(pub nalgebra::Matrix3<i64>);
+pub struct Mat3(pub(crate) nalgebra::Matrix3<i64>);
 
 impl Mat3 {
     pub fn identity() -> Mat3 {

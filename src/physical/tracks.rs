@@ -830,18 +830,22 @@ mod tests {
         module.set_track_definitions(tracks);
 
         let mut saved = HashMap::new();
-        for (layer, track_def) in module.get_track_definitions_mut().unwrap().iter_mut() {
+        let mut definitions = module.get_track_definitions().unwrap();
+        for (layer, track_def) in definitions.iter_mut() {
             saved.insert(layer.clone(), track_def.get_keepout_shape().cloned());
             track_def.set_keepout_shape(None);
         }
+        module.set_track_definitions(definitions);
 
         for track_def in module.get_track_definitions().unwrap().values() {
             assert!(track_def.get_keepout_shape().is_none());
         }
 
-        for (layer, track_def) in module.get_track_definitions_mut().unwrap().iter_mut() {
+        let mut definitions = module.get_track_definitions().unwrap();
+        for (layer, track_def) in definitions.iter_mut() {
             track_def.set_keepout_shape(saved.remove(layer).unwrap());
         }
+        module.set_track_definitions(definitions);
 
         for track_def in module.get_track_definitions().unwrap().values() {
             assert!(track_def.get_keepout_shape().is_some());
