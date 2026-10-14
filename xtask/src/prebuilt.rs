@@ -26,8 +26,13 @@ const LICENSES: [(&str, &str); 3] = [
 /// Builds the prebuilt directory under `dest_root` and returns its path.
 pub fn run(root: &Path, dest_root: &Path) -> Result<PathBuf, String> {
     let out = build_out_dir(root)?;
-    let manifest = fs::read_to_string(out.join(MANIFEST))
-        .map_err(|e| format!("reading {}: {e}", out.join(MANIFEST).display()))?;
+    let manifest = fs::read_to_string(out.join(MANIFEST)).map_err(|e| {
+        format!(
+            "reading {}: {e} (slang-sys writes it only for a recognized C++ compiler; \
+                 see the build warnings)",
+            out.join(MANIFEST).display()
+        )
+    })?;
     let dest = dest_root.join(dir_name(&manifest)?);
     if dest.exists() {
         fs::remove_dir_all(&dest).map_err(|e| format!("removing {}: {e}", dest.display()))?;
@@ -87,7 +92,9 @@ fn out_dir(messages: &str) -> Option<PathBuf> {
 fn is_slang_sys(id: &str) -> bool {
     id.starts_with("slang-sys ")
         || id.rsplit_once('#').is_some_and(|(path, version)| {
-            version.starts_with("slang-sys@") || path.ends_with("/slang-sys")
+            // `name@version` only when the name differs from the directory.
+            version.starts_with("slang-sys@")
+                || (path.ends_with("/slang-sys") && !version.contains('@'))
         })
 }
 
@@ -168,6 +175,7 @@ not json
         assert!(!is_slang_sys(
             "path+file:///w/slang-sys/crates/slang-rs#0.1.0"
         ));
+        assert!(!is_slang_sys("path+file:///w/slang-sys#other@0.1.0"));
     }
 
     #[test]
