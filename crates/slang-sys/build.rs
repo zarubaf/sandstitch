@@ -85,6 +85,9 @@ fn main() {
     let build = dst.join("build");
 
     cxx_build::bridge("src/lib.rs")
+        // GCC reports false positives in the bridge code cxx generates (the
+        // empty `rust::Vec` constructors) when optimizing.
+        .flag_if_supported("-Wno-maybe-uninitialized")
         .file("shim/shim.cc")
         .file("shim/design.cc")
         .include(src.join("slang/include"))
