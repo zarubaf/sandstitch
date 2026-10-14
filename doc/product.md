@@ -40,10 +40,10 @@ The first example is a small mesh connecting repeated compute tiles and memory e
 | --- | --- |
 | Composition library | Define, import, instantiate, connect, expose ports, resolve, validate, and export |
 | Generator package | A mesh and a nested compute tile built around one known component family |
-| Command line interface | Designs build with Cargo (#9) |
+| Command line interface | Designs build with Cargo; see the [guide](guide.md) (#9) |
 | Explorer | After the pilot release: hierarchy navigation, interface selection, connection tracing, search, and an inspector |
 | Documentation | After the pilot release: module descriptions, parameter values, interface tables, hierarchy views, and diagnostics |
-| Release package | The library crate with Slang built from vendored source, for the initial supported platform |
+| Release package | The library crate with Slang built from vendored source, for the initial supported platform, consumed as a git dependency by tag (crates.io: #67); see the [compatibility policy](compatibility.md) |
 
 The first release is Rust-first: designs and generators are authored in Rust against the library API and built with Cargo. Language bindings, including Python, are deferred. When added, a binding is a thin authoring API over native functionality; it must not become a separate model implementation or a broad API-design project before the core workflow works.
 
