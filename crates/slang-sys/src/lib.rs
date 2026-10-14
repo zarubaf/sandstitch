@@ -15,12 +15,7 @@ pub use types::{
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
-/// The vendored Slang release number, the one place it is written.
-macro_rules! release {
-    () => {
-        "12.0"
-    };
-}
+include!("../build/release.rs");
 
 /// The vendored Slang release.
 pub const SLANG_VERSION: &str = release!();
