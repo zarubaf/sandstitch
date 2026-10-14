@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! FlooNoC design package: the narrow/wide router `floo_nw_router` and the
-//! network interface `floo_nw_chimney`, specialized for a [`FlooConfig`],
-//! a 2x2 XY mesh of the router, and compute and memory tiles built around
-//! the network interface.
+//! network interface `floo_nw_chimney`, specialized for a [`FlooConfig`];
+//! compute and memory tiles built around the network interface; an XY mesh
+//! of the router with an endpoint at each local port ([`MeshSpec`]); the
+//! synthesizable [`system`] and its simulation [`harness`].
 //!
 //! The RTL comes from the pinned sources in `third_party/` (FlooNoC,
 //! `common_cells`, `axi`), plus the fixtures in `rtl/`. Everything
@@ -11,8 +12,10 @@
 //! specialization and emission.
 
 mod config;
+mod harness;
 mod mesh;
 mod spec;
+mod system;
 mod tile;
 
 use std::path::{Path, PathBuf};
@@ -20,10 +23,13 @@ use std::path::{Path, PathBuf};
 use topstitch::{ImportError, ModDef, PackageDef, ParameterValue, ParserConfig};
 
 pub use config::{AxiCfg, FlooConfig, VcImpl, WideRwDecouple, cfg_pkg};
-pub use mesh::{Direction, mesh_2x2};
+pub use harness::{TIMEOUT_CYCLES, harness, harness_name, mem_check, tb_driver};
+pub use mesh::{Direction, mesh, mesh_2x2, mesh_name, tie_node_id};
 pub use spec::{
     Endpoint, MeshSpec, Target, core_axi, core_id_width, mem_base_name, sys_pkg, window_base,
+    window_name,
 };
+pub use system::{small, system, system_name};
 pub use tile::{ChimneyRole, LINK, chimney, compute_tile, memory_tile};
 
 /// `third_party/` of this repository.
