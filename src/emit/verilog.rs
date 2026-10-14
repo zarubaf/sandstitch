@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use parking_lot::RwLock;
 use std::path::Path;
-use std::sync::Arc;
 
 use indexmap::IndexMap;
 use indexmap::map::Entry;
@@ -14,7 +12,7 @@ use super::net_types::{End, NetTypes, declarable, typed_path};
 use crate::model::connection::connected_item::ConnectedItem;
 use crate::resolve::design::DesignResolution;
 use crate::resolve::{EndResolution, Resolution, Segment, Source};
-use crate::{Dim, IO, ModDef, ModDefCore, Port, PortSlice, PortType, Select, Usage};
+use crate::{Dim, IO, ModDef, Port, PortSlice, PortType, Select, Usage};
 
 #[derive(Debug, PartialEq, Clone)]
 enum NetNameSource {
@@ -299,9 +297,10 @@ impl ModDef {
         if options.validate {
             self.validate();
         }
-        let mut emitted_module_names = IndexMap::new();
         let mut file = VastFile::new(VastFileType::SystemVerilog);
-        self.emit_recursive(&design, &mut emitted_module_names, &mut file, &options);
+        for core in design.emitted() {
+            ModDef { core: core.clone() }.emit_definition(&design, &mut file, &options);
+        }
         let emit_result = file.emit();
         let mut leaf_text = Vec::new();
         if !emit_result.is_empty() {
@@ -310,45 +309,14 @@ impl ModDef {
         leaf_text.join("\n")
     }
 
-    fn emit_recursive(
+    /// Adds this definition's module to `file`.
+    fn emit_definition(
         &self,
         design: &DesignResolution,
-        emitted_module_names: &mut IndexMap<String, Arc<RwLock<ModDefCore>>>,
         file: &mut VastFile,
         options: &EmitOptions,
     ) {
         let core = self.core.read();
-
-        if core.usage == Usage::EmitNothingAndStop || core.usage == Usage::EmitDefinitionAndStop {
-            return;
-        }
-
-        match emitted_module_names.entry(core.name.clone()) {
-            Entry::Occupied(entry) => {
-                let existing_moddef = entry.get();
-                if !Arc::ptr_eq(existing_moddef, &self.core) {
-                    panic!("Two distinct modules with the same name: {}", core.name);
-                } else {
-                    return;
-                }
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(self.core.clone());
-            }
-        }
-
-        // Recursively emit instances
-
-        if core.usage == Usage::EmitDefinitionAndDescend {
-            for inst in core.instances.values() {
-                ModDef { core: inst.clone() }.emit_recursive(
-                    design,
-                    emitted_module_names,
-                    file,
-                    options,
-                );
-            }
-        }
 
         // Start the module declaration.
 

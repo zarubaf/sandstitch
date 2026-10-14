@@ -65,7 +65,7 @@ A component with more than one of these is S0401, including two constants (tieof
 | S0405 | Tieoff or unused on an end whose direction does not allow it |
 | S0406 | Inout conflict: several definition inouts on one net, or a definition inout with a definition input or output |
 | S0407 | Two name sources of declared nets (definition ports, the chosen source of each net) with the same name |
-| S0408 | Two different definitions with one key, or two emitted definitions with one module name |
+| S0408 | Two different definitions with one key, or an emitted definition and another definition with one module name |
 | S0409 | A connection between bits already joined by other connections (a cycle in the connection graph), other than an identical repeat |
 
 Each code has a page in `doc/errors/` and an entry in `cargo xtask explain`. Width mismatches are rejected when a connection is made and are not part of resolution.
@@ -112,7 +112,7 @@ pub struct Definition {
 
 ## Coexisting definitions
 
-The pass compares every two distinct `ModDef`s that share a `DefKey`. Opaque definitions are equal when their usage, ports (name, direction, width, type) and parameter overrides are equal; emitted definitions (`EmitDefinitionAndDescend`, `EmitStubAndStop`) are equal when, in addition, their enum casts of instance ports, instances (name and child key), interfaces and resolutions are equal. Spans and metadata are provenance and are not compared. Equal definitions are one definition, emitted once, with the first one's provenance; different ones are S0408, naming an instance path that uses each and the first field that differs. Emitted definitions must also have distinct module names across keys: two emitted definitions with different keys and one module name (for example two specializations of one module, both stubbed) are S0408. Emission takes its set of definitions from the same pass.
+The pass compares every two distinct `ModDef`s that share a `DefKey`. Every definition is compared on its usage, ports (name, direction, width, type, enum cast) and parameter overrides. A stub (`EmitStubAndStop`) is compared on these alone, since its emitted text depends on nothing else. A definition emitted with its contents (`EmitDefinitionAndDescend`) is also compared on its instances (name and child key), interfaces and connections; the connections include the type-check records (whether a connection was made with `connect_bits`) and are compared regardless of call order and direction. A definition whose resolution has errors is never collapsed and is not compared on its connections; its errors are reported. Spans and metadata are provenance and are not compared. Equal definitions are one definition, emitted once, with the first one's provenance; different ones are S0408, naming an instance path that uses each and the first field that differs. An emitted definition and any other definition with another key but the same module name (for example two specializations of one module, both stubbed) are also S0408. Emission takes its set of definitions, children first and in first-seen order, from the same pass.
 
 ## Testing
 
@@ -129,5 +129,5 @@ Sub-issues of #6, landed in order:
 
 1. Resolver and design pass extracted from the emitter, yielding segments (net slices, constants, unused) that the emitter consumes; RTL checker; contract tests on emitted RTL for bit ranges, fan-out, constants and hierarchy. No behavior change: connection errors still panic with their current messages.
 1. Components, drivers and nets; `check()` consumes the pass; diagnostics S0401 to S0407 and S0409, `ObjectRef` and call-site spans; identical repeated connections ignored; contract test for open and unused.
-1. `DefKey`, `Snapshot`, `elaborate()`, `SCHEMA_VERSION` and `trace()`; contract tests extended to the snapshot.
-1. Coexisting definitions and S0408.
+1. `Snapshot`, `elaborate()`, `SCHEMA_VERSION` and `trace()`; contract tests extended to the snapshot.
+1. `DefKey`, instance paths, coexisting definitions and S0408.
