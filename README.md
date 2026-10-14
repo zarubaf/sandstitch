@@ -8,6 +8,8 @@ Imported SystemVerilog modules can be specialized with value and type parameters
 
 ## Building
 
-Slang is vendored and runs in-process. The first build compiles it (minutes); install ccache to make rebuilds instant. Requires GCC 11+ or Clang 17+, CMake 3.28+ and Python 3. `cargo xtask ci` runs the repository checks.
+On x86-64 Linux, `nix develop` enters the pinned development environment (`flake.nix`, `flake.lock`): Rust, a C++ compiler, CMake, Python 3, ccache and Verilator. CI uses the same environment. Without Nix, building requires GCC 11+ or Clang 17+, CMake 3.28+ and Python 3.
+
+Slang is vendored and runs in-process. The first build compiles it (minutes); ccache makes rebuilds instant. `cargo xtask ci` runs the repository checks.
 
 Forked from [Topstitch](https://github.com/xlsynth/topstitch) v0.100.0 (Apache-2.0), copyright its authors.
