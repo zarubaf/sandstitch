@@ -139,17 +139,19 @@ Typed specialization (#4, [design](design/typed-specialization.md)):
 Connection resolution (#6, [design](design/connection-contract.md)):
 
 - `ModDef::check` resolves the connections of every emitted definition into
-  components and reports connection errors as diagnostics S0401 to S0406 and
+  components and reports connection errors as diagnostics S0401 to S0407 and
   S0409, with an object reference and call-site labels; `emit` panics with
-  them. Upstream panicked during emission with plain messages and
-  reported cycles only while tracing. A connection identical to an earlier
-  one is ignored.
+  them. Upstream panicked during emission with plain messages (the
+  emitter's "Net name collision" panic is S0407) and reported cycles only
+  while tracing. A connection identical to an earlier one is ignored.
 
 Upstream tests are unchanged except: `tests/syntax/params.rs` (the clippy
 fixes above), the tests that expected connection panics in
 `tests/checks/validate.rs`, `tests/checks/unused.rs`,
-`tests/connections/tieoff.rs`, `tests/connections/net.rs` and
-`tests/syntax/inout.rs` (they assert the diagnostics of `check` instead),
+`tests/connections/tieoff.rs`, `tests/connections/net.rs`,
+`tests/syntax/inout.rs`, `tests/checks/nets.rs` and
+`tests/connections/collision.rs` (they assert the diagnostics of `check`
+instead),
 `tests/spdx_test.rs` (skips `third_party/`, `crates/slang-rs/` and
 diagnostic snapshots), `tests/test.rs` (new test modules), and the
 expected output of `test_unions` and `test_unions_complex` in

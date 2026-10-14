@@ -97,7 +97,7 @@ Logic vectors nested inside aggregates are compared structurally; only a `Logic`
 
 - `Diagnostic { code: "S0xxx", severity, message, primary label, secondary labels, notes, helps, object }`, spans into Rust (captured with `#[track_caller]`) and SV (Slang locations); `object` is the stable reference (definition, end, bit range) of what the diagnostic is about, when it has one.
 - Rendered with `annotate-snippets` for terminals (Rust spans via `std::panic::Location`, SV spans from `Port::loc` and the `Diag` file, line and column); serialized to JSON for the explorer, documentation and CI.
-- `check()` collects structural diagnostics (S0201, S0206) and connection diagnostics (S0401 to S0406, S0409; see `connection-contract.md`) of the module and the instantiated definitions emitted with `Usage::EmitDefinitionAndDescend` (it does not descend into others); import errors report all Slang diagnostics for that specialization. Upstream `connect` keeps its immediate width/direction panics.
+- `check()` collects structural diagnostics (S0201, S0206) and connection diagnostics (S0401 to S0407, S0409; see `connection-contract.md`) of the module and the instantiated definitions emitted with `Usage::EmitDefinitionAndDescend` (it does not descend into others); import errors report all Slang diagnostics for that specialization. Upstream `connect` keeps its immediate width/direction panics.
 - Error index (`doc/errors/`): one entry per code with a failing example and the fix; `cargo xtask explain S0xxx`. Tests assert every code has an entry, and `tests/diagnostics/examples.rs` runs each example and checks it reports its code.
 - Diagnostic output is snapshot-tested on broken fixtures (`tests/diagnostics/snapshots/`).
 

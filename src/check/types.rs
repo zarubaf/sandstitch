@@ -34,8 +34,8 @@ impl ModDef {
     /// emitted, and of every definition emission descends into, and reports
     /// their errors: S0401 (more than one driver), S0402 (unconnected bits),
     /// S0403 (no driver), S0404 (conflicting intent), S0405 (tieoff or unused
-    /// on the wrong direction), S0406 (inout conflict) and S0409 (connection
-    /// cycle).
+    /// on the wrong direction), S0406 (inout conflict), S0407 (net name
+    /// collision) and S0409 (connection cycle).
     ///
     /// Only instantiated definitions whose internals are emitted
     /// (`EmitDefinitionAndDescend`) are descended into.

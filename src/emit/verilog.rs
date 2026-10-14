@@ -530,6 +530,20 @@ impl ModDef {
             let assignment = file.make_continuous_assignment(&lhs, &rhs);
             file.add_member_continuous_assignment(module, assignment);
         }
+
+        debug_assert_eq!(
+            nets.logic_refs
+                .keys()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
+            resolution
+                .nets
+                .iter()
+                .map(|net| net.name.emitted())
+                .collect::<std::collections::HashSet<_>>(),
+            "the emitted nets of {} differ from its resolved nets",
+            core.name
+        );
     }
 }
 
