@@ -70,7 +70,8 @@ pub fn check_compiler(id: CompilerId, version_output: &str) -> Result<(), String
     match major(version) {
         Some(found) if found >= minimum => Ok(()),
         _ => Err(format!(
-            "slang-sys builds Slang, which needs C++20 with {name} or newer; found `{first}`"
+            "slang-sys builds Slang, which needs C++20 with {name} or newer; found `{first}` \
+             (run inside `nix develop`)"
         )),
     }
 }
@@ -85,7 +86,7 @@ pub fn check_cmake(version_output: &str) -> Result<(), String> {
         (Some(major), Some(minor)) if (major, minor) >= (3, 28) => Ok(()),
         _ => Err(format!(
             "slang-sys needs CMake 3.28 or newer to build Slang; found `{first}` \
-             (`pip install cmake` installs a current one without root)"
+             (run inside `nix develop`)"
         )),
     }
 }
@@ -97,7 +98,7 @@ pub fn check_python(found: bool) -> Result<(), String> {
     } else {
         Err(
             "slang-sys needs Python 3 to build Slang (it generates sources); \
-             none found on PATH"
+             none found on PATH (run inside `nix develop`)"
                 .to_string(),
         )
     }
@@ -142,7 +143,10 @@ mod tests {
         let gcc = |out| check_compiler(CompilerId::Gcc, out);
         assert!(gcc("g++ (Debian 14.2.0-19) 14.2.0").is_ok());
         let e = gcc("g++ (GCC) 10.5.0").unwrap_err();
-        assert!(e.contains("GCC 11") && e.contains("10.5.0"), "{e}");
+        assert!(
+            e.contains("GCC 11") && e.contains("10.5.0") && e.contains("nix develop"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -186,7 +190,7 @@ mod tests {
     #[test]
     fn cmake_versions() {
         let e = check_cmake("cmake version 3.19.8\n\nCMake suite").unwrap_err();
-        assert!(e.contains("3.28") && e.contains("pip install cmake"), "{e}");
+        assert!(e.contains("3.28") && e.contains("nix develop"), "{e}");
         assert!(check_cmake("cmake version 4.4.4").is_ok());
         assert!(check_cmake("cmake version 3.28.0").is_ok());
     }
@@ -194,7 +198,8 @@ mod tests {
     #[test]
     fn python_is_required() {
         assert!(check_python(true).is_ok());
-        assert!(check_python(false).unwrap_err().contains("Python 3"));
+        let e = check_python(false).unwrap_err();
+        assert!(e.contains("Python 3") && e.contains("nix develop"), "{e}");
     }
 
     #[test]

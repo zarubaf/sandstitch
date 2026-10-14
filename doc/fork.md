@@ -71,13 +71,10 @@ outside the crate no longer compile.
 ## Divergences from upstream
 
 - `README.md` replaced.
-- Removed `.github/workflows/publish.yml`, `tests/version_test.rs` and
-  `check_version_is.py` (they depend on crates.io release state).
-- Removed `.pre-commit-config.yaml`: `cargo xtask ci` (`xtask/`, alias in
-  `.cargo/config.toml`) runs fmt, workspace-wide clippy with `-D warnings`,
-  text hygiene, the library boundary check and the tests, locally and as the
-  only step of `.github/workflows/ci.yml` (upstream CI ran pre-commit, then
-  the tests with a downloaded Slang and the libc++ runtime; no clippy).
+- `cargo xtask ci` (`xtask/`, alias in `.cargo/config.toml`) runs fmt,
+  workspace-wide clippy with `-D warnings`, text hygiene, the library boundary
+  check and the tests, locally and in the root `.github/workflows/ci.yml`,
+  which installs Nix, caches ccache and runs it inside `nix develop`.
 - `Cargo.toml`: `publish = false`; `repository` and `homepage` point to
   https://github.com/zarubaf/sandstitch; `documentation` removed; unused
   dev-dependencies removed (`curl`, `semver`, `toml`); a workspace with
@@ -190,7 +187,10 @@ upstream versions.
   `regex`); upstream changes to the subprocess and the JSON extractors cannot
   be applied and are reimplemented by hand. `tests/spdx_test.rs` scans only
   the crate directory (`CARGO_MANIFEST_DIR`) instead of the whole workspace
-  root; `tests/version_test.rs` is deleted (it compared the root package
+  root; the upstream `.github/` (ci.yml, publish.yml, slang.yml),
+  `.pre-commit-config.yaml`, `requirements-ci.in`, `requirements-ci.txt` and
+  `check_version_is.py` are deleted (the root workflow and `cargo xtask ci`
+  replace them); `tests/version_test.rs` is deleted (it compared the root package
   version with crates.io and needed network) together with the
   dev-dependencies only it used (`curl`, `toml`, `semver`, `cargo_metadata`,
   `log`, `env_logger`); `[lints.clippy]` allows `collapsible_if`,
