@@ -100,7 +100,7 @@ Maintain source module definitions, resolved specializations, and individual ins
 
 ## Generator and API contract
 
-A generator is an ordinary function that constructs and returns a component. Generated components can be instantiated by other generators. A mesh generator owns mesh connectivity; a design-specific NoC package owns endpoint addressing, routing configuration, and any required tables. The generic engine handles construction and structural validation.
+A generator is an ordinary function that constructs and returns a component. Generated components can be instantiated by other generators. A mesh generator owns mesh connectivity; a design-specific NoC package owns endpoint addressing, routing configuration, and any required tables. The generic engine handles construction and structural validation. Design packages and generators write no SystemVerilog text; every emitted file, packages included, comes from the model.
 
 The public vocabulary stays small:
 
