@@ -612,6 +612,37 @@ mod tests {
         s.get_intf("x").connect(&d.get_intf("x"), false);
         assert_site(&connections_of(&s.get_port("x_v"))[0].site, line);
         assert_site(&connections_of(&d.get_port("x_v"))[0].site, line);
+
+        // Intf::export, export_with_prefix, export_with_name_underscore: the
+        // exported ports' connections and type declarations.
+        let blk = ModDef::new("Blk");
+        blk.core.write().insert_typed_port(
+            "y_v".into(),
+            IO::Output,
+            PortType::Logic {
+                signed: false,
+                packed: vec![Dim { msb: 1, lsb: 0 }],
+            },
+            Span::None,
+        );
+        blk.def_intf_from_name_underscore("y");
+        let exports = ModDef::new("Exports");
+        let b = exports.instantiate(&blk, Some("b"), None);
+        let assert_exported = |port: &str, line: u32| {
+            let port = exports.get_port(port);
+            assert_site(&connections_of(&port)[0].site, line);
+            let span = port.source_span();
+            assert_site(&CallSite { span, seq: 0 }, line);
+        };
+        let line = line!() + 1;
+        b.get_intf("y").export();
+        assert_exported("y_v", line);
+        let line = line!() + 1;
+        b.get_intf("y").export_with_prefix("p", "p_");
+        assert_exported("p_v", line);
+        let line = line!() + 1;
+        b.get_intf("y").export_with_name_underscore("n");
+        assert_exported("n_v", line);
     }
 
     #[test]

@@ -525,6 +525,9 @@ struct Found {
 /// A range `(end, msb, lsb)` of an end.
 type Range = (usize, usize, usize);
 
+/// How many secondary labels, and S0403 member notes, an error shows.
+const SHOWN: usize = 3;
+
 /// What drives a component, before the driver count is checked.
 enum Source {
     /// An atom of a definition input or an instance output.
@@ -580,14 +583,15 @@ impl Context<'_> {
     }
 
     /// An error about `range`: the primary label is the involved call made
-    /// last, the others are secondary labels, newest first.
+    /// last, then at most [`SHOWN`] other calls as secondary labels, newest
+    /// first, and a note counting the calls left out.
     fn error(
         &self,
         code: Code,
         message: String,
         range: Range,
         involved: &[usize],
-        notes: Vec<String>,
+        mut notes: Vec<String>,
     ) -> Found {
         let mut calls: Vec<(u64, &str, &Span)> = involved
             .iter()
@@ -598,10 +602,18 @@ impl Context<'_> {
             .collect();
         calls.sort_by(|a, b| (Reverse(a.0), a.1).cmp(&(Reverse(b.0), b.1)));
         calls.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
-        let mut labels = calls.into_iter().map(|(_, text, span)| Label {
-            span: span.clone(),
-            text: text.into(),
-        });
+        match calls.len().saturating_sub(1 + SHOWN) {
+            0 => {}
+            1 => notes.push("… and 1 more connection".into()),
+            more => notes.push(format!("… and {more} more connections")),
+        }
+        let mut labels = calls
+            .into_iter()
+            .take(1 + SHOWN)
+            .map(|(_, text, span)| Label {
+                span: span.clone(),
+                text: text.into(),
+            });
         let primary = labels.next().expect("an error involves a call");
         let (end, msb, lsb) = range;
         Found {
@@ -714,10 +726,14 @@ impl Context<'_> {
                 .any(|&i| self.items[i].is_unused())
         });
         if sources.is_empty() && !has_inout && !all_unused {
-            let notes = members
+            let mut notes: Vec<String> = members
                 .iter()
+                .take(SHOWN)
                 .map(|&m| format!("`{}` is on this net", self.range_ref(m)))
                 .collect();
+            if members.len() > SHOWN {
+                notes.push(format!("… and {} more", members.len() - SHOWN));
+            }
             errors.push(self.error(
                 codes::S0403,
                 format!("`{}` has no driver", self.range_ref(first)),
@@ -763,12 +779,17 @@ impl Context<'_> {
             ));
         }
 
-        let def_inouts: Vec<usize> = member_ends
+        // Definition inouts counted per atom: lanes of one inout are separate
+        // definition inouts. A component whose only source is a constant has
+        // no net, so its inouts do not conflict.
+        let def_inouts: Vec<Range> = members
             .iter()
             .copied()
-            .filter(|&end| kind(end) == Kind::DefInOut)
+            .filter(|m| kind(m.0) == Kind::DefInOut)
             .collect();
+        let constant_only = matches!(sources[..], [Source::Constant(..)]);
         let detail = match def_inouts[..] {
+            _ if constant_only => None,
             [] => None,
             [inout] => member_ends
                 .iter()
@@ -781,14 +802,14 @@ impl Context<'_> {
                     };
                     format!(
                         "definition inout `{}` with definition {direction} `{}`",
-                        self.range_ref(range_of(inout)),
+                        self.range_ref(inout),
                         self.range_ref(range_of(end))
                     )
                 }),
             _ => {
                 let list: Vec<String> = def_inouts
                     .iter()
-                    .map(|&end| format!("`{}`", self.range_ref(range_of(end))))
+                    .map(|&inout| format!("`{}`", self.range_ref(inout)))
                     .collect();
                 Some(format!("several definition inouts ({})", list.join(", ")))
             }
@@ -835,10 +856,8 @@ impl Context<'_> {
 
     /// S0409 for connection `e`, which closed a cycle in the component of
     /// `first`: the ends as the call named them, the call as the primary
-    /// label, and at most three other connections of the component, newest
-    /// first.
+    /// label, and the other connections of the component made before it.
     fn cycle(&self, e: usize, first: Range, involved: &[usize]) -> Found {
-        const SHOWN: usize = 3;
         let item = &self.items[e];
         let Intent::Connected { other, other_lsb } = item.intent else {
             unreachable!("cycles are closed by connections");
@@ -863,14 +882,8 @@ impl Context<'_> {
             .collect();
         others.sort_by_key(|&i| Reverse(self.items[i].site.seq));
         others.dedup_by_key(|i| self.items[*i].site.seq);
-        let mut notes = vec!["they are already connected through other connections".into()];
-        match others.len().saturating_sub(SHOWN) {
-            0 => {}
-            1 => notes.push("… and 1 more connection".into()),
-            more => notes.push(format!("… and {more} more connections")),
-        }
         let mut calls = vec![e];
-        calls.extend(others.into_iter().take(SHOWN));
+        calls.extend(others);
         self.error(
             codes::S0409,
             format!(
@@ -880,7 +893,7 @@ impl Context<'_> {
             ),
             first,
             &calls,
-            notes,
+            vec!["they are already connected through other connections".into()],
         )
     }
 
@@ -1551,6 +1564,108 @@ mod tests {
                 "inout conflict on `t.p`: several definition inouts (`t.p`, `t.q`)".into(),
                 object("t", "p", 7, 0)
             )]
+        );
+    }
+
+    #[test]
+    fn lanes_of_one_definition_inout_are_s0406() {
+        let top = ModDef::new("t");
+        let x = top.add_port("x", IO::InOut(8));
+        x.slice(3, 0).connect(&x.slice(7, 4));
+
+        assert_eq!(
+            summary(&top.check().0),
+            [(
+                codes::S0406,
+                "inout conflict on `t.x[7:4]`: several definition inouts (`t.x[7:4]`, `t.x[3:0]`)"
+                    .into(),
+                object("t", "x", 7, 4)
+            )]
+        );
+    }
+
+    #[test]
+    fn definition_inout_lanes_through_an_instance_inout_are_s0406() {
+        let io1 = leaf("io1", "x", IO::InOut(1));
+        let top = ModDef::new("t");
+        let w = inst(&top, &io1, "w");
+        let x = top.add_port("x", IO::InOut(2));
+        x.bit(0).connect(&w.get_port("x"));
+        x.bit(1).connect(&w.get_port("x"));
+
+        assert_eq!(
+            summary(&top.check().0),
+            [(
+                codes::S0406,
+                "inout conflict on `t.w.x`: several definition inouts (`t.x[1]`, `t.x[0]`)".into(),
+                object("t", "w.x", 0, 0)
+            )]
+        );
+    }
+
+    #[test]
+    fn constant_driving_an_inout_and_an_output_is_valid() {
+        let top = ModDef::new("t");
+        let p = top.add_port("p", IO::InOut(4));
+        let y = top.add_port("y", IO::Output(4));
+        p.connect(&y);
+        y.tieoff(3);
+
+        assert_eq!(summary(&top.check().0), []);
+        assert_eq!(
+            top.emit(crate::EmitOptions::default()),
+            "module t(\n  inout wire [3:0] p,\n  output wire [3:0] y\n);\n  \
+             assign p = 4'h3;\n  assign y = 4'h3;\nendmodule\n"
+        );
+    }
+
+    #[test]
+    fn constant_driving_two_definition_inouts_is_valid() {
+        let top = ModDef::new("t");
+        let p = top.add_port("p", IO::InOut(4));
+        let q = top.add_port("q", IO::InOut(4));
+        p.connect(&q);
+        p.tieoff(3);
+
+        assert_eq!(summary(&top.check().0), []);
+    }
+
+    #[test]
+    fn s0401_labels_show_three_other_calls() {
+        let src1 = leaf("src1", "o", IO::Output(1));
+        let snk1 = leaf("snk1", "i", IO::Input(1));
+        let top = ModDef::new("t");
+        let a = inst(&top, &src1, "a");
+        let b = inst(&top, &src1, "b");
+        let sinks: Vec<ModInst> = (0..50)
+            .map(|k| inst(&top, &snk1, &format!("u{k}")))
+            .collect();
+        for u in &sinks {
+            a.get_port("o").connect(&u.get_port("i"));
+        }
+        let line = line!() + 1;
+        b.get_port("o").connect(&sinks[0].get_port("i"));
+
+        let diagnostics = top.check().0;
+        assert_eq!(
+            summary(&diagnostics),
+            [(
+                codes::S0401,
+                "`t.a.o` has more than one driver".into(),
+                object("t", "a.o", 0, 0)
+            )]
+        );
+        let d = &diagnostics[0];
+        assert_eq!(line_of(&d.primary.span), line);
+        let lines: Vec<u32> = d.secondary.iter().map(|l| line_of(&l.span)).collect();
+        assert_eq!(lines, [line - 3, line - 3, line - 3]);
+        assert_eq!(
+            d.notes,
+            [
+                "driven by `t.a.o`",
+                "driven by `t.b.o`",
+                "… and 47 more connections"
+            ]
         );
     }
 

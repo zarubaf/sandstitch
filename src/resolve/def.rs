@@ -114,7 +114,8 @@ pub(crate) fn resolve_def(core: &Arc<RwLock<ModDefCore>>) -> (Resolution, Vec<Di
 
 /// The nets emission declares, in order of first use: the definition's
 /// ports, then what the segments of every instance end and then of every
-/// definition port read. A net that no segment reads is not declared.
+/// definition port read. The definition's ports are always declared; the
+/// net of an instance port, or a named net, that no segment reads is not.
 fn declared_nets(
     def_ports: &[(String, usize)],
     instances: &[Vec<EndResolution>],
@@ -533,6 +534,13 @@ mod tests {
 
         let (resolution, diagnostics) = resolve_def(&top.core);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
-        assert_eq!(resolution.nets.len(), 2);
+        let names: Vec<&NetName> = resolution.nets.iter().map(|net| &net.name).collect();
+        assert_eq!(
+            names,
+            [
+                &NetName::Wire("xyz".into()),
+                &NetName::InstPort("a_b_c".into(), "d_e".into())
+            ]
+        );
     }
 }

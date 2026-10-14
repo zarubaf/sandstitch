@@ -21,27 +21,30 @@ impl Intf {
     pub fn export_with_prefix(&self, name: impl AsRef<str>, prefix: impl AsRef<str>) -> Intf {
         let members = self.members();
         let repeated = |member: &str| members.iter().filter(|(m, _)| m == member).count() > 1;
-        let exported = members
-            .iter()
-            .map(|(member, slice)| {
-                let port_name = if repeated(member) {
-                    // Exporting a port of the module itself flips it.
-                    let io = match slice.port {
-                        Port::ModDef { .. } => slice.port.io().flip(),
-                        Port::ModInst { .. } => slice.port.io(),
-                    };
-                    let suffix = match io {
-                        IO::Input(_) => "i",
-                        IO::Output(_) => "o",
-                        IO::InOut(_) => "io",
-                    };
-                    format!("{}{member}_{suffix}", prefix.as_ref())
-                } else {
-                    format!("{}{member}", prefix.as_ref())
+        // A loop, not a closure, so that `#[track_caller]` reaches the
+        // exported ports' connections.
+        let mut exported = Vec::with_capacity(members.len());
+        for (member, slice) in &members {
+            let port_name = if repeated(member) {
+                // Exporting a port of the module itself flips it.
+                let io = match slice.port {
+                    Port::ModDef { .. } => slice.port.io().flip(),
+                    Port::ModInst { .. } => slice.port.io(),
                 };
-                IntfMember::new(member, &slice.export_as(&port_name).to_port_slice())
-            })
-            .collect();
+                let suffix = match io {
+                    IO::Input(_) => "i",
+                    IO::Output(_) => "o",
+                    IO::InOut(_) => "io",
+                };
+                format!("{}{member}_{suffix}", prefix.as_ref())
+            } else {
+                format!("{}{member}", prefix.as_ref())
+            };
+            exported.push(IntfMember::new(
+                member,
+                &slice.export_as(&port_name).to_port_slice(),
+            ));
+        }
         ModDef {
             core: self.get_mod_def_core(),
         }
@@ -75,11 +78,11 @@ impl Intf {
             );
         }
 
-        let exported = self
-            .members()
-            .iter()
-            .map(|(member, slice)| IntfMember::new(member, &slice.export().to_port_slice()))
-            .collect();
+        let members = self.members();
+        let mut exported = Vec::with_capacity(members.len());
+        for (member, slice) in &members {
+            exported.push(IntfMember::new(member, &slice.export().to_port_slice()));
+        }
         ModDef {
             core: self.get_mod_def_core(),
         }
