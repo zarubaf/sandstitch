@@ -515,3 +515,100 @@ fn three_by_two_mesh_elaborates() {
     assert_eq!(ports.len(), 3 + 2 + 2 + 6, "{ports:?}");
     assert_eq!(emitted.matches(") i_router_x").count(), 6);
 }
+
+#[test]
+fn large_system_elaborates() {
+    let dir = tempfile::tempdir().unwrap();
+    let (cfg, spec) = large();
+    let system = system(&cfg, &spec, dir.path());
+    let emitted = elaborate(&system, "floonoc/hw");
+
+    // Fourteen cores, and both memories' AXI ports.
+    assert_eq!(system.get_port("done_o").io(), IO::Output(14));
+    assert_eq!(system.get_port("error_o").io(), IO::Output(14));
+    for port in [
+        "x2_y0_axi_req_o",
+        "x2_y0_axi_rsp_i",
+        "x0_y2_axi_req_o",
+        "x0_y2_axi_rsp_i",
+    ] {
+        system.get_port(port);
+    }
+    assert_eq!(system.get_ports(None).len(), 8);
+    for target in ["Window_x2_y0", "Window_x0_y2"] {
+        assert_eq!(
+            emitted
+                .matches(&format!(".TargetBase(large_sys_pkg::{target})"))
+                .count(),
+            7,
+            "{target} in\n{emitted}"
+        );
+    }
+    let manifest = system.manifest();
+    let routers = manifest
+        .specializations
+        .iter()
+        .filter(|(path, _)| path.contains(".i_router_"))
+        .count();
+    assert_eq!(routers, 9, "{manifest:#?}");
+    for (x, y) in spec.routers() {
+        let kind = if spec.memories().contains(&(x, y)) {
+            "memory"
+        } else {
+            "compute"
+        };
+        let inst = format!(" i_{kind}_x{x}_y{y} (");
+        assert_eq!(emitted.matches(&inst).count(), 1, "{inst}");
+    }
+}
+
+#[test]
+fn large_system_passes_traffic() {
+    if !have_verilator("large_system_passes_traffic") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (cfg, spec) = large();
+    let sim = simulate(&harness(&cfg, &spec, dir.path()));
+    assert!(passed(&sim), "{}", sim.output);
+}
+
+/// Both configurations send traffic across routers, the large one to two
+/// memories from every tile, and their core counts differ.
+#[test]
+fn configurations_exercise_routing() {
+    let configs = [small(), large()];
+    for (cfg, spec) in &configs {
+        assert_eq!(spec.check(cfg), Ok(()));
+        let far = spec
+            .cores()
+            .iter()
+            .map(|&(x, y, t)| x.abs_diff(t.x) + y.abs_diff(t.y))
+            .max()
+            .unwrap();
+        assert!(far >= 2, "{}: farthest core at distance {far}", cfg.name);
+        // Every route crosses at least two routers: no core sits at its
+        // memory's router.
+        assert!(
+            spec.cores().iter().all(|&(x, y, t)| (x, y) != (t.x, t.y)),
+            "{}",
+            cfg.name
+        );
+    }
+    let large_spec = &configs[1].1;
+    for (x, y) in large_spec.routers() {
+        if let Endpoint::Compute { targets } = large_spec.endpoint(x, y) {
+            let mut memories: Vec<_> = targets.iter().map(|t| (t.x, t.y)).collect();
+            memories.sort();
+            memories.dedup();
+            assert_eq!(
+                memories.len(),
+                targets.len(),
+                "tile ({x}, {y}) targets one memory twice"
+            );
+        }
+    }
+    assert_eq!(large_spec.memories().len(), 2);
+    assert_eq!(large_spec.cores().len(), 14);
+    assert_ne!(configs[0].1.core_counts(), large_spec.core_counts());
+}

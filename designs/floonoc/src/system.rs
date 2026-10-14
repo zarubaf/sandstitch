@@ -35,6 +35,38 @@ pub fn small() -> (FlooConfig, MeshSpec) {
     (cfg, spec)
 }
 
+/// The large configuration (doc/design/reference-noc.md, decision 8):
+/// `floo_synth_nw_pkg`'s router configuration named `large`, and a 3x3 mesh
+/// with memories at (2, 0) and (0, 2) and a two-core compute tile at each
+/// of the other seven routers. The two cores of a tile target different
+/// memories, and every core has a distinct seed. The tile at (0, 0) is
+/// two hops from each memory.
+pub fn large() -> (FlooConfig, MeshSpec) {
+    let cfg = FlooConfig::synth("large");
+    let memories = [(2, 0), (0, 2)];
+    let mut spec = MeshSpec::new(3, 3);
+    for (x, y) in memories {
+        spec.set(x, y, Endpoint::Memory);
+    }
+    let tiles: Vec<(usize, usize)> = spec
+        .routers()
+        .filter(|&(x, y)| !memories.contains(&(x, y)))
+        .collect();
+    for (i, &(x, y)) in tiles.iter().enumerate() {
+        let targets = memories
+            .iter()
+            .enumerate()
+            .map(|(m, &(mx, my))| Target {
+                x: mx,
+                y: my,
+                seed: (2 * i + m) as u32 + 1,
+            })
+            .collect();
+        spec.set(x, y, Endpoint::Compute { targets });
+    }
+    (cfg, spec)
+}
+
 /// The name of the system module of `cfg`: `<name>_system`.
 pub fn system_name(cfg: &FlooConfig) -> String {
     format!("{}_system", cfg.name)
