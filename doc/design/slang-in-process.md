@@ -13,7 +13,7 @@ Sandstitch links Slang into the library and calls it in-process. Sandstitch is u
 1. **A narrow shim, not general bindings.** The shim answers the importer's questions and returns plain data. Binding Slang's object graph to Rust is out of scope.
 1. **Two steps.** Step 1 (#17): Slang runs in-process. Step 2 (#18): the importer reads a typed snapshot of the elaborated design that the shim builds.
 1. **`slang-rs` diverges from upstream.** xlsynth's `slang-rs` stays subprocess and JSON based. Its fixes are ported by hand; `doc/fork.md` records this.
-1. **One way to build.** The crate always builds its vendored Slang. Linking a prebuilt library is left out until someone needs it: a foreign build can differ in allocator, Boost, position independence and assertion settings in ways that cannot be checked reliably at link time.
+1. **One source, optionally prebuilt.** The crate builds its vendored Slang, or links a library that this crate's own build made (`SLANG_SYS_PREBUILT_DIR`, see "Prebuilt"), so that consumers' CI does not rebuild Slang with CMake. A foreign Slang build (a distribution's, another project's) is not accepted: it can differ in allocator, Boost, position independence and assertion settings in ways that cannot be checked reliably at link time.
 
 ## Build (`crates/slang-sys`)
 
@@ -33,7 +33,23 @@ The shim is compiled with `cxx-build` against the copied headers and the generat
 
 **Requirements.** C++20 with GCC 11 or Clang 17 or newer, CMake 3.28 or newer, and Python 3 (Slang generates sources at build time). `build.rs` checks all three before configuring and fails with a message naming the requirement and what it found; for CMake it suggests `pip install cmake`, which needs no root. The C++ standard library is linked dynamically, so a binary built with GCC 11 needs at least that libstdc++ at run time. Linux x86-64 is tested; other targets are not blocked, but are documented as untested.
 
-**CI.** `.github/workflows/ci.yml` installs ccache and caches its directory and Cargo's target directory, so ordinary runs do not rebuild Slang. There is no separate native build job.
+**Prebuilt.** `cargo xtask slang-prebuilt <DIR>` builds `slang-sys` from source and copies `libsvlang.a` (`lib/`), the headers the shim compiles against (`include/`: Slang's `include/` and `external/` and the generated headers), the license files and the manifest `slang-prebuilt.toml` into `<DIR>/slang-<release>-<target>-<compiler><major>`, and prints that path. Every source build writes the manifest to `OUT_DIR`; the command only collects it. With `SLANG_SYS_PREBUILT_DIR` set to such a directory (an absolute path), `build.rs` skips the vendored copy, CMake and the CMake and Python checks, compiles the shim against `include/` with the same defines and links `lib/`. It first checks the manifest against the current build and stops with one line per mismatch:
+
+| Key | Value | The current build must have |
+|---|---|---|
+| `slang` | vendored Slang release | the same |
+| `target` | Rust target triple | the same |
+| `compiler`, `compiler_version` | `gcc`, `clang`, `apple-clang`; version | the same family; at least the major version |
+| `stdlib`, `stdlib_version` | `libstdc++` (`_GLIBCXX_RELEASE`) or `libc++` (`_LIBCPP_VERSION`) | the same library; at least that version |
+| `cxx11_abi` | `_GLIBCXX_USE_CXX11_ABI`, `none` outside libstdc++ | the same |
+| `glibc` | `__GLIBC__.__GLIBC_MINOR__`, `none` for another C library | at least that version; `none` only with `none` |
+| `std`, `pic`, `defines` | `c++20`, position-independent code, the shim's defines (`SLANG_ASSERT_ENABLED=1` and the others above) | the same |
+
+The standard library and glibc values come from preprocessing a probe source with the same compiler and C++ standard as the shim (`-P`; the parser also reads GCC's output with line markers). "At least" holds because libstdc++, libc++ and glibc keep old symbols when they add new ones: a library compiled against older headers links with a newer runtime, not the reverse. The compiler's major version is compared for the same reason: a compiler's support libraries (libgcc, compiler-rt) follow that rule too. For libstdc++ only the major version (`_GLIBCXX_RELEASE`) is compared; a prebuilt from a later minor release can need a symbol version that an earlier one lacks, which fails at link time with an undefined symbol, not silently. Where the compiler is not recognized, a source build writes no manifest (with a warning) and a prebuilt cannot be used.
+
+A static library does not remove the match of the C++ and C libraries. `libsvlang.a` is object code compiled against one standard library's headers: its `std::string`, `std::vector` and exception types have that library's layout and mangled names, and it calls that library's out-of-line functions and the C library's functions (with glibc, versioned symbols such as `__isoc23_strtol@GLIBC_2.38`). Neither library is inside the archive; the final binary links the consumer's at link and run time, so they must be compatible with the headers Slang saw: the same standard library with the same dual ABI setting (libstdc++'s `std::string` before and after the C++11 ABI are different types), at least as new, and a C library of the same kind. glibc and musl are different C libraries with different ABIs, so a musl target (`x86_64-unknown-linux-musl`) needs its own prebuilt, built on musl; the target triple check catches the mismatch. To serve older systems, build the prebuilt on the oldest glibc and compiler to support.
+
+**CI.** `.github/workflows/ci.yml` installs ccache and caches its directory and Cargo's target directory, so ordinary runs do not rebuild Slang. `.github/workflows/slang-prebuilt.yml` runs `cargo xtask slang-prebuilt` on a `v*` tag or a manual dispatch on Ubuntu 24.04 (GCC 13, glibc 2.39) and uploads the directory as a `.tar.gz` artifact named like the directory; on a tag it also attaches it to that release.
 
 ## Step 1: Slang in-process (#17)
 
@@ -218,7 +234,6 @@ Import time and peak memory of the big FlooNoC 2x2 mesh (`cargo test --release -
 ## Out of scope
 
 - General Rust bindings for Slang.
-- Linking a prebuilt Slang library (decision 6).
+- Linking a Slang library not built by this crate (decision 6).
 - A command line tool; whether the explorer (#8) needs a small serving binary is open on #9.
 - Python bindings; the static, position-independent library is the only preparation.
-- Prebuilt Slang artifacts published by this project.
