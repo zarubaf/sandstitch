@@ -13,6 +13,7 @@ use std::sync::Arc;
 use super::verilog::{EmitOptions, emitted_uses};
 use crate::diagnostic::codes;
 use crate::import::parser::VerilogImport;
+use crate::resolve::coexist::is_emitted;
 use crate::resolve::design::resolve_design;
 use crate::{
     Diagnostic, Diagnostics, Label, ModDef, ModDefCore, PortType, QualifiedName, Severity, Span,
@@ -86,6 +87,8 @@ struct Imported {
     /// Its definition is emitted (re-emitted or stubbed).
     emitted: bool,
     import: VerilogImport,
+    /// A file of the import defines the module (false for a renamed stub).
+    defines_module: bool,
     /// The span of its first port declaration with an SV span, which
     /// locates the file defining it.
     span: Option<Span>,
@@ -151,20 +154,23 @@ impl ModDef {
             .iter()
             .map(|core| {
                 let core = core.read();
+                // A stub of an import lists the import's sources but is
+                // defined by no file of them unless it keeps the module name.
+                let (import, defines_module) = match (&core.verilog_import, &core.stub_sources) {
+                    (Some(import), _) => (import.clone(), true),
+                    (None, Some(stub)) => (stub.import.clone(), stub.defines_module),
+                    (None, None) => unreachable!("only imports and their stubs are visited"),
+                };
                 Imported {
                     name: core.name.clone(),
-                    emitted: matches!(
-                        core.usage,
-                        Usage::EmitDefinitionAndDescend | Usage::EmitStubAndStop
-                    ),
-                    import: core
-                        .verilog_import
-                        .clone()
-                        .expect("only imports are visited"),
+                    emitted: is_emitted(&core.usage),
+                    import,
+                    defines_module,
                     span: core
                         .port_spans
                         .values()
                         .find(|span| matches!(span, Span::Sv { .. }))
+                        .filter(|_| defines_module)
                         .cloned(),
                 }
             })
@@ -288,6 +294,13 @@ fn visit(this: &Arc<RwLock<ModDefCore>>, path: &str, manifest: &mut Manifest, wa
             walk.visited.push(this.clone());
         }
     }
+    if core.verilog_import.is_none()
+        && core.stub_sources.is_some()
+        && is_emitted(&core.usage)
+        && walk.seen.insert(Arc::as_ptr(this))
+    {
+        walk.visited.push(this.clone());
+    }
     if core.usage == Usage::EmitDefinitionAndDescend {
         for (inst_name, inst) in &core.instances {
             visit(inst, &format!("{path}.{inst_name}"), manifest, walk);
@@ -388,7 +401,7 @@ fn unlistable(
     let import = &imported.import;
     let file = &import.package_files[package];
     let module = &imported.name;
-    if imported.emitted {
+    if imported.emitted && imported.defines_module {
         let defining = imported.defining_file();
         if !defining.is_some_and(|f| import.sources.iter().any(|s| s == f)) {
             return Some(s0303(

@@ -43,6 +43,9 @@ pub struct ModDefCore {
     pub(crate) instances: IndexMap<String, Arc<RwLock<ModDefCore>>>,
     pub(crate) usage: Usage,
     pub(crate) verilog_import: Option<VerilogImport>,
+    /// Set on a [`ModDef::stub`] of an import: where its sources come from,
+    /// for the build manifest only. It does not make the stub an import.
+    pub(crate) stub_sources: Option<StubSources>,
     /// Parameter overrides applied to this module definition (by name)
     pub(crate) parameters: IndexMap<String, crate::model::parameter::ParameterSpec>,
     pub(crate) mod_inst_connections:
@@ -129,4 +132,17 @@ impl ModDefCore {
             })
             .clone()
     }
+}
+
+/// The import a stub was made from, which the build manifest reads to list
+/// the packages the stub's ports use.
+#[derive(Clone)]
+pub(crate) struct StubSources {
+    pub(crate) import: VerilogImport,
+    /// The name of the imported module, which a stub of a stub keeps comparing
+    /// against.
+    pub(crate) module: String,
+    /// The stub has the module name of the import, so the file defining that
+    /// module defines it too.
+    pub(crate) defines_module: bool,
 }

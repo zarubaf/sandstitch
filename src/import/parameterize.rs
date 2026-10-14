@@ -183,6 +183,7 @@ impl ModDef {
                 instances: IndexMap::new(),
                 usage: Usage::EmitNothingAndStop,
                 verilog_import: Some(verilog_import),
+                stub_sources: None,
                 parameters,
                 mod_inst_connections: IndexMap::new(),
                 mod_def_connections: IndexMap::new(),
