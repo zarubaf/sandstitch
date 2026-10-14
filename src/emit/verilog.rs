@@ -398,8 +398,9 @@ impl ModDef {
                 }));
             }
 
-            // Build parameter override expressions, if any
-            if !inst.read().parameters.is_empty() {
+            // Build parameter override expressions, if any. An emitted
+            // definition is already specialized and declares no parameters.
+            if !inst.read().parameters.is_empty() && overrides_emitted(&inst.read()) {
                 let param_core = inst.read();
                 for (param_name, spec) in param_core.parameters.iter() {
                     parameter_port_names.push(param_name.clone());
@@ -543,6 +544,16 @@ pub(crate) struct TypeUse {
     pub(crate) port: Option<(String, Span)>,
 }
 
+/// Whether instances of `def` are emitted with its parameter overrides: only
+/// for an opaque definition. An emitted one (stub or definition) is already
+/// specialized and declares no parameters.
+fn overrides_emitted(def: &ModDefCore) -> bool {
+    !matches!(
+        def.usage,
+        Usage::EmitStubAndStop | Usage::EmitDefinitionAndDescend
+    )
+}
+
 /// What emission with `options` of definition `this` (whose locked core is
 /// `core`), planned by `design`, names that a package may declare: the types
 /// of its typed ports and nets and of its enum casts, and the type and
@@ -596,6 +607,9 @@ pub(crate) fn emitted_uses(
                     port: Some((end.name.clone(), span.unwrap_or(Span::None))),
                 });
             }
+        }
+        if !overrides_emitted(&inst) {
+            continue;
         }
         for spec in inst.parameters.values() {
             if let ParameterSpec::Type(name) | ParameterSpec::Expr(name) = spec {
