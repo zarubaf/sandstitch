@@ -866,3 +866,470 @@ fn manifest_lists_library_search() {
     let files: Vec<&Path> = manifest.sources.iter().map(PathBuf::as_path).collect();
     assert!(elaborate(&files, &emitted, "top").is_err());
 }
+
+/// A package whose struct names a type of another package.
+const BASE_PKG: &str = "package base_pkg;\n  typedef logic [3:0] nib_t;\nendpackage\n";
+const CFG_PKG: &str =
+    "package cfg_pkg;\n  typedef struct packed { base_pkg::nib_t a; logic b; } t;\nendpackage\n";
+
+/// Writes `text` to `name` in `dir`; returns its path.
+fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+/// Imports `name` from `paths`.
+fn import_files(paths: &[&Path], name: &str) -> ModDef {
+    let paths: Vec<&str> = paths.iter().map(|p| p.to_str().unwrap()).collect();
+    ModDef::from_verilog_with_config(
+        name,
+        &ParserConfig {
+            sources: &paths,
+            ..Default::default()
+        },
+    )
+}
+
+/// A top instantiating `m` as `u`, its input `i` tied off and its output
+/// `o` exported.
+fn top_of(m: &ModDef) -> ModDef {
+    let top = ModDef::new("top");
+    let u = top.instantiate(m, Some("u"), None);
+    u.get_port("i").tieoff(0);
+    u.get_port("o").export_as("o");
+    top
+}
+
+/// The single S0303 of `top`'s manifest; panics unless that is all.
+fn s0303(top: &ModDef) -> Diagnostic {
+    let err = top.try_manifest().unwrap_err();
+    assert_eq!(err.0.len(), 1, "{}", err.render());
+    assert_eq!(err.0[0].code, diagnostic::codes::S0303, "{}", err.render());
+    err.0[0].clone()
+}
+
+#[test]
+fn stub_lists_package_and_its_dependencies() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let base = write(dir.path(), "base_pkg.sv", BASE_PKG);
+    let cfg = write(dir.path(), "cfg_pkg.sv", CFG_PKG);
+    let m_sv = write(
+        dir.path(),
+        "m.sv",
+        "module m (input cfg_pkg::t i, output cfg_pkg::t o);\nendmodule\n",
+    );
+    let m = import_files(&[&base, &cfg, &m_sv], "m");
+    m.set_usage(Usage::EmitStubAndStop);
+    let top = top_of(&m);
+    let manifest = top.manifest();
+    assert_eq!(manifest.sources, vec![base, cfg]);
+    let emitted = top.emit(EmitOptions::default());
+    assert!(emitted.contains("cfg_pkg::t i"), "{emitted}");
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+    // Without the packages the stub does not build.
+    assert!(elaborate(&[], &emitted, "top").is_err());
+}
+
+#[test]
+fn stubbed_specialization_lists_packages() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let base = write(dir.path(), "base_pkg.sv", BASE_PKG);
+    let cfg = write(dir.path(), "cfg_pkg.sv", CFG_PKG);
+    let m_sv = write(
+        dir.path(),
+        "m.sv",
+        "module m #(parameter type T = logic) (input T i, output T o);\nendmodule\n",
+    );
+    let paths: Vec<&str> = [&base, &cfg, &m_sv]
+        .iter()
+        .map(|p| p.to_str().unwrap())
+        .collect();
+    let config = ParserConfig {
+        sources: &paths,
+        ..Default::default()
+    };
+    let overrides = [("T", ty("cfg_pkg::t"))];
+    let generic = ModDef::from_verilog_with_config("m", &config);
+    let specializations = [
+        generic.try_parameterize(&overrides).unwrap(),
+        ModDef::try_from_verilog_parameterized("m", &config, &overrides).unwrap(),
+    ];
+    for m in specializations {
+        assert_eq!(m.get_port("i").io().width(), 5);
+        m.set_usage(Usage::EmitStubAndStop);
+        let top = top_of(&m);
+        let manifest = top.manifest();
+        assert_eq!(manifest.sources, vec![base.clone(), cfg.clone()]);
+        assert_eq!(manifest.specializations.len(), 1);
+        let emitted = top.emit(EmitOptions::default());
+        assert!(emitted.contains("cfg_pkg::t i"), "{emitted}");
+        // The stub is elaborated on its own: its parent passes the
+        // specialization's overrides, which the stub does not declare (#59).
+        let stub = m.get_name();
+        elaborate_manifest(&manifest, &emitted, &stub).unwrap_or_else(|e| panic!("{e}"));
+        assert!(elaborate(&[], &emitted, &stub).is_err());
+    }
+}
+
+#[test]
+fn two_stubs_share_a_package() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let base = write(dir.path(), "base_pkg.sv", BASE_PKG);
+    let cfg = write(dir.path(), "cfg_pkg.sv", CFG_PKG);
+    let m1_sv = write(
+        dir.path(),
+        "m1.sv",
+        "module m1 (input cfg_pkg::t i, output cfg_pkg::t o);\nendmodule\n",
+    );
+    let m2_sv = write(
+        dir.path(),
+        "m2.sv",
+        "module m2 (input cfg_pkg::t i, output cfg_pkg::t o);\nendmodule\n",
+    );
+    let m1 = import_files(&[&base, &cfg, &m1_sv], "m1");
+    let m2 = import_files(&[&base, &cfg, &m2_sv], "m2");
+    m1.set_usage(Usage::EmitStubAndStop);
+    m2.set_usage(Usage::EmitStubAndStop);
+    let top = ModDef::new("top");
+    let u1 = top.instantiate(&m1, Some("u1"), None);
+    let u2 = top.instantiate(&m2, Some("u2"), None);
+    u1.get_port("i").tieoff(0);
+    u1.get_port("o").connect(&u2.get_port("i"));
+    u2.get_port("o").export_as("o");
+    let manifest = top.manifest();
+    assert_eq!(manifest.sources, vec![base, cfg]);
+    let emitted = top.emit(EmitOptions::default());
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A module whose struct port's package is declared in its own file.
+const OWN_PKG: &str = "package own_pkg;\n  typedef struct packed { logic a; logic [2:0] b; } t;\nendpackage\n\
+module r (input own_pkg::t i, output logic [3:0] o);\nendmodule\n";
+
+#[test]
+fn flat_port_needs_no_package() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let r_sv = write(dir.path(), "r.sv", OWN_PKG);
+    // Re-emitted, with its struct input connected to a vector: the input is
+    // emitted flat and names no package.
+    let r = import_files(&[&r_sv], "r");
+    r.set_usage(Usage::EmitDefinitionAndDescend);
+    r.get_port("o").connect(&r.get_port("i"));
+    let top = top_of(&r);
+    let manifest = top.manifest();
+    assert_eq!(manifest, Manifest::default());
+    let emitted = top.emit(EmitOptions::default());
+    assert!(!emitted.contains("own_pkg"), "{emitted}");
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+
+    // Re-emitted with its input unused, the input keeps its type and needs
+    // the package.
+    let r = import_files(&[&r_sv], "r");
+    r.set_usage(Usage::EmitDefinitionAndDescend);
+    r.get_port("i").unused();
+    r.get_port("o").tieoff(0);
+    let top = top_of(&r);
+    let emitted = top.emit(EmitOptions::default());
+    assert!(emitted.contains("own_pkg::t i"), "{emitted}");
+    s0303(&top);
+
+    // Stubbed, the same module declares the input with its type and needs
+    // the package.
+    let r = import_files(&[&r_sv], "r");
+    r.set_usage(Usage::EmitStubAndStop);
+    let top = top_of(&r);
+    let emitted = top.emit(EmitOptions::default());
+    assert!(emitted.contains("own_pkg::t i"), "{emitted}");
+    s0303(&top);
+}
+
+#[test]
+fn package_in_module_file_is_s0303() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let r_sv = write(dir.path(), "r.sv", OWN_PKG);
+    let r = import_files(&[&r_sv], "r");
+    r.set_usage(Usage::EmitStubAndStop);
+    let d = s0303(&top_of(&r));
+    assert_eq!(
+        d.message,
+        format!(
+            "package `own_pkg` needed by emitted module `r` is declared in the module's own \
+             file `{}`",
+            r_sv.display()
+        )
+    );
+    assert_eq!(d.primary.span, r.get_port("i").source_span());
+    assert_eq!(
+        d.helps,
+        vec!["declare the package in a file of its own and list it among the import's sources"]
+    );
+}
+
+#[test]
+fn package_outside_sources_is_s0303() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let base = write(dir.path(), "base_pkg.sv", BASE_PKG);
+    let cfg = write(dir.path(), "cfg_pkg.sv", CFG_PKG);
+    let m_sv = write(
+        dir.path(),
+        "m.sv",
+        "module m (input cfg_pkg::t i, output cfg_pkg::t o);\nendmodule\n",
+    );
+    // `cfg_pkg.sv` reaches Slang as an extra argument, not as a source.
+    let sources = [base.to_str().unwrap(), m_sv.to_str().unwrap()];
+    let m = ModDef::from_verilog_with_config(
+        "m",
+        &ParserConfig {
+            sources: &sources,
+            extra_arguments: &[cfg.to_str().unwrap()],
+            ..Default::default()
+        },
+    );
+    m.set_usage(Usage::EmitStubAndStop);
+    let d = s0303(&top_of(&m));
+    assert_eq!(
+        d.message,
+        format!(
+            "package `cfg_pkg` needed by emitted module `m` is declared in `{}`, which is not \
+             a source or library of its import",
+            cfg.display()
+        )
+    );
+    assert_eq!(d.primary.span, m.get_port("i").source_span());
+
+    // As a library file, the package is listed with the library.
+    let m = ModDef::from_verilog_with_config(
+        "m",
+        &ParserConfig {
+            sources: &sources,
+            libfiles: &[cfg.to_str().unwrap()],
+            ..Default::default()
+        },
+    );
+    m.set_usage(Usage::EmitStubAndStop);
+    let top = top_of(&m);
+    let manifest = top.manifest();
+    assert_eq!(manifest.sources, vec![base]);
+    assert_eq!(manifest.libfiles, vec![cfg]);
+    let emitted = top.emit(EmitOptions::default());
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn defining_file_in_header_is_s0303() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let base = write(dir.path(), "base_pkg.sv", BASE_PKG);
+    let cfg = write(dir.path(), "cfg_pkg.sv", CFG_PKG);
+    let header = write(
+        dir.path(),
+        "m_ports.svh",
+        "input cfg_pkg::t i, output cfg_pkg::t o\n",
+    );
+    let m_sv = write(
+        dir.path(),
+        "m.sv",
+        "module m (\n`include \"m_ports.svh\"\n);\nendmodule\n",
+    );
+    let sources = [
+        base.to_str().unwrap(),
+        cfg.to_str().unwrap(),
+        m_sv.to_str().unwrap(),
+    ];
+    let m = ModDef::from_verilog_with_config(
+        "m",
+        &ParserConfig {
+            sources: &sources,
+            incdirs: &[dir.path().to_str().unwrap()],
+            ..Default::default()
+        },
+    );
+    m.set_usage(Usage::EmitStubAndStop);
+    let d = s0303(&top_of(&m));
+    assert_eq!(
+        d.message,
+        "the file defining emitted module `m` is not a source of its import, so the packages \
+         it needs cannot be listed"
+    );
+    let Span::Sv { file, .. } = &d.primary.span else {
+        panic!("expected an SV span: {:?}", d.primary.span);
+    };
+    assert_eq!(Path::new(file), header);
+}
+
+#[test]
+fn package_of_a_listed_source_in_defining_file_is_s0303() {
+    // `cfg_pkg.sv` would be listed for the stub, but it needs `base_pkg`,
+    // which only the stub's own file declares.
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let m_sv = write(
+        dir.path(),
+        "m.sv",
+        &format!("{BASE_PKG}module m (input cfg_pkg::t i, output cfg_pkg::t o);\nendmodule\n"),
+    );
+    let cfg = write(dir.path(), "cfg_pkg.sv", CFG_PKG);
+    let m = import_files(&[&m_sv, &cfg], "m");
+    m.set_usage(Usage::EmitStubAndStop);
+    let d = s0303(&top_of(&m));
+    assert_eq!(
+        d.message,
+        format!(
+            "package `base_pkg` of the import listed for `cfg_pkg` is declared in `{}`, which \
+             defines emitted module `m`",
+            m_sv.display()
+        )
+    );
+    assert_eq!(d.primary.span, m.get_port("i").source_span());
+}
+
+#[test]
+fn enum_cast_lists_its_package() {
+    // The stub declares its enum input flat; only the parent's cast names
+    // the package.
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let pkg = write(
+        dir.path(),
+        "pkg.sv",
+        "package pkg;\n  typedef enum logic [1:0] { A, B, C } e_t;\nendpackage\n",
+    );
+    let m_sv = write(
+        dir.path(),
+        "m.sv",
+        "module m (input pkg::e_t s);\nendmodule\n",
+    );
+    let m = import_files(&[&pkg, &m_sv], "m");
+    m.set_usage(Usage::EmitStubAndStop);
+    let top = ModDef::new("top");
+    top.instantiate(&m, Some("u"), None)
+        .get_port("s")
+        .export_as("s");
+    let emitted = top.emit(EmitOptions::default());
+    assert!(emitted.contains("pkg::e_t'("), "{emitted}");
+    assert!(!emitted.contains("pkg::e_t s"), "{emitted}");
+    let manifest = top.manifest();
+    assert_eq!(manifest.sources, vec![pkg]);
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+    assert!(elaborate(&[], &emitted, "top").is_err());
+}
+
+#[test]
+fn package_outside_sources_of_a_descended_import_is_s0303() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let base = write(dir.path(), "base_pkg.sv", BASE_PKG);
+    let cfg = write(dir.path(), "cfg_pkg.sv", CFG_PKG);
+    let m_sv = write(
+        dir.path(),
+        "m.sv",
+        "module m (input cfg_pkg::t i, output cfg_pkg::t o);\nendmodule\n",
+    );
+    let sources = [base.to_str().unwrap(), m_sv.to_str().unwrap()];
+    let m = ModDef::from_verilog_with_config(
+        "m",
+        &ParserConfig {
+            sources: &sources,
+            extra_arguments: &[cfg.to_str().unwrap()],
+            ..Default::default()
+        },
+    );
+    // `m` is descended into; the top's exported port is typed.
+    let top = ModDef::new("top");
+    let u = top.instantiate(&m, Some("u"), None);
+    u.get_port("i").export_as("i");
+    u.get_port("o").export_as("o");
+    let d = s0303(&top);
+    assert_eq!(
+        d.message,
+        format!(
+            "package `cfg_pkg` used by the emitted RTL is declared in `{}`, which is not a \
+             source or library of the import of `m`",
+            cfg.display()
+        )
+    );
+}
+
+#[test]
+fn parent_port_typed_by_a_child_lists_its_package() {
+    // The child is re-emitted with its input used flat, so it names no
+    // package; the parent exports that input, typed.
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let pkg = write(
+        dir.path(),
+        "own_pkg.sv",
+        "package own_pkg;\n  typedef struct packed { logic a; logic [2:0] b; } t;\nendpackage\n",
+    );
+    let r_sv = write(
+        dir.path(),
+        "r.sv",
+        "module r (input own_pkg::t i, output logic [3:0] o);\nendmodule\n",
+    );
+    let r = import_files(&[&pkg, &r_sv], "r");
+    r.set_usage(Usage::EmitDefinitionAndDescend);
+    r.get_port("o").connect(&r.get_port("i"));
+    let top = ModDef::new("top");
+    let u = top.instantiate(&r, Some("u"), None);
+    u.get_port("i").export_as("i");
+    u.get_port("o").export_as("o");
+    let emitted = top.emit(EmitOptions::default());
+    assert!(emitted.contains("own_pkg::t i"), "{emitted}");
+    let manifest = top.manifest();
+    assert_eq!(manifest.sources, vec![pkg]);
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn two_stubs_from_one_import_list_its_packages_once() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let base = write(dir.path(), "base_pkg.sv", BASE_PKG);
+    let cfg = write(dir.path(), "cfg_pkg.sv", CFG_PKG);
+    // One import of four files; each stub's file is left out for both.
+    let m1_sv = write(
+        dir.path(),
+        "m1.sv",
+        "module m1 (input cfg_pkg::t i, output cfg_pkg::t o);\nendmodule\n",
+    );
+    let m2_sv = write(
+        dir.path(),
+        "m2.sv",
+        "module m2 (input cfg_pkg::t i, output cfg_pkg::t o);\nendmodule\n",
+    );
+    let files: [&Path; 4] = [&base, &cfg, &m1_sv, &m2_sv];
+    let m1 = import_files(&files, "m1");
+    let m2 = import_files(&files, "m2");
+    m1.set_usage(Usage::EmitStubAndStop);
+    m2.set_usage(Usage::EmitStubAndStop);
+    let top = ModDef::new("top");
+    let u1 = top.instantiate(&m1, Some("u1"), None);
+    let u2 = top.instantiate(&m2, Some("u2"), None);
+    u1.get_port("i").tieoff(0);
+    u1.get_port("o").connect(&u2.get_port("i"));
+    u2.get_port("o").export_as("o");
+    let manifest = top
+        .try_manifest()
+        .unwrap_or_else(|e| panic!("{}", e.render()));
+    assert_eq!(manifest.sources, vec![base, cfg]);
+    let emitted = top.emit(EmitOptions::default());
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn package_no_import_declares_is_s0303() {
+    // The package is declared only in text passed to `from_verilog`, which
+    // the manifest cannot list; the generated top exports a port of it.
+    let inline = ModDef::from_verilog(
+        "txt",
+        "package txt_pkg;\n  typedef struct packed { logic a; logic b; } t;\nendpackage\n\
+         module txt (input txt_pkg::t i);\nendmodule\n",
+        false,
+        false,
+    );
+    let top = ModDef::new("top");
+    top.instantiate(&inline, Some("u"), None)
+        .get_port("i")
+        .export_as("i");
+    assert!(top.emit(EmitOptions::default()).contains("txt_pkg::t i"));
+    let d = s0303(&top);
+    assert_eq!(
+        d.message,
+        "package `txt_pkg` used by the emitted RTL is declared by no import of the design"
+    );
+}

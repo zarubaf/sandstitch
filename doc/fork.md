@@ -134,7 +134,7 @@ Typed specialization (#4, [design](design/typed-specialization.md)):
   selects and indices; everything else stays flat as upstream. Designs
   without such ports emit as before, apart from the `-G` overrides above.
 - `ModDef::manifest` / `try_manifest` and `Manifest` (sources, include
-  directories, defines, library search, specializations; S0301, S0302).
+  directories, defines, library search, specializations; S0301, S0302, S0303).
 
 Connection resolution (#6, [design](design/connection-contract.md)):
 

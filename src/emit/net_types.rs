@@ -129,6 +129,14 @@ impl NetTypes {
         }
     }
 
+    /// The nets with recorded uses that are declared with a type, with that
+    /// type.
+    pub(super) fn typed(&self) -> impl Iterator<Item = (&str, &PortType)> {
+        self.nets
+            .iter()
+            .filter_map(|(name, ty)| Some((name.as_str(), ty.as_ref()?)))
+    }
+
     /// The type to declare net `name` with, given the type of the port it is
     /// named after. A net without recorded uses takes the port's type.
     pub(super) fn type_of(&self, name: &str, port_type: Option<PortType>) -> Option<PortType> {

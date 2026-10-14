@@ -53,6 +53,8 @@ codes! {
     S0301;
     /// Macro defined differently by two imports in the build.
     S0302;
+    /// Emitted module needs a package the manifest cannot list.
+    S0303;
     /// Component bits with more than one driver: two definition inputs or
     /// instance outputs, one of each, a constant and a port, or two constants.
     S0401;
