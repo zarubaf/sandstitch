@@ -8,7 +8,6 @@ description = "FlooNoC router and 2x2 mesh design package built on the sandstitc
 
 [dependencies]
 topstitch = { path = "../.." }
-sha2 = "0.10.8"
 
 [dev-dependencies]
 libc = "0.2"

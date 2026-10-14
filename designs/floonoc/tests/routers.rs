@@ -121,7 +121,10 @@ fn configurations_are_distinct_specializations() {
     // The package lives in the caller's directory.
     let pkg = cfg_pkg_file(&small(), dir.path());
     assert_eq!(pkg.parent(), Some(dir.path()));
-    assert_eq!(std::fs::read_to_string(&pkg).unwrap(), cfg_pkg(&small()));
+    assert_eq!(
+        std::fs::read_to_string(&pkg).unwrap(),
+        cfg_pkg(&small()).emit()
+    );
 }
 
 const ROUTERS: [(u32, u32); 4] = [(0, 0), (0, 1), (1, 0), (1, 1)];

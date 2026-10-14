@@ -12,8 +12,7 @@ mod mesh;
 
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
-use topstitch::{ImportError, ModDef, ParameterValue, ParserConfig};
+use topstitch::{ImportError, ModDef, PackageDef, ParameterValue, ParserConfig};
 
 pub use config::{AxiCfg, FlooConfig, VcImpl, WideRwDecouple, cfg_pkg};
 pub use mesh::{Direction, mesh_2x2};
@@ -70,49 +69,38 @@ const INCDIRS: &[&str] = &["common_cells/include", "axi/include", "floonoc/hw/in
 ///
 /// Panics if the file cannot be written.
 pub fn cfg_pkg_file(cfg: &FlooConfig, out_dir: &Path) -> PathBuf {
-    let text = cfg_pkg(cfg);
-    let digest = Sha256::digest(text.as_bytes());
-    let hash: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
-    let path = out_dir.join(format!("{}-{hash}.sv", cfg.pkg_name()));
-    if std::fs::read_to_string(&path).is_ok_and(|existing| existing == text) {
-        return path;
-    }
-    let write = || -> std::io::Result<()> {
-        std::fs::create_dir_all(out_dir)?;
-        let tmp = out_dir.join(format!(
-            ".{}-{hash}.{}.{:?}.tmp",
-            cfg.pkg_name(),
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        std::fs::write(&tmp, &text)?;
-        std::fs::rename(&tmp, &path)
-    };
-    write().unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
-    path
+    write_pkg(&cfg_pkg(cfg), out_dir)
+}
+
+#[track_caller]
+fn write_pkg(pkg: &PackageDef, out_dir: &Path) -> PathBuf {
+    pkg.write(out_dir).unwrap_or_else(|e| {
+        panic!(
+            "writing the configuration package to {}: {e}",
+            out_dir.display()
+        )
+    })
 }
 
 /// The router's parameter overrides for `cfg`: the link, header and node ID
 /// types and the AXI configurations from the configuration package, XY
 /// routing, and the port count and FIFO depths.
-fn overrides(cfg: &FlooConfig) -> Vec<(&'static str, ParameterValue)> {
-    let pkg = cfg.pkg_name();
-    let ty = |name: &str| ParameterValue::Type(format!("{pkg}::{name}"));
-    let expr = |name: &str| ParameterValue::Expr(format!("{pkg}::{name}"));
+#[track_caller]
+fn overrides(cfg: &FlooConfig, pkg: &PackageDef) -> Vec<(&'static str, ParameterValue)> {
     vec![
-        ("AxiCfgN", expr("AxiCfgN")),
-        ("AxiCfgW", expr("AxiCfgW")),
-        ("RouteAlgo", expr("RouteAlgo")),
+        ("AxiCfgN", pkg.constant("AxiCfgN")),
+        ("AxiCfgW", pkg.constant("AxiCfgW")),
+        ("RouteAlgo", pkg.constant("RouteAlgo")),
         ("NumRoutes", cfg.num_routes.into()),
         ("InFifoDepth", cfg.in_fifo_depth.into()),
         ("OutFifoDepth", cfg.out_fifo_depth.into()),
-        ("WideRwDecouple", expr("WideRwDecouple")),
-        ("VcImpl", expr("VcImpl")),
-        ("id_t", ty("id_t")),
-        ("hdr_t", ty("hdr_t")),
-        ("floo_req_t", ty("floo_req_t")),
-        ("floo_rsp_t", ty("floo_rsp_t")),
-        ("floo_wide_t", ty("floo_wide_t")),
+        ("WideRwDecouple", pkg.constant("WideRwDecouple")),
+        ("VcImpl", pkg.constant("VcImpl")),
+        ("id_t", pkg.ty("id_t")),
+        ("hdr_t", pkg.ty("hdr_t")),
+        ("floo_req_t", pkg.ty("floo_req_t")),
+        ("floo_rsp_t", pkg.ty("floo_rsp_t")),
+        ("floo_wide_t", pkg.ty("floo_wide_t")),
     ]
 }
 
@@ -131,7 +119,8 @@ fn overrides(cfg: &FlooConfig) -> Vec<(&'static str, ParameterValue)> {
 pub fn router(cfg: &FlooConfig, out_dir: &Path) -> Result<ModDef, ImportError> {
     let root = third_party();
     let path = |rel: &str| root.join(rel).to_str().unwrap().to_string();
-    let pkg_file = cfg_pkg_file(cfg, out_dir);
+    let pkg = cfg_pkg(cfg);
+    let pkg_file = write_pkg(&pkg, out_dir);
     let sources: Vec<String> = PACKAGES
         .iter()
         .map(|rel| path(rel))
@@ -146,7 +135,7 @@ pub fn router(cfg: &FlooConfig, out_dir: &Path) -> Result<ModDef, ImportError> {
         incdirs: &incdirs,
         ..Default::default()
     };
-    let overrides = overrides(cfg);
+    let overrides = overrides(cfg, &pkg);
     let router = ModDef::try_from_verilog_parameterized("floo_nw_router", &parser_cfg, &overrides)?;
     for d in 0..cfg.num_routes as usize {
         router.def_intf_members(
