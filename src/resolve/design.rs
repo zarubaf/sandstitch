@@ -241,7 +241,7 @@ impl Walk {
                 self.names.insert(name, named);
             }
             Some(named) if named.key != key && (named.emitted || emitted) => {
-                let diagnostic = s0408(
+                let mut diagnostic = s0408(
                     format!(
                         "definitions `{}` and `{key}` share the module name `{name}`, and at least one is emitted",
                         named.key
@@ -249,6 +249,8 @@ impl Walk {
                     (&named.core, &named.path),
                     (core, &path),
                 );
+                diagnostic.helps =
+                    vec!["emit a renamed copy of one with `ModDef::stub(name)`".to_string()];
                 self.design.diagnostics.push(diagnostic);
             }
             Some(_) => {}

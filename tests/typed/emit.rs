@@ -964,12 +964,105 @@ fn stubbed_specialization_lists_packages() {
         assert_eq!(manifest.specializations.len(), 1);
         let emitted = top.emit(EmitOptions::default());
         assert!(emitted.contains("cfg_pkg::t i"), "{emitted}");
-        // The stub is elaborated on its own: its parent passes the
-        // specialization's overrides, which the stub does not declare (#59).
-        let stub = m.get_name();
-        elaborate_manifest(&manifest, &emitted, &stub).unwrap_or_else(|e| panic!("{e}"));
-        assert!(elaborate(&[], &emitted, &stub).is_err());
+        // The parent instantiates the already-specialized stub without
+        // overrides, so the top elaborates.
+        assert!(!emitted.contains("#("), "{emitted}");
+        elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+        assert!(elaborate(&[], &emitted, "top").is_err());
     }
+}
+
+/// Imports `module m #(parameter type T = logic)` with the packages, returning
+/// the generic definition.
+fn generic_m(dir: &Path) -> (PathBuf, PathBuf, ModDef) {
+    let base = write(dir, "base_pkg.sv", BASE_PKG);
+    let cfg = write(dir, "cfg_pkg.sv", CFG_PKG);
+    let m_sv = write(
+        dir,
+        "m.sv",
+        "module m #(parameter type T = logic) (input T i, output T o);\nendmodule\n",
+    );
+    let generic = import_files(&[&base, &cfg, &m_sv], "m");
+    (base, cfg, generic)
+}
+
+#[test]
+fn re_emitted_specialization_instantiates_without_overrides() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let (base, cfg, generic) = generic_m(dir.path());
+    let m = generic
+        .try_parameterize(&[("T", ty("cfg_pkg::t"))])
+        .unwrap();
+    m.set_usage(Usage::EmitDefinitionAndDescend);
+    m.get_port("i").unused();
+    m.get_port("o").tieoff(0);
+    let top = top_of(&m);
+    let manifest = top.manifest();
+    assert_eq!(manifest.sources, vec![base, cfg]);
+    let emitted = top.emit(EmitOptions::default());
+    assert!(emitted.contains("module m("), "{emitted}");
+    assert!(!emitted.contains("#("), "{emitted}");
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn opaque_specialization_keeps_its_overrides() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let (_, _, generic) = generic_m(dir.path());
+    let m = generic
+        .try_parameterize(&[("T", ty("cfg_pkg::t"))])
+        .unwrap();
+    m.set_usage(Usage::EmitNothingAndStop);
+    let emitted = top_of(&m).emit(EmitOptions::default());
+    assert!(emitted.contains(".T(cfg_pkg::t)"), "{emitted}");
+}
+
+#[test]
+fn renamed_stubs_of_two_specializations_coexist() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let m_sv = write(
+        dir.path(),
+        "m.sv",
+        "module m #(parameter int W = 1) (input logic [W-1:0] i, output logic [W-1:0] o);\nendmodule\n",
+    );
+    let generic = import_files(&[&m_sv], "m");
+    let widths = [("m_a", 3), ("m_b", 5)];
+    let specialize = |width: i64| {
+        let m = generic
+            .try_parameterize(&[("W", ParameterValue::Integer(BigInt::from(width)))])
+            .unwrap();
+        m.set_usage(Usage::EmitStubAndStop);
+        m
+    };
+
+    // Emitted under their shared module name, they clash; the help says how
+    // to avoid it.
+    let clash = ModDef::new("clash");
+    clash.instantiate(&specialize(3), Some("ua"), None);
+    clash.instantiate(&specialize(5), Some("ub"), None);
+    let diagnostics = clash.check();
+    let helps: Vec<String> = diagnostics.0.iter().flat_map(|d| d.helps.clone()).collect();
+    assert!(
+        helps.iter().any(|h| h.contains("ModDef::stub")),
+        "{helps:?}"
+    );
+
+    let top = ModDef::new("top");
+    for (name, width) in widths {
+        let m = specialize(width).stub(name);
+        m.set_usage(Usage::EmitStubAndStop);
+        let u = top.instantiate(&m, Some(&format!("u_{name}")), None);
+        u.get_port("i").tieoff(0);
+        u.get_port("o").export_as(format!("o_{name}"));
+    }
+    let manifest = top.manifest();
+    let emitted = top.emit(EmitOptions::default());
+    assert!(!emitted.contains("#("), "{emitted}");
+    assert!(
+        emitted.contains("module m_a(") && emitted.contains("module m_b("),
+        "{emitted}"
+    );
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
 }
 
 #[test]
