@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Builds the vendored Slang once and publishes it for SLANG_SYS_PREBUILT_DIR.
+# See doc/design/slang-in-process.md, "Prebuilt".
+
+name: Slang prebuilt
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  prebuilt:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6
+
+      - name: Build the prebuilt Slang
+        id: build
+        run: |
+          dir=$(cargo xtask slang-prebuilt prebuilt)
+          name=$(basename "$dir")
+          tar -C prebuilt -czf "$name.tar.gz" "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.build.outputs.name }}
+          path: ${{ steps.build.outputs.name }}.tar.gz
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: ${{ steps.build.outputs.name }}.tar.gz
+        run: |
+          gh release view "$GITHUB_REF_NAME" > /dev/null || gh release create "$GITHUB_REF_NAME" --verify-tag --notes ""
+          gh release upload "$GITHUB_REF_NAME" "$ASSET" --clobber
