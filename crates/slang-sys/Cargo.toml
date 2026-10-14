@@ -14,10 +14,12 @@ num-bigint = "0.4.3"
 [dev-dependencies]
 libc = "0.2"
 tempfile = "3"
+toml = "0.8"
 
 [build-dependencies]
 cc = "1.2"
 cmake = "0.1"
 cxx-build = "1"
 filetime = "0.2"
+toml = "0.8"
 which = "7"

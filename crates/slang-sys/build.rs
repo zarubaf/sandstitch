@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Builds the vendored Slang and its dependencies with CMake in `OUT_DIR`, then the C++
-//! shim with `cxx-build`. See `doc/design/slang-in-process.md`, "Build".
+//! Builds the vendored Slang and its dependencies with CMake in `OUT_DIR`, or takes a
+//! prebuilt one from `SLANG_SYS_PREBUILT_DIR`, then the C++ shim with `cxx-build`. See
+//! `doc/design/slang-in-process.md`, "Build".
 
 #[path = "build/support.rs"]
 mod support;
+
+include!("build/release.rs");
 
 use std::env;
 use std::fs;
@@ -19,6 +22,7 @@ fn main() {
         println!("cargo:rerun-if-changed={path}");
     }
     for var in [
+        "SLANG_SYS_PREBUILT_DIR",
         "SLANG_SYS_NO_CCACHE",
         "CXX",
         "CC",
@@ -28,7 +32,24 @@ fn main() {
         println!("cargo:rerun-if-env-changed={var}");
     }
 
-    check_requirements();
+    let abi = current_abi(&out);
+    // A manifest left by an earlier source build must not outlive it.
+    let _ = fs::remove_file(out.join(support::MANIFEST));
+    match env::var_os("SLANG_SYS_PREBUILT_DIR") {
+        Some(dir) => link_prebuilt(
+            &support::prebuilt_dir(&dir).unwrap_or_else(|e| fail(&e)),
+            &abi.unwrap_or_else(|e| fail(&format!("cannot check SLANG_SYS_PREBUILT_DIR: {e}"))),
+        ),
+        None => build_vendored(&manifest, &out, abi),
+    }
+}
+
+/// Builds the vendored Slang with CMake, then the shim against it, and
+/// records the build's [`support::Abi`] in `OUT_DIR` for
+/// `cargo xtask slang-prebuilt`. Without a known ABI the build goes on with
+/// a warning and records no manifest: only a prebuilt needs it.
+fn build_vendored(manifest: &Path, out: &Path, abi: Result<support::Abi, String>) {
+    check_build_tools();
 
     let src = out.join("src");
     sync(&manifest.join("vendor"), &src).unwrap_or_else(|e| panic!("copying vendor/: {e}"));
@@ -42,11 +63,12 @@ fn main() {
         .no_default_flags(true)
         .profile("Release")
         .build_target("slang_slang")
-        .cxxflag("-DSLANG_ASSERT_ENABLED=1")
+        .cxxflag(format!("-D{}", support::ASSERT_DEFINE))
         .define("SLANG_INCLUDE_TOOLS", "OFF")
         .define("SLANG_INCLUDE_TESTS", "OFF")
         .define("SLANG_INCLUDE_INSTALL", "OFF")
         .define("SLANG_USE_MIMALLOC", "OFF")
+        // Recorded as `pic` in the manifest.
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         .define("CMAKE_CXX_SCAN_FOR_MODULES", "OFF")
         // Slang puts its libraries in `build/<libdir>`; some distributions
@@ -78,44 +100,119 @@ fn main() {
         .define("CMAKE_CXX_COMPILER_LAUNCHER", &launcher_value);
     if launcher.is_some() {
         cmake
-            .env("CCACHE_BASEDIR", &out)
+            .env("CCACHE_BASEDIR", out)
             .env("CCACHE_NOHASHDIR", "1");
     }
     let dst = cmake.build();
     let build = dst.join("build");
 
-    cxx_build::bridge("src/lib.rs")
-        .file("shim/shim.cc")
-        .file("shim/design.cc")
-        .include(src.join("slang/include"))
-        .include(src.join("slang/external"))
-        .include(build.join("source"))
-        .define("SLANG_STATIC_DEFINE", None)
-        .define("SLANG_BOOST_SINGLE_HEADER", None)
-        .define("SLANG_USE_THREADS", None)
-        .define("SLANG_ASSERT_ENABLED", Some("1"))
-        .std("c++20")
-        .compile("slang_sys_shim");
+    compile_shim(&[
+        src.join("slang/include"),
+        src.join("slang/external"),
+        build.join("source"),
+    ]);
+    link_svlang(&build.join("lib"));
+    match abi {
+        Ok(abi) => fs::write(out.join(support::MANIFEST), abi.to_toml())
+            .unwrap_or_else(|e| panic!("writing {}: {e}", support::MANIFEST)),
+        Err(e) => println!("cargo:warning=no {} written: {e}", support::MANIFEST),
+    }
+}
 
-    println!(
-        "cargo:rustc-link-search=native={}",
-        build.join("lib").display()
-    );
+/// Links the Slang library in `dir` (see `cargo xtask slang-prebuilt`)
+/// after checking its manifest against this build, and compiles the shim
+/// against its headers. Needs neither CMake nor Python.
+fn link_prebuilt(dir: &Path, abi: &support::Abi) {
+    let manifest = dir.join(support::MANIFEST);
+    let lib = dir.join("lib");
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    println!("cargo:rerun-if-changed={}", lib.display());
+    println!("cargo:rerun-if-changed={}", dir.join("include").display());
+    let text = fs::read_to_string(&manifest).unwrap_or_else(|e| {
+        fail(&format!(
+            "SLANG_SYS_PREBUILT_DIR: cannot read {}: {e}",
+            manifest.display()
+        ))
+    });
+    let prebuilt = support::Abi::from_toml(&text)
+        .unwrap_or_else(|e| fail(&format!("{}: {e}", manifest.display())));
+    support::check_prebuilt(&prebuilt, abi)
+        .unwrap_or_else(|e| fail(&format!("{e}\n(manifest: {})", manifest.display())));
+    compile_shim(&[dir.join("include")]);
+    link_svlang(&lib);
+}
+
+/// Compiles the `cxx` bridge and the shim against Slang's headers.
+fn compile_shim(includes: &[PathBuf]) {
+    let mut build = cxx_build::bridge("src/lib.rs");
+    build.file("shim/shim.cc").file("shim/design.cc");
+    for dir in includes {
+        build.include(dir);
+    }
+    for define in support::SHIM_DEFINES {
+        let (name, value) = support::split_define(define);
+        build.define(name, value);
+    }
+    build.std(support::CXX_STD).compile("slang_sys_shim");
+}
+
+fn link_svlang(lib: &Path) {
+    println!("cargo:rustc-link-search=native={}", lib.display());
     println!("cargo:rustc-link-lib=static=svlang");
 }
 
-/// Stops the build before configuring if the compiler, CMake or Python
-/// cannot build Slang.
-fn check_requirements() {
+/// What this build links Slang with: target, compiler and C++ library, or
+/// why it is not known. Stops the build if the compiler cannot build C++20
+/// Slang.
+fn current_abi(out: &Path) -> Result<support::Abi, String> {
     let compiler = cc::Build::new().cpp(true).get_compiler();
     let output = run_version(compiler.path(), "--version");
-    match support::identify(&output) {
+    let id = support::identify(&output);
+    match id {
         Some(id) => support::check_compiler(id, &output).unwrap_or_else(|e| fail(&e)),
         None => println!(
             "cargo:warning=unknown C++ compiler {}; Slang needs C++20 (GCC 11 or Clang 17)",
             compiler.path().display()
         ),
     }
+    if id.is_none() {
+        return Err(format!(
+            "unknown C++ compiler {}",
+            compiler.path().display()
+        ));
+    }
+    let probe = out.join("abi_probe.cc");
+    fs::write(&probe, support::PROBE).unwrap_or_else(|e| panic!("writing the probe: {e}"));
+    let expanded = cc::Build::new()
+        .cpp(true)
+        .std(support::CXX_STD)
+        .cargo_metadata(false)
+        // Only the macro values matter; header warnings would be noise.
+        .flag("-w")
+        // No line markers; `parse_probe` also copes with them.
+        .flag("-P")
+        .file(&probe)
+        .try_expand()
+        .map_err(|e| format!("preprocessing the C++ library probe: {e}"))?;
+    let libraries = support::parse_probe(&String::from_utf8_lossy(&expanded))?;
+    Ok(support::Abi {
+        slang: release!().to_string(),
+        target: env::var("TARGET").unwrap(),
+        compiler: support::compiler_name(id).to_string(),
+        compiler_version: support::version(&output).to_string(),
+        libraries,
+        std: support::CXX_STD.to_string(),
+        pic: true,
+        defines: support::SHIM_DEFINES
+            .iter()
+            .map(|d| d.to_string())
+            .collect(),
+    })
+}
+
+/// Stops the build before configuring if CMake or Python cannot build
+/// Slang.
+fn check_build_tools() {
     let cmake = env::var_os("CMAKE").unwrap_or_else(|| "cmake".into());
     support::check_cmake(&run_version(Path::new(&cmake), "--version")).unwrap_or_else(|e| fail(&e));
     support::check_python(which::which("python3").is_ok()).unwrap_or_else(|e| fail(&e));
