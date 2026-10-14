@@ -201,6 +201,8 @@ mod ffi {
     #[derive(Default)]
     struct FfiPackage {
         name: String,
+        /// The top-level file declaring the package, as given to Slang.
+        file: String,
         parameters: Vec<FfiPackageParameter>,
     }
 

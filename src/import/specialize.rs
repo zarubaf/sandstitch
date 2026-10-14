@@ -99,6 +99,8 @@ impl KeyHasher {
             specialization: _,
             // Provenance only; the sources themselves are hashed.
             inline: _,
+            // Derived from the sources.
+            package_files: _,
         } = import;
         self.strs(sources);
         self.strs(incdirs);
@@ -300,6 +302,9 @@ pub(crate) struct Specialized {
     /// The type of each parameter with an integer override, for emitting the
     /// override as a literal.
     pub(crate) integer_parameter_types: IndexMap<String, ParameterType>,
+    /// The package files of the elaboration, as
+    /// [`VerilogImport::package_files`].
+    pub(crate) package_files: IndexMap<String, String>,
 }
 
 static SPECIALIZATIONS: DependencyCache<Specialized> = DependencyCache::new();
@@ -453,7 +458,7 @@ pub(crate) fn specialize(
         }
         check_against_definition(module, overrides, &definition.parameters, caller)?;
     }
-    let (dependencies, ports, integer_parameter_types) = elaborate(
+    let (dependencies, ports, integer_parameter_types, package_files) = elaborate(
         module,
         import,
         overrides,
@@ -467,6 +472,7 @@ pub(crate) fn specialize(
         },
         ports,
         integer_parameter_types,
+        package_files,
     };
     SPECIALIZATIONS.insert(pre_key, dependencies, specialized.clone());
     Ok(specialized)
@@ -741,12 +747,13 @@ fn fits(value: &BigInt, ty: &ParameterType) -> bool {
     }
 }
 
-/// The files read, the ports and the integer parameter types of an
-/// elaboration.
+/// The files read, the ports, the integer parameter types and the package
+/// files of an elaboration.
 type Elaborated = (
     Dependencies,
     Vec<ImportedPort>,
     IndexMap<String, ParameterType>,
+    IndexMap<String, String>,
 );
 
 /// `definition_known`: the definition's declarations were read
@@ -806,7 +813,8 @@ fn elaborate(
         .parameters(&instance)
         .expect("the instance exists");
     let integer_parameter_types = integer_parameter_types(module, overrides, definitions, caller)?;
-    Ok((dependencies, ports, integer_parameter_types))
+    let package_files = crate::import::parser::package_files(&output.design);
+    Ok((dependencies, ports, integer_parameter_types, package_files))
 }
 
 /// The type of each parameter with an integer override, from the elaborated
@@ -1145,5 +1153,43 @@ mod tests {
             "a changed library file must miss"
         );
         assert_ne!(first.specialization_key(), changed.specialization_key());
+    }
+
+    #[test]
+    fn imports_record_package_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("a_pkg.sv");
+        let module = dir.path().join("m.sv");
+        write(&pkg, "package a_pkg; localparam int W = 3; endpackage\n");
+        write(
+            &module,
+            "module m #(parameter int N = 1) (output logic [a_pkg::W-1:0] d);\nendmodule\n",
+        );
+        let sources = [pkg.to_str().unwrap(), module.to_str().unwrap()];
+        let cfg = ParserConfig {
+            sources: &sources,
+            ..Default::default()
+        };
+        let expected = IndexMap::from([("a_pkg".to_string(), pkg.to_str().unwrap().to_string())]);
+        let files = |m: &ModDef| {
+            m.core
+                .read()
+                .verilog_import
+                .as_ref()
+                .unwrap()
+                .package_files
+                .clone()
+        };
+
+        let plain = ModDef::from_verilog_with_config("m", &cfg);
+        assert_eq!(files(&plain), expected);
+
+        let specialized = plain.parameterize(&[("N", 2)]);
+        assert_eq!(files(&specialized), expected);
+        // The cached elaboration keeps them.
+        assert_eq!(files(&plain.parameterize(&[("N", 2)])), expected);
+
+        let direct = ModDef::try_from_verilog_parameterized("m", &cfg, &[("N", 3)]).unwrap();
+        assert_eq!(files(&direct), expected);
     }
 }

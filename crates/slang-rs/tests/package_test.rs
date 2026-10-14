@@ -29,11 +29,13 @@ mod tests {
 
         let pkgs = extract_packages(&cfg).unwrap();
 
+        let file = verilog.path().to_str().unwrap().to_string();
         let expected = HashMap::from([
             (
                 "pkg_a".to_string(),
                 Package {
                     name: "pkg_a".to_string(),
+                    file: file.clone(),
                     parameters: HashMap::from([(
                         "a".to_string(),
                         Parameter {
@@ -48,6 +50,7 @@ mod tests {
                 "pkg_b".to_string(),
                 Package {
                     name: "pkg_b".to_string(),
+                    file: file.clone(),
                     parameters: HashMap::from([
                         (
                             "b".to_string(),

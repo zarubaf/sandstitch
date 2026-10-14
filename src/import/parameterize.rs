@@ -169,6 +169,7 @@ impl ModDef {
 
         let mut verilog_import = verilog_import.clone();
         verilog_import.specialization = Some(specialized.key.clone());
+        verilog_import.package_files = specialized.package_files.clone();
 
         let mod_def = ModDef {
             core: Arc::new(RwLock::new(ModDefCore {
