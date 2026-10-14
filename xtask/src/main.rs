@@ -4,6 +4,7 @@
 
 mod boundary;
 mod hygiene;
+mod prebuilt;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -68,6 +69,14 @@ fn explain(root: &Path, code: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Prints the absolute path of the prebuilt directory made under `dir`, the
+/// only output on stdout.
+fn slang_prebuilt(root: &Path, dir: &Path) -> Result<(), String> {
+    let dir = std::path::absolute(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    println!("{}", prebuilt::run(root, &dir)?.display());
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let root = repo_root();
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -75,7 +84,8 @@ fn main() -> ExitCode {
     let result = match args.as_slice() {
         ["ci"] => ci(&root),
         ["explain", code] => explain(&root, code),
-        _ => Err("usage: cargo xtask <ci | explain <CODE>>".to_string()),
+        ["slang-prebuilt", dir] => slang_prebuilt(&root, Path::new(dir)),
+        _ => Err("usage: cargo xtask <ci | explain <CODE> | slang-prebuilt <DIR>>".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
