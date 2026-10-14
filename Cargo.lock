@@ -505,7 +505,6 @@ name = "floonoc"
 version = "0.1.0-alpha.1"
 dependencies = [
  "libc",
- "sha2",
  "slang-rs",
  "tempfile",
  "topstitch",
