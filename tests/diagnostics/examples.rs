@@ -483,6 +483,27 @@ fn s0301() {
 }
 
 #[test]
+fn s0303() {
+    let entry = Entry::load(diagnostic::codes::S0303);
+    let paths = entry.paths();
+    assert_eq!(paths.len(), 1, "the example is one file");
+    let cfg = config(&paths);
+    let message = panic_message(|| {
+        documented! { entry;
+            let regs = ModDef::from_verilog_with_config("regs", &cfg);
+            regs.set_usage(Usage::EmitStubAndStop);
+            let top = ModDef::new("top");
+            let r = top.instantiate(&regs, Some("r"), None);
+            r.get_port("req_i").tieoff(0);
+            top.manifest();
+        }
+    });
+    entry.finish();
+    // The example shows the file as `/work/regs.sv`.
+    entry.assert_output(&message.replace(paths[0], "/work/regs.sv"));
+}
+
+#[test]
 fn s0302() {
     let entry = Entry::load(diagnostic::codes::S0302);
     let paths = entry.paths();

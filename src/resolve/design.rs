@@ -23,6 +23,8 @@ type CorePtr = *const RwLock<ModDefCore>;
 pub(crate) struct DesignResolution {
     resolutions: HashMap<CorePtr, Resolution>,
     collapsed: HashSet<CorePtr>,
+    /// Definitions whose resolution has errors, and so no segments.
+    failed: HashSet<CorePtr>,
     emitted: Vec<Arc<RwLock<ModDefCore>>>,
     pub(crate) diagnostics: Vec<Diagnostic>,
 }
@@ -37,6 +39,12 @@ impl DesignResolution {
     /// emitted as that one.
     pub(crate) fn collapsed(&self, core: &Arc<RwLock<ModDefCore>>) -> bool {
         self.collapsed.contains(&Arc::as_ptr(core))
+    }
+
+    /// Whether `core` is resolved without errors. A resolution with errors
+    /// has no segments, so it cannot be emitted.
+    pub(crate) fn resolved_cleanly(&self, core: &Arc<RwLock<ModDefCore>>) -> bool {
+        self.get(core).is_some() && !self.failed.contains(&Arc::as_ptr(core))
     }
 
     /// The definitions to emit (`EmitDefinitionAndDescend` and
@@ -62,6 +70,7 @@ pub(crate) fn resolve_design(top: &ModDef) -> DesignResolution {
         design: DesignResolution {
             resolutions: HashMap::new(),
             collapsed: HashSet::new(),
+            failed: HashSet::new(),
             emitted: Vec::new(),
             diagnostics: Vec::new(),
         },
@@ -154,6 +163,9 @@ impl Walk {
     fn resolve(&mut self, core: &Arc<RwLock<ModDefCore>>) -> bool {
         let (resolution, diagnostics) = resolve_def(core);
         let clean = diagnostics.is_empty();
+        if !clean {
+            self.design.failed.insert(Arc::as_ptr(core));
+        }
         self.design.diagnostics.extend(diagnostics);
         let previous = self
             .design

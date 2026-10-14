@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::path::Path;
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 use indexmap::IndexMap;
 use indexmap::map::Entry;
@@ -10,9 +13,10 @@ use xlsynth_vast::{
 
 use super::net_types::{End, NetTypes, declarable, typed_path};
 use crate::model::connection::connected_item::ConnectedItem;
+use crate::model::parameter::ParameterSpec;
 use crate::resolve::design::DesignResolution;
 use crate::resolve::{EndResolution, Resolution, Segment, Source};
-use crate::{Dim, IO, ModDef, Port, PortSlice, PortType, Select, Usage};
+use crate::{Dim, IO, ModDef, ModDefCore, Port, PortSlice, PortType, Select, Span, Usage};
 
 #[derive(Debug, PartialEq, Clone)]
 enum NetNameSource {
@@ -322,36 +326,10 @@ impl ModDef {
 
         let mut module = file.add_module(&core.name);
 
-        let stub = core.usage == Usage::EmitStubAndStop;
-
         // Look up this definition's resolution and decide from it which nets
         // are typed.
 
-        let mut types = NetTypes::default();
-        let resolved = if stub {
-            None
-        } else {
-            let resolution = design
-                .get(&self.core)
-                .expect("every emitted definition is resolved by resolve_design");
-            debug_assert_eq!(
-                core.instances.len(),
-                resolution.instances.len(),
-                "resolution instance count differs from the definition's"
-            );
-            for ((inst_name, inst), ends) in core.instances.iter().zip(&resolution.instances) {
-                debug_assert!(
-                    inst.read()
-                        .ports
-                        .keys()
-                        .eq(ends.iter().map(|end| &end.name)),
-                    "resolution ports of instance {inst_name} differ from the instance's ports"
-                );
-            }
-            let assignments = plan_assignments(resolution, options);
-            record_uses(&mut types, resolution, &assignments);
-            Some((resolution, assignments))
-        };
+        let (types, resolved) = plan_nets(&self.core, &core, design, options);
 
         // Create nets for each module port
 
@@ -515,12 +493,122 @@ impl ModDef {
     }
 }
 
+/// The continuous assignments driving a definition's ports, in emission
+/// order.
+type Assignments = Vec<(PortSlice, ConnectedItem)>;
+
+/// What emission of definition `this` (whose locked core is `core`) decides
+/// before emitting anything: which nets are typed and, unless it is a stub,
+/// its resolution and the assignments driving its ports. A stub emits no
+/// uses, so its ports take their own types.
+fn plan_nets<'d>(
+    this: &Arc<RwLock<ModDefCore>>,
+    core: &ModDefCore,
+    design: &'d DesignResolution,
+    options: &EmitOptions,
+) -> (NetTypes, Option<(&'d Resolution, Assignments)>) {
+    let mut types = NetTypes::default();
+    if core.usage == Usage::EmitStubAndStop {
+        return (types, None);
+    }
+    let resolution = design
+        .get(this)
+        .expect("every emitted definition is resolved by resolve_design");
+    debug_assert_eq!(
+        core.instances.len(),
+        resolution.instances.len(),
+        "resolution instance count differs from the definition's"
+    );
+    for ((inst_name, inst), ends) in core.instances.iter().zip(&resolution.instances) {
+        debug_assert!(
+            inst.read()
+                .ports
+                .keys()
+                .eq(ends.iter().map(|end| &end.name)),
+            "resolution ports of instance {inst_name} differ from the instance's ports"
+        );
+    }
+    let assignments = plan_assignments(resolution, options);
+    record_uses(&mut types, resolution, &assignments);
+    (types, Some((resolution, assignments)))
+}
+
+/// A type that an emitted definition names: the type of a typed port or net
+/// declaration, or of an enum cast.
+pub(crate) struct TypeUse {
+    pub(crate) ty: PortType,
+    /// The port declaring the type, with its declaration span: a port of the
+    /// definition, or for an enum cast, the instantiated module's port.
+    /// `None` for an instance net.
+    pub(crate) port: Option<(String, Span)>,
+}
+
+/// What emission with `options` of definition `this` (whose locked core is
+/// `core`), planned by `design`, names that a package may declare: the types
+/// of its typed ports and nets and of its enum casts, and the type and
+/// constant overrides of its instances (`ident` or `pkg::ident`).
+pub(crate) fn emitted_uses(
+    this: &Arc<RwLock<ModDefCore>>,
+    core: &ModDefCore,
+    design: &DesignResolution,
+    options: &EmitOptions,
+) -> (Vec<TypeUse>, Vec<String>) {
+    let (types, resolved) = plan_nets(this, core, design, options);
+    let span = |port: &str| {
+        let span = core.port_spans.get(port).cloned().unwrap_or(Span::None);
+        Some((port.to_string(), span))
+    };
+    let mut uses: Vec<TypeUse> = core
+        .ports
+        .keys()
+        .filter_map(|name| {
+            types
+                .type_of(name, core.port_type(name).cloned())
+                .map(|ty| TypeUse {
+                    ty,
+                    port: span(name),
+                })
+        })
+        .collect();
+    uses.extend(
+        types
+            .typed()
+            .filter(|(name, _)| !core.ports.contains_key(*name))
+            .map(|(_, ty)| TypeUse {
+                ty: ty.clone(),
+                port: None,
+            }),
+    );
+    let mut names = Vec::new();
+    let Some((resolution, _)) = resolved else {
+        return (uses, names);
+    };
+    for (inst, ends) in core.instances.values().zip(&resolution.instances) {
+        let inst = inst.read();
+        for end in ends {
+            if inst.enum_ports.contains_key(&end.name)
+                && instance_segments(end).is_some()
+                && let Some(ty) = inst.port_type(&end.name)
+            {
+                let span = inst.port_spans.get(&end.name).cloned();
+                uses.push(TypeUse {
+                    ty: ty.clone(),
+                    port: Some((end.name.clone(), span.unwrap_or(Span::None))),
+                });
+            }
+        }
+        for spec in inst.parameters.values() {
+            if let ParameterSpec::Type(name) | ParameterSpec::Expr(name) = spec {
+                names.push(name.clone());
+            }
+        }
+    }
+    (uses, names)
+}
+
 /// The continuous assignments driving this module's ports, as
 /// (port slice, source) pairs in emission order.
-fn plan_assignments(
-    resolution: &Resolution,
-    options: &EmitOptions,
-) -> Vec<(PortSlice, ConnectedItem)> {
+fn plan_assignments(resolution: &Resolution, options: &EmitOptions) -> Assignments {
     let mut assignments = Vec::new();
     for end in &resolution.ports {
         for segment in &end.segments {

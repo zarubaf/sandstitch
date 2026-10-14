@@ -8,7 +8,8 @@ a file with `## Example` and `## Fix` sections and a row in the table below
 must be exactly those of the `rust` blocks (ignoring whitespace and comments),
 and it must report the entry's code. Where an entry shows the output, its
 header, notes and helps must be those of the run and the source lines it
-quotes must be in the example (S0206, S0301 and S0302: the whole output).
+quotes must be in the example (S0206, S0301, S0302 and S0303: the whole
+output).
 
 | Code | Title |
 | --- | --- |
@@ -28,6 +29,7 @@ quotes must be in the example (S0206, S0301 and S0302: the whole output).
 | [S0209](S0209.md) | name-based operation on a member in both directions |
 | [S0301](S0301.md) | module defined twice in the build |
 | [S0302](S0302.md) | macro defined differently in the build |
+| [S0303](S0303.md) | emitted module needs a package the manifest cannot list |
 | [S0401](S0401.md) | multiple drivers |
 | [S0402](S0402.md) | unconnected bits |
 | [S0403](S0403.md) | undriven net |
