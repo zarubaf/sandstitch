@@ -29,7 +29,7 @@ pub use spec::{
     Endpoint, MeshSpec, Target, core_axi, core_id_width, mem_base_name, sys_pkg, window_base,
     window_name,
 };
-pub use system::{small, system, system_name};
+pub use system::{large, small, system, system_name};
 pub use tile::{ChimneyRole, LINK, chimney, compute_tile, memory_tile};
 
 /// `third_party/` of this repository.

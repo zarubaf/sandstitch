@@ -10,7 +10,7 @@ use topstitch::{ModDef, ParameterValue};
 use crate::{Endpoint, FlooConfig, LIBDIRS, MeshSpec, cfg_pkg, import, rtl, system, write_pkg};
 
 /// The cycles `tb_driver` waits for every core after reset before it
-/// reports a timeout. The small system finishes in 42.
+/// reports a timeout. The small system finishes in 42; the large one in 87.
 pub const TIMEOUT_CYCLES: u32 = 10_000;
 
 /// The name of the harness module of `cfg`: `<name>_harness`.
