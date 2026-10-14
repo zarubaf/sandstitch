@@ -113,12 +113,13 @@ The public vocabulary stays small:
 | Elaborate | Resolve one hardware design configuration into concrete structure |
 | Check | Return structural diagnostics with object references |
 | Export | Emit RTL, structural data, or documentation |
+| Physical design | Import and generate LEF/DEF; place instances; define pins and tracks |
 
 Connecting endpoints never silently inserts conversion hardware. Width adapters, bridges, and clock-crossing components are ordinary instances. Interface groupings are metadata over real endpoints; they must not hide direction or width mismatches.
 
 Architectural expansion and RTL elaboration are distinct: generators expand the topology; Slang resolves SystemVerilog declarations for each relevant IP configuration. Cache import results by source content, compiler configuration, parameters, and tool version. Repeated instances of the same specialization reuse the imported result. Per-router coordinates, IDs, or routing parameters may create distinct configurations even when port shapes are identical. Measure this workload before optimizing; do not omit supposedly non-shape parameters from the cache key without establishing that reuse is sound.
 
-Use stable local names and explicit instance paths, not memory addresses, for exported identity. Document that renaming or moving an instance changes its path. Snapshot schemas carry a version; consumers reject unsupported semantic versions. Keep Topstitch internals private and expose the agreed operations rather than every upstream method. Treat the API as experimental until the reference designs exercise it.
+Use stable local names and explicit instance paths, not memory addresses, for exported identity. Document that renaming or moving an instance changes its path. Snapshot schemas carry a version; consumers reject unsupported semantic versions. Composition and physical design are public; internals and dependency types are crate-private. Treat the API as experimental until the reference designs exercise it.
 
 ## Import and correctness boundary
 

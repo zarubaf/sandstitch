@@ -22,7 +22,7 @@ impl Default for PipelineConfig {
 }
 
 impl PipelineConfig {
-    pub fn to_mod_def(&self, width: usize) -> ModDef {
+    pub(crate) fn to_mod_def(&self, width: usize) -> ModDef {
         let mod_def = ModDef::new("br_delay_nr");
         mod_def.add_port("clk", IO::Input(1));
         mod_def.add_port("in", IO::Input(width));

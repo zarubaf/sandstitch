@@ -16,7 +16,8 @@
 //!   methods of the model types.
 //! - [`diagnostic`]: structured diagnostics.
 //!
-//! The public API is re-exported at the crate root.
+//! The public API is re-exported at the crate root; its vocabulary is
+//! described in `doc/product.md`, "Generator and API contract".
 
 mod check;
 pub mod diagnostic;
