@@ -1,14 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! FlooNoC design package: the narrow/wide router `floo_nw_router`,
-//! specialized for a [`FlooConfig`], and a 2x2 XY mesh of it.
+//! FlooNoC design package: the narrow/wide router `floo_nw_router` and the
+//! network interface `floo_nw_chimney`, specialized for a [`FlooConfig`],
+//! a 2x2 XY mesh of the router, and compute and memory tiles built around
+//! the network interface.
 //!
 //! The RTL comes from the pinned sources in `third_party/` (FlooNoC,
-//! `common_cells`, `axi`). Everything FlooNoC-specific lives here; the
-//! library only provides generic import, specialization and emission.
+//! `common_cells`, `axi`), plus the fixtures in `rtl/`. Everything
+//! FlooNoC-specific lives here; the library only provides generic import,
+//! specialization and emission.
 
 mod config;
 mod mesh;
+mod spec;
+mod tile;
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +21,10 @@ use topstitch::{ImportError, ModDef, PackageDef, ParameterValue, ParserConfig};
 
 pub use config::{AxiCfg, FlooConfig, VcImpl, WideRwDecouple, cfg_pkg};
 pub use mesh::{Direction, mesh_2x2};
+pub use spec::{
+    Endpoint, MeshSpec, Target, core_axi, core_id_width, mem_base_name, sys_pkg, window_base,
+};
+pub use tile::{ChimneyRole, LINK, chimney, compute_tile, memory_tile};
 
 /// `third_party/` of this repository.
 fn third_party() -> PathBuf {
@@ -60,6 +69,49 @@ const MODULES: &[&str] = &[
 ];
 
 const INCDIRS: &[&str] = &["common_cells/include", "axi/include", "floonoc/hw/include"];
+
+/// The library directories (Slang and Verilator `-y`) that resolve the
+/// modules of the network interface and of `axi_mux`.
+const LIBDIRS: &[&str] = &["common_cells/src", "axi/src", "floonoc/hw"];
+
+/// `designs/floonoc/rtl/`: the hand-written fixtures.
+fn rtl() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("rtl")
+}
+
+/// Imports `top` with `overrides` from [`PACKAGES`], then the generated
+/// packages `pkgs`, then `modules`, with the include directories and the
+/// library directories `libdirs` (relative to `third_party/`).
+#[track_caller]
+fn import(
+    top: &str,
+    pkgs: &[PathBuf],
+    modules: &[PathBuf],
+    libdirs: &[&str],
+    overrides: &[(&str, ParameterValue)],
+) -> Result<ModDef, ImportError> {
+    let root = third_party();
+    let text = |p: &Path| p.to_str().unwrap().to_string();
+    let sources: Vec<String> = PACKAGES
+        .iter()
+        .map(|rel| root.join(rel))
+        .chain(pkgs.iter().cloned())
+        .chain(modules.iter().cloned())
+        .map(|p| text(&p))
+        .collect();
+    let incdirs: Vec<String> = INCDIRS.iter().map(|rel| text(&root.join(rel))).collect();
+    let libdirs: Vec<String> = libdirs.iter().map(|rel| text(&root.join(rel))).collect();
+    let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+    let incdirs: Vec<&str> = incdirs.iter().map(String::as_str).collect();
+    let libdirs: Vec<&str> = libdirs.iter().map(String::as_str).collect();
+    let parser_cfg = ParserConfig {
+        sources: &sources,
+        incdirs: &incdirs,
+        libdirs: &libdirs,
+        ..Default::default()
+    };
+    ModDef::try_from_verilog_parameterized(top, &parser_cfg, overrides)
+}
 
 /// Writes [`cfg_pkg`] of `cfg` to `out_dir`, in a file named after the
 /// package and the hash of its text, and returns its path. The import, its
@@ -117,26 +169,17 @@ fn overrides(cfg: &FlooConfig, pkg: &PackageDef) -> Vec<(&'static str, Parameter
 /// cannot be written.
 #[track_caller]
 pub fn router(cfg: &FlooConfig, out_dir: &Path) -> Result<ModDef, ImportError> {
-    let root = third_party();
-    let path = |rel: &str| root.join(rel).to_str().unwrap().to_string();
     let pkg = cfg_pkg(cfg);
     let pkg_file = write_pkg(&pkg, out_dir);
-    let sources: Vec<String> = PACKAGES
-        .iter()
-        .map(|rel| path(rel))
-        .chain([pkg_file.to_str().unwrap().to_string()])
-        .chain(MODULES.iter().map(|rel| path(rel)))
-        .collect();
-    let incdirs: Vec<String> = INCDIRS.iter().map(|rel| path(rel)).collect();
-    let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
-    let incdirs: Vec<&str> = incdirs.iter().map(String::as_str).collect();
-    let parser_cfg = ParserConfig {
-        sources: &sources,
-        incdirs: &incdirs,
-        ..Default::default()
-    };
-    let overrides = overrides(cfg, &pkg);
-    let router = ModDef::try_from_verilog_parameterized("floo_nw_router", &parser_cfg, &overrides)?;
+    let root = third_party();
+    let modules: Vec<PathBuf> = MODULES.iter().map(|rel| root.join(rel)).collect();
+    let router = import(
+        "floo_nw_router",
+        &[pkg_file],
+        &modules,
+        &[],
+        &overrides(cfg, &pkg),
+    )?;
     for d in 0..cfg.num_routes as usize {
         router.def_intf_members(
             link(d),

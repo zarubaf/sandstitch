@@ -32,12 +32,41 @@ fn run_slang(files: &[&Path], args: Vec<String>, design: sys::DesignQuery) -> sy
 /// concatenations connect to packed-array ports by implicit conversion by
 /// design.)
 pub fn elaborate(files: &[&Path], emitted: &str, top: &str) -> Result<(), String> {
-    elaborate_with(files, &[], emitted, top)
+    elaborate_with(files, &[], emitted, top, None)
 }
 
 /// [`elaborate`] with the sources, include directories, macro definitions
 /// and library search of `manifest`: the build the manifest describes.
 pub fn elaborate_manifest(manifest: &Manifest, emitted: &str, top: &str) -> Result<(), String> {
+    elaborate_manifest_with(manifest, emitted, top, None)
+}
+
+/// [`elaborate_manifest`], tolerating only the implicit width conversion
+/// warnings ([`VENDORED_WIDTH_CODES`]) of files under `vendored`:
+/// third-party RTL that is not edited, whose conversions are its own.
+/// Errors, other warnings, and any warning elsewhere still fail. Used by
+/// the FlooNoC design tests, which include this file.
+#[allow(dead_code)]
+pub fn elaborate_manifest_vendored(
+    manifest: &Manifest,
+    emitted: &str,
+    top: &str,
+    vendored: &Path,
+) -> Result<(), String> {
+    elaborate_manifest_with(manifest, emitted, top, Some(vendored))
+}
+
+/// The Slang codes of `-Wwidth-trunc` and `-Wwidth-expand`, which
+/// FlooNoC's `floo_nw_chimney` and `floo_meta_buffer` raise with every
+/// configuration.
+pub const VENDORED_WIDTH_CODES: [&str; 2] = ["WidthTruncate", "WidthExpand"];
+
+fn elaborate_manifest_with(
+    manifest: &Manifest,
+    emitted: &str,
+    top: &str,
+    vendored: Option<&Path>,
+) -> Result<(), String> {
     let files: Vec<&Path> = manifest.sources.iter().map(PathBuf::as_path).collect();
     let mut args = Vec::new();
     for incdir in &manifest.incdirs {
@@ -58,7 +87,7 @@ pub fn elaborate_manifest(manifest: &Manifest, emitted: &str, top: &str) -> Resu
         args.push("-Y".to_string());
         args.push(ext.clone());
     }
-    elaborate_with(&files, &args, emitted, top)
+    elaborate_with(&files, &args, emitted, top, vendored)
 }
 
 fn elaborate_with(
@@ -66,6 +95,7 @@ fn elaborate_with(
     args: &[String],
     emitted: &str,
     top: &str,
+    vendored: Option<&Path>,
 ) -> Result<(), String> {
     let rtl = str2tmpfile(emitted).unwrap();
     let mut all: Vec<String> = args.to_vec();
@@ -83,10 +113,12 @@ fn elaborate_with(
     let mut sources: Vec<&Path> = files.to_vec();
     sources.push(rtl.path());
     let response = run_slang(&sources, all, sys::DesignQuery::None);
-    let clean = response
-        .diagnostics
-        .iter()
-        .all(|d| d.severity < Severity::Warning);
+    let clean = response.diagnostics.iter().all(|d| {
+        d.severity < Severity::Warning
+            || (d.severity == Severity::Warning
+                && VENDORED_WIDTH_CODES.contains(&d.code.as_str())
+                && vendored.is_some_and(|v| Path::new(&d.file).starts_with(v)))
+    });
     if response.ok && clean {
         Ok(())
     } else {

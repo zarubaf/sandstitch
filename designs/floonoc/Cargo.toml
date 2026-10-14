@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2024"
 license = "Apache-2.0"
 publish = false
-description = "FlooNoC router and 2x2 mesh design package built on the sandstitch library"
+description = "FlooNoC router, mesh and tile design package built on the sandstitch library"
 
 [dependencies]
 topstitch = { path = "../.." }
