@@ -2,7 +2,7 @@
 
 //! Tests for type expressions, package references and member selects.
 
-use xlsynth_vast::{VastFile, VastFileType};
+use xlsynth_vast::{DataKind, Expr, VastFile, VastFileType};
 
 #[test]
 fn instantiation_with_type_and_package_constant_overrides() {
@@ -155,4 +155,106 @@ fn packed_array_ranges_reject_negative_bounds() {
     let mut file = VastFile::new(VastFileType::SystemVerilog);
     let bits = file.make_bit_vector_type(8, false);
     file.make_packed_array_type_ranges(bits, &[(1, -1)]);
+}
+
+fn typedef_hdr_macro_args(file: &mut VastFile) -> Vec<Expr> {
+    vec![
+        file.make_name_ref("hdr_t"),
+        file.make_name_ref("xy_t"),
+        file.make_name_ref("logic"),
+        file.make_unsized_decimal_literal(2),
+    ]
+}
+
+#[test]
+fn package_with_every_member_kind() {
+    let mut file = VastFile::new(VastFileType::SystemVerilog);
+    file.add_include("ext/typedef.svh");
+    let blank = file.make_blank_line();
+    file.add_blank_line(blank);
+    let package = file.add_package("cfg_pkg");
+
+    let cfg_t = file.make_extern_package_type("ext_pkg", "cfg_t");
+    let cfg_def = file.make_def("Cfg", DataKind::User, &cfg_t);
+    let width = file.make_unsized_decimal_literal(48);
+    let depth = file.make_unsized_decimal_literal(4);
+    let cfg = file.make_named_assignment_pattern(&[("Width", width), ("Depth", depth)]);
+    file.add_package_localparam(package, &cfg_def, &cfg);
+
+    let uint = file.make_int_type(false);
+    let count_def = file.make_def("Count", DataKind::Int, &uint);
+    let one = file.make_unsized_decimal_literal(1);
+    file.add_package_localparam(package, &count_def, &one);
+
+    let bits2 = file.make_bit_vector_type(2, false);
+    file.add_package_typedef(package, "x_bits_t", &bits2);
+    file.add_package_struct_typedef(package, "xy_t", &[("x", bits2), ("y", bits2)]);
+    let zero = file.make_unsized_decimal_literal(0);
+    let one = file.make_unsized_decimal_literal(1);
+    file.add_package_enum_typedef(package, "dir_e", &bits2, &[("A", zero), ("B", one)]);
+
+    let xy_t = file.make_extern_type("xy_t");
+    let origin_def = file.make_def("Origin", DataKind::User, &xy_t);
+    let x = file.make_unsized_decimal_literal(1);
+    let y = file.make_unsized_decimal_literal(0);
+    let origin = file.make_named_assignment_pattern(&[("x", x), ("y", y)]);
+    file.add_package_localparam(package, &origin_def, &origin);
+
+    let dir_e = file.make_extern_type("dir_e");
+    let start_def = file.make_def("Start", DataKind::User, &dir_e);
+    let b = file.make_name_ref("B");
+    file.add_package_localparam(package, &start_def, &b);
+
+    let args = typedef_hdr_macro_args(&mut file);
+    let macro_ref =
+        file.make_macro_ref_with_args("TYPEDEF_HDR_T", &args.iter().collect::<Vec<_>>());
+    let statement = file.make_macro_statement(&macro_ref, false);
+    file.add_package_macro(package, statement);
+
+    let expected = concat!(
+        "`include \"ext/typedef.svh\"\n",
+        "\n",
+        "package cfg_pkg;\n",
+        "  localparam ext_pkg::cfg_t Cfg = '{Width: 48, Depth: 4};\n",
+        "  localparam int unsigned Count = 1;\n",
+        "  typedef logic [1:0] x_bits_t;\n",
+        "  typedef struct packed {\n",
+        "    logic [1:0] x;\n",
+        "    logic [1:0] y;\n",
+        "  } xy_t;\n",
+        "  typedef enum logic [1:0] {\n",
+        "    A = 0,\n",
+        "    B = 1\n",
+        "  } dir_e;\n",
+        "  localparam xy_t Origin = '{x: 1, y: 0};\n",
+        "  localparam dir_e Start = B;\n",
+        "  `TYPEDEF_HDR_T(hdr_t, xy_t, logic, 2)\n",
+        "endpackage\n",
+    );
+    assert_eq!(file.emit(), expected);
+}
+
+#[test]
+fn macro_in_package_has_no_semicolon() {
+    let mut file = VastFile::new(VastFileType::SystemVerilog);
+    let package = file.add_package("p");
+    let args = typedef_hdr_macro_args(&mut file);
+    let macro_ref =
+        file.make_macro_ref_with_args("TYPEDEF_HDR_T", &args.iter().collect::<Vec<_>>());
+    let statement = file.make_macro_statement(&macro_ref, false);
+    file.add_package_macro(package, statement);
+    assert!(
+        file.emit()
+            .contains("  `TYPEDEF_HDR_T(hdr_t, xy_t, logic, 2)\nendpackage")
+    );
+}
+
+#[test]
+fn one_bit_typedef_has_a_range() {
+    let mut file = VastFile::new(VastFileType::SystemVerilog);
+    let package = file.add_package("p");
+    let bit = file.make_scalar_type();
+    let ranged = file.make_packed_array_type_ranges(bit, &[(0, 0)]);
+    file.add_package_typedef(package, "b_t", &ranged);
+    assert!(file.emit().contains("  typedef logic [0:0] b_t;\n"));
 }

@@ -114,6 +114,10 @@ define_handle!(
 define_handle!(ParameterRef, "References a module parameter expression.");
 define_handle!(LocalparamRef, "References a local parameter expression.");
 define_handle!(Def, "Identifies a typed declaration owned by a file.");
+define_handle!(
+    VastPackage,
+    "Identifies a package owned by a [`crate::VastFile`]."
+);
 
 impl LogicRef {
     /// Returns this named reference as an ordinary expression.
@@ -184,6 +188,7 @@ impl MacroRef {
 pub(crate) struct Ast {
     pub(crate) file_items: Vec<FileItem>,
     pub(crate) modules: Vec<ModuleData>,
+    pub(crate) packages: Vec<PackageData>,
     pub(crate) expressions: Vec<ExprData>,
     pub(crate) data_types: Vec<TypeData>,
     pub(crate) ports: Vec<PortData>,
@@ -205,6 +210,7 @@ pub(crate) struct Ast {
 #[derive(Clone, Debug)]
 pub(crate) enum FileItem {
     Module(VastModule),
+    Package(VastPackage),
     Include(String),
     Comment(String),
     BlankLine,
@@ -217,6 +223,12 @@ pub(crate) struct ModuleData {
     pub(crate) ports: Vec<ModulePort>,
     pub(crate) members: Vec<MemberData>,
     pub(crate) defined_names: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PackageData {
+    pub(crate) name: String,
+    pub(crate) members: Vec<MemberData>,
 }
 
 #[derive(Clone, Debug)]
@@ -276,6 +288,8 @@ pub(crate) enum ExprData {
         elements: Vec<Expr>,
     },
     ArrayAssignmentPattern(Vec<Expr>),
+    /// A named assignment pattern such as `'{A: 1, B: 2}`.
+    NamedAssignmentPattern(Vec<(String, Expr)>),
     WidthCast {
         width: Expr,
         value: Expr,
@@ -408,6 +422,23 @@ pub(crate) enum MemberData {
     Macro {
         expr: Expr,
         semicolon: bool,
+    },
+    /// A package-scope `typedef` of a type, packed struct or enum.
+    Typedef {
+        name: String,
+        body: TypedefBody,
+    },
+}
+
+/// The type a `typedef` names.
+#[derive(Clone, Debug)]
+pub(crate) enum TypedefBody {
+    Type(VastDataType),
+    /// Fields in declaration order, MSB first.
+    Struct(Vec<(String, VastDataType)>),
+    Enum {
+        base: VastDataType,
+        variants: Vec<(String, Expr)>,
     },
 }
 
