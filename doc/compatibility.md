@@ -26,4 +26,4 @@ Breaking changes are listed in the release notes.
 
 ## Supported environment
 
-`nix develop` from the release's `flake.lock` on x86-64 Linux. Builds outside it may work and are not supported. Downstream projects depend on a release by tag through Cargo's git source and use that tag's `flake.lock`; see the [guide](guide.md).
+Building needs stable Rust (each release is tested with the pinned toolchain; v0.1.0 with 1.98.1), a C++20 compiler (GCC 11+ or Clang 17+), CMake 3.28+ and Python 3. `build.rs` checks the C++ compiler, CMake and Python; x86-64 Linux is the supported target. Each release is tested in `nix develop` from its `flake.lock`, which is the reference toolchain when a build elsewhere behaves differently. Downstream projects depend on a release by tag through Cargo's git source; see the [guide](guide.md).
