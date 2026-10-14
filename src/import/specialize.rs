@@ -334,7 +334,7 @@ pub(crate) fn elaborations() -> usize {
     ELABORATIONS.with(|count| count.get())
 }
 
-static IDENTIFIER: LazyLock<Regex> =
+pub(crate) static IDENTIFIER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_$]*$").unwrap());
 /// `ident` or `pkg::ident`.
 pub(crate) static NAME: LazyLock<Regex> =

@@ -231,8 +231,8 @@ upstream versions.
   - Package items (`feat(xlsynth-vast): package items, typedefs and named
     assignment patterns`): `add_package`, `add_package_localparam`,
     `add_package_typedef`, `add_package_struct_typedef`,
-    `add_package_enum_typedef`, `add_package_macro` and
-    `make_named_assignment_pattern`.
+    `add_package_enum_typedef`, `add_package_macro`, the
+    `VastPackage` handle type and `make_named_assignment_pattern`.
 - Upstreaming: send patches against the xlsynth-crate monorepo.
 
 ### Slang and its dependencies (vendored in slang-sys)
