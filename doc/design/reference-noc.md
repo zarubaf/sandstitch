@@ -14,6 +14,7 @@ The working reference NoC of milestone 3 (#7). Rust generators build a mesh of F
 2. **Two packages.**
    - `<name>_pkg` (`cfg_pkg`) holds what the router and the chimney need: the existing types, plus `RouteCfg` and the chimney configurations. It does not depend on the system's address map, so routers of systems with equal router configurations share specializations.
    - `<name>_sys_pkg` holds:
+     - one `Window_x<X>_y<Y>` constant per router, the base of its address window, which cores take as their target base;
      - one `MemBase_x<X>_y<Y>` constant per memory endpoint;
      - the core-side AXI types for each core count above one (`axi_mux` widens the ID by `$clog2(N)`, so the cores use `InIdWidth - $clog2(N)` ID bits);
      - the core parameters.
@@ -28,11 +29,11 @@ The working reference NoC of milestone 3 (#7). Rust generators build a mesh of F
    - `RouteCfg` spells out every field. Its `CollectiveCfg` is `floo_pkg::CollectiveDefaultCfg`.
    - `MaxAtomicTxns` ≤ `2**OutIdWidth - 1`.
 5. **Generators.**
-   - `mesh(cfg, &MeshSpec, out_dir)`: an X×Y mesh. Each local port gets an `Endpoint`: `Compute { targets }`, `Memory`, `Export` or a tie-off. `mesh_2x2` is `mesh` with four `Export` endpoints.
+   - `mesh(cfg, &MeshSpec, out_dir)`: an X×Y mesh. Each local port gets an `Endpoint`: `Compute { targets }`, `Memory`, `Export` or a tie-off. `mesh_2x2` is `mesh` with four `Export` endpoints. The mesh rejects a compute target without a memory endpoint, except through a hidden test-only `MeshSpec` override that the misrouted-write simulation test uses.
    - `compute_tile`: one `traffic_core` per target, an `axi_mux` when there is more than one core, and one chimney. Its ports are clock, reset, `id_i`, the floo link interfaces, and `done_o[N]` and `error_o[N]`.
    - `memory_tile`: one chimney whose narrow AXI subordinate side is exported.
    - `system`: the mesh, exporting clock, reset, every memory's AXI subordinate port and every core's `done`/`error`. The system is synthesizable.
-6. **Simulation harness (simulation only).** `harness(cfg, &MeshSpec)` is a generated `ModDef` and the Verilator top. It instantiates the system and two hand-written fixtures:
+6. **Simulation harness (simulation only).** `harness(cfg, &MeshSpec, out_dir)` is a generated `ModDef` and the Verilator top. It instantiates the system and two hand-written fixtures:
    - one `mem_check #(X, Y, ExpectedWrites, ...)` per memory, which wraps `axi_sim_mem` and checks that every monitored write address has its own X and Y bits and that the write count matches;
    - one `tb_driver #(NumCores, TimeoutCycles)`, which drives clock and reset, waits for every `done`, checks `error` and every `mem_check` `ok`, then prints `PASS` or `FAIL` and calls `$finish`.
 
@@ -50,7 +51,7 @@ The working reference NoC of milestone 3 (#7). Rust generators build a mesh of F
    - `addr_offset_y + y_bits > 32`;
    - `narrow.addr_width != wide.addr_width` (the network interface asserts `AddrWidthMatch`);
    - mesh dimensions above `2^x_bits` or `2^y_bits`;
-   - `num_routes != 5` for a mesh with endpoints;
+   - `num_routes != 5` for a mesh with compute or memory endpoints;
    - a core count whose ID widening leaves fewer than one ID bit;
    - `VcImpl::VcCredit`. FlooNoC v0.9.0's `floo_vc_arbiter` connects `cc_credit_counter`'s old `credit_init_i` pin, which the common_cells version it declares calls `clr_i`. Simulation passes `-Wno-PINNOTFOUND` for the unused branch, and the vendored RTL stays unmodified.
 10. **Simulation test.** `designs/floonoc/tests/system.rs` emits each harness with its manifest and builds it with:

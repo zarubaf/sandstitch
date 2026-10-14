@@ -40,6 +40,8 @@ pub struct MeshSpec {
     ny: usize,
     /// Indexed by `x * ny + y`.
     endpoints: Vec<Endpoint>,
+    /// Compute targets may name routers without a memory (test only).
+    unbacked_targets: bool,
 }
 
 impl MeshSpec {
@@ -55,7 +57,17 @@ impl MeshSpec {
             nx,
             ny,
             endpoints: vec![Endpoint::Tie; nx * ny],
+            unbacked_targets: false,
         }
+    }
+
+    /// Lets compute targets name routers without a memory endpoint, whose
+    /// traffic the network cannot deliver. Only for tests of the
+    /// simulation harness's failure detection.
+    #[doc(hidden)]
+    pub fn allow_unbacked_targets(&mut self) -> &mut Self {
+        self.unbacked_targets = true;
+        self
     }
 
     pub fn nx(&self) -> usize {
@@ -107,6 +119,81 @@ impl MeshSpec {
             .collect()
     }
 
+    /// Every traffic core as (router X, router Y, target): routers X-major,
+    /// the cores of a router in target order. This is the bit order of the
+    /// system's `done_o` and `error_o`.
+    pub fn cores(&self) -> Vec<(usize, usize, Target)> {
+        self.routers()
+            .flat_map(|(x, y)| match self.endpoint(x, y) {
+                Endpoint::Compute { targets } => targets.iter().map(|t| (x, y, *t)).collect(),
+                _ => Vec::new(),
+            })
+            .collect()
+    }
+
+    /// Checks the parts of the mesh rules (doc/design/reference-noc.md,
+    /// decision 9) that need the spec, for configuration `cfg`:
+    /// - the dimensions fit `cfg.x_bits` and `cfg.y_bits`;
+    /// - a mesh with compute or memory endpoints has one local port per
+    ///   router (`num_routes == 5`);
+    /// - every compute tile has at least one target, inside the mesh, at a
+    ///   memory endpoint (unless a test lifts that rule), with a
+    ///   seed below 1024;
+    /// - every core count leaves at least one ID bit ([`core_id_width`]).
+    pub fn check(&self, cfg: &FlooConfig) -> Result<(), String> {
+        let name = &cfg.name;
+        let span = |bits: u32| 1usize.checked_shl(bits).unwrap_or(usize::MAX);
+        if self.nx > span(cfg.x_bits) || self.ny > span(cfg.y_bits) {
+            return Err(format!(
+                "{name}: the {}x{} mesh exceeds the {}x{}-bit coordinates",
+                self.nx, self.ny, cfg.x_bits, cfg.y_bits
+            ));
+        }
+        let tiles = self
+            .endpoints
+            .iter()
+            .any(|e| matches!(e, Endpoint::Compute { .. } | Endpoint::Memory));
+        if tiles && cfg.num_routes != 5 {
+            return Err(format!(
+                "{name}: num_routes {} with compute or memory endpoints; \
+                 they need exactly one local port (5)",
+                cfg.num_routes
+            ));
+        }
+        for (x, y) in self.routers() {
+            let Endpoint::Compute { targets } = self.endpoint(x, y) else {
+                continue;
+            };
+            if targets.is_empty() {
+                return Err(format!("{name}: compute tile ({x}, {y}) has no target"));
+            }
+            for t in targets {
+                if t.x >= self.nx || t.y >= self.ny {
+                    return Err(format!(
+                        "{name}: compute tile ({x}, {y}) targets ({}, {}) outside the {}x{} mesh",
+                        t.x, t.y, self.nx, self.ny
+                    ));
+                }
+                if !self.unbacked_targets && *self.endpoint(t.x, t.y) != Endpoint::Memory {
+                    return Err(format!(
+                        "{name}: compute tile ({x}, {y}) targets ({}, {}), which has no memory",
+                        t.x, t.y
+                    ));
+                }
+                if t.seed >= 1024 {
+                    return Err(format!(
+                        "{name}: compute tile ({x}, {y}): seed {} is not below 1024",
+                        t.seed
+                    ));
+                }
+            }
+        }
+        for n in self.core_counts() {
+            core_id_width(cfg, n)?;
+        }
+        Ok(())
+    }
+
     /// The distinct core counts of the compute tiles.
     pub fn core_counts(&self) -> BTreeSet<usize> {
         self.endpoints
@@ -127,6 +214,11 @@ pub(crate) fn sys_pkg_name(cfg: &FlooConfig) -> String {
 /// The name of the base address constant of the memory at (`x`, `y`).
 pub fn mem_base_name(x: usize, y: usize) -> String {
     format!("MemBase_x{x}_y{y}")
+}
+
+/// The name of the window base address constant of router (`x`, `y`).
+pub fn window_name(x: usize, y: usize) -> String {
+    format!("Window_x{x}_y{y}")
 }
 
 /// The base address of the window of router (`x`, `y`): its coordinates at
@@ -173,24 +265,32 @@ pub fn core_id_width(cfg: &FlooConfig, n: usize) -> Result<u32, String> {
 ///
 /// Needs the configuration package and the `axi` include directory.
 ///
-/// Panics if `cfg` is invalid ([`FlooConfig::validate`]), a memory lies
-/// outside the coordinate bits, or a core count leaves no ID bit.
+/// Panics if `cfg` is invalid ([`FlooConfig::validate`]), the mesh exceeds
+/// the coordinate bits, or a core count leaves no ID bit.
 #[track_caller]
 pub fn sys_pkg(cfg: &FlooConfig, spec: &MeshSpec) -> PackageDef {
     if let Err(e) = cfg.validate() {
         panic!("invalid FlooNoC configuration: {e}");
     }
-    let fits = |x: usize, y: usize| x < 1 << cfg.x_bits && y < 1 << cfg.y_bits;
+    assert!(
+        spec.nx() <= 1 << cfg.x_bits && spec.ny() <= 1 << cfg.y_bits,
+        "{}: the {}x{} mesh exceeds the {}x{}-bit coordinates",
+        cfg.name,
+        spec.nx(),
+        spec.ny(),
+        cfg.x_bits,
+        cfg.y_bits
+    );
     let mut pkg = PackageDef::new(&sys_pkg_name(cfg));
     pkg.include("axi/typedef.svh");
-    for (x, y) in spec.memories() {
-        assert!(
-            fits(x, y),
-            "{}: memory ({x}, {y}) is outside the {}x{}-bit coordinates",
-            cfg.name,
-            cfg.x_bits,
-            cfg.y_bits
+    for (x, y) in spec.routers() {
+        pkg.localparam(
+            &window_name(x, y),
+            PackageType::IntUnsigned,
+            PackageValue::Int(window_base(cfg, x, y)),
         );
+    }
+    for (x, y) in spec.memories() {
         pkg.localparam(
             &mem_base_name(x, y),
             PackageType::IntUnsigned,

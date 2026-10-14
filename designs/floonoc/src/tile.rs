@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use topstitch::{ConvertibleToPortSlice, IO, ImportError, ModDef, PackageDef, ParameterValue};
 
-use crate::spec::{core_axi, core_id_width, mem_base_name};
+use crate::spec::{core_axi, core_id_width, window_name};
 use crate::{CHANNELS, FlooConfig, LIBDIRS, Target, cfg_pkg, import, rtl, third_party, write_pkg};
 
 /// Which narrow AXI side of a network interface is attached.
@@ -92,10 +92,10 @@ pub fn chimney(cfg: &FlooConfig, role: ChimneyRole, out_dir: &Path) -> Result<Mo
 
 /// `traffic_core` (`rtl/traffic_core.sv`) with the request and response
 /// types `<prefix>_req_t` and `<prefix>_rsp_t` of `axi_pkg`, targeting the
-/// memory window `sys.constant(MemBase_x<X>_y<Y>)` with `target.seed`.
+/// window `sys.constant(Window_x<X>_y<Y>)` with `target.seed`.
 /// `pkg_files` are the generated packages it needs, in order.
 ///
-/// Panics if `sys` has no memory at the target.
+/// Panics if `sys` has no window for the target.
 #[track_caller]
 fn traffic_core(
     sys: &PackageDef,
@@ -107,10 +107,7 @@ fn traffic_core(
     let overrides = [
         ("axi_req_t", axi_pkg.ty(&format!("{prefix}_req_t"))),
         ("axi_rsp_t", axi_pkg.ty(&format!("{prefix}_rsp_t"))),
-        (
-            "TargetBase",
-            sys.constant(&mem_base_name(target.x, target.y)),
-        ),
+        ("TargetBase", sys.constant(&window_name(target.x, target.y))),
         ("Seed", target.seed.into()),
     ];
     import(
@@ -189,8 +186,8 @@ fn tile_ports(tile: &ModDef, chim: &topstitch::ModInst, insts: &[&topstitch::Mod
 }
 
 /// A compute tile named `name`: one `traffic_core` per target, each
-/// targeting the base address `MemBase_x<X>_y<Y>` of `sys` ([`sys_pkg`]
-/// of the same configuration), and one network interface in the
+/// targeting the window base `Window_x<X>_y<Y>` of `sys` ([`sys_pkg`] of
+/// the same configuration), and one network interface in the
 /// [`ChimneyRole::Compute`] role. A single core drives the network
 /// interface directly; more cores go through an `axi_mux`, with the core
 /// AXI types of `sys`.
@@ -200,8 +197,11 @@ fn tile_ports(tile: &ModDef, chim: &topstitch::ModInst, insts: &[&topstitch::Mod
 /// from core `i`. The packages are written to `out_dir`.
 ///
 /// Panics if `cfg` is invalid, `targets` is empty, a seed is not below
-/// 1024, the core count leaves no ID bit, `sys` lacks a target memory or
-/// the core types, or an import fails.
+/// 1024, the core count leaves no ID bit, `sys` lacks a target window or
+/// the core types, or an import fails. Whether a memory backs each target
+/// is the mesh's check ([`MeshSpec::check`]).
+///
+/// [`MeshSpec::check`]: crate::MeshSpec::check
 ///
 /// [`sys_pkg`]: crate::sys_pkg
 #[track_caller]

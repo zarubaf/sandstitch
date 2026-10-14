@@ -123,11 +123,12 @@ fn one_core_compute_tile_elaborates() {
     );
 
     // The core drives the network interface directly with the narrow
-    // manager types, and targets memory (1, 1) through the system package.
+    // manager types, and targets the window of (1, 1) through the system
+    // package.
     assert!(!emitted.contains("axi_mux"), "{emitted}");
     for param in [
         ".axi_req_t(tile_pkg::axi_narrow_in_req_t)",
-        ".TargetBase(tile_sys_pkg::MemBase_x1_y1)",
+        ".TargetBase(tile_sys_pkg::Window_x1_y1)",
         ".ChimneyCfgN(tile_pkg::ChimneyCfgNCompute)",
         ".ChimneyCfgW(tile_pkg::ChimneyCfgW)",
         ".RouteCfg(tile_pkg::RouteCfg)",
@@ -172,8 +173,8 @@ fn two_core_compute_tile_elaborates() {
         ".axi_req_t(tile_sys_pkg::core2_req_t)",
         ".slv_req_t(tile_sys_pkg::core2_req_t)",
         ".mst_req_t(tile_pkg::axi_narrow_in_req_t)",
-        ".TargetBase(tile_sys_pkg::MemBase_x1_y0)",
-        ".TargetBase(tile_sys_pkg::MemBase_x1_y1)",
+        ".TargetBase(tile_sys_pkg::Window_x1_y0)",
+        ".TargetBase(tile_sys_pkg::Window_x1_y1)",
     ] {
         assert!(emitted.contains(param), "{param} in\n{emitted}");
     }
@@ -217,6 +218,16 @@ fn system_package_holds_the_address_map_and_core_types() {
         "{text}"
     );
     assert!(!text.contains("MemBase_x0"), "{text}");
+    // Every router has a window, memory or not.
+    for (name, base) in [
+        ("Window_x0_y0", 0),
+        ("Window_x0_y1", 0x10_0000),
+        ("Window_x1_y0", 0x1_0000),
+        ("Window_x1_y1", 0x11_0000),
+    ] {
+        let decl = format!("localparam int unsigned {name} = {base};");
+        assert!(text.contains(&decl), "{decl} in\n{text}");
+    }
     // Only the two-core tile needs its own types.
     assert!(text.contains("typedef logic [2:0] core2_id_t;"), "{text}");
     assert!(!text.contains("core1"), "{text}");
