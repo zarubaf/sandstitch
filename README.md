@@ -8,7 +8,7 @@ Imported SystemVerilog modules can be specialized with value and type parameters
 
 ## Building
 
-On x86-64 Linux, `nix develop` enters the pinned development environment (`flake.nix`, `flake.lock`): Rust, a C++ compiler, CMake, Python 3, ccache and Verilator. CI uses the same environment. Without Nix, building requires GCC 11+ or Clang 17+, CMake 3.28+ and Python 3.
+On x86-64 Linux, `nix develop` enters the pinned development environment (`flake.nix`, `flake.lock`): Rust, a C++ compiler, CMake, Python 3, ccache and Verilator. CI uses the same environment.
 
 Slang is vendored and runs in-process. The first build compiles it (minutes); ccache makes rebuilds instant. `cargo xtask ci` runs the repository checks.
 

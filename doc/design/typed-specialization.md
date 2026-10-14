@@ -16,7 +16,7 @@ Let a design package configure an imported SystemVerilog module with value **and
 1. **xlsynth-vast is vendored** at `crates/xlsynth-vast` from the published 0.65.0 crate (upstream lives in the xlsynth-crate monorepo, so a subtree is impractical). Needed for type-valued parameters, member selects and declared packed ranges, which the published crate cannot express; fixes go upstream as patches.
 1. **Fallible variants, panicking wrappers.** New `try_*` functions return `Result<_, ImportError>` (`try_manifest`: `Result<_, Diagnostics>`); existing upstream functions keep their signatures and panic with the rendered diagnostic. This keeps upstream tests and ported fixes working.
 1. **Diagnostics follow rustc**: codes, spans into Rust call sites and SV sources, notes and help, one model rendered to terminal and JSON.
-1. **One entry point**: `cargo xtask` runs every check locally and in CI, replacing pre-commit. Markdown auto-formatting (mdformat, Python) is dropped; text hygiene checks stay.
+1. **One entry point**: `cargo xtask` runs every check locally and in CI: fmt, clippy, text hygiene, the library boundary check and the tests.
 
 ## Layout
 
