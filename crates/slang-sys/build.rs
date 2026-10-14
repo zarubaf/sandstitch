@@ -49,6 +49,9 @@ fn main() {
         .define("SLANG_USE_MIMALLOC", "OFF")
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         .define("CMAKE_CXX_SCAN_FOR_MODULES", "OFF")
+        // Slang puts its libraries in `build/<libdir>`; some distributions
+        // (Nix, Fedora) default to `lib64`, but the link search path is `lib`.
+        .define("CMAKE_INSTALL_LIBDIR", "lib")
         .define("SLANG_USE_SYSTEM_FMT", "OFF")
         .define("SLANG_USE_SYSTEM_BOOST", "OFF")
         .define("SLANG_USE_SYSTEM_TOMLPLUSPLUS", "OFF")
