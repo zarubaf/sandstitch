@@ -502,7 +502,7 @@ checksum = "8bf7cc16383c4b8d58b9905a8509f02926ce3058053c056376248d958c9df1e8"
 
 [[package]]
 name = "floonoc"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "slang-rs",
  "tempfile",
@@ -1309,7 +1309,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slang-rs"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "num-bigint",
  "proptest",
@@ -1320,7 +1320,7 @@ dependencies = [
 
 [[package]]
 name = "slang-sys"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "cc",
  "cmake",
@@ -1501,7 +1501,7 @@ checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "topstitch"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "annotate-snippets",
  "cargo_metadata",
@@ -1721,14 +1721,14 @@ dependencies = [
 
 [[package]]
 name = "xlsynth-vast"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "num-bigint",
 ]
 
 [[package]]
 name = "xtask"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "regex",
  "serde",

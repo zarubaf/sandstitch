@@ -12,7 +12,7 @@ homepage = "https://github.com/zarubaf/sandstitch"
 members = ["crates/*", "designs/*", "xtask"]
 
 [workspace.package]
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 
 [dependencies]
 num-bigint = "0.4.3"
