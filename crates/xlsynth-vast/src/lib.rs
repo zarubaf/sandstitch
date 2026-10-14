@@ -19,15 +19,16 @@ use literal::Literal;
 use model::{
     AlwaysData, Artifact, AssignmentData, Ast, BinaryOp, BlockData, CaseData, ConditionalData,
     DefData, ExprData, FileItem, GenerateData, Id, InstantiationData, IntegerTypeKind, MemberData,
-    ModuleData, ParameterPortData, PortData, StatementData, TypeData, UnaryOp,
+    ModuleData, PackageData, ParameterPortData, PortData, StatementData, TypeData, TypedefBody,
+    UnaryOp,
 };
 
 pub use model::{
     AlwaysKind, BlankLine, CaseStatement, Comment, Conditional, ContinuousAssignment, DataKind,
     Def, Expr, GenerateLoop, Index, IndexableExpr, InlineVerilogStatement, Instantiation,
     LocalparamRef, LogicRef, MacroRef, MacroStatement, ModulePort, ModulePortDirection,
-    ParameterRef, Slice, VastAlwaysBase, VastDataType, VastFileType, VastModule, VastStatement,
-    VastStatementBlock,
+    ParameterRef, Slice, VastAlwaysBase, VastDataType, VastFileType, VastModule, VastPackage,
+    VastStatement, VastStatementBlock,
 };
 
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(1);
@@ -244,6 +245,109 @@ impl VastFile {
         });
         self.ast.file_items.push(FileItem::Module(handle));
         handle
+    }
+
+    /// Adds a package at the current position in the output file.
+    pub fn add_package(&mut self, name: &str) -> VastPackage {
+        assert_simple_identifier(name, "package name");
+        let handle = VastPackage(self.id(self.ast.packages.len()));
+        self.ast.packages.push(PackageData {
+            name: name.to_owned(),
+            members: Vec::new(),
+        });
+        self.ast.file_items.push(FileItem::Package(handle));
+        handle
+    }
+
+    /// Appends an ordered package member.
+    fn push_package_member(&mut self, package: VastPackage, member: MemberData) {
+        let index = self.check(package.0);
+        self.ast.packages[index].members.push(member);
+    }
+
+    /// Adds a typed package-scope `localparam`; the name and type come from
+    /// the definition.
+    pub fn add_package_localparam(&mut self, package: VastPackage, definition: &Def, rhs: &Expr) {
+        let name = self.ast.defs[self.check(definition.0)].name.clone();
+        let (_, member) = self.parameter_member(&name, rhs, true, Some(*definition), false);
+        self.push_package_member(package, member);
+    }
+
+    /// Adds `typedef <type> name;` to a package.
+    pub fn add_package_typedef(&mut self, package: VastPackage, name: &str, ty: &VastDataType) {
+        assert_simple_identifier(name, "typedef name");
+        self.check(ty.0);
+        self.push_package_member(
+            package,
+            MemberData::Typedef {
+                name: name.to_owned(),
+                body: TypedefBody::Type(*ty),
+            },
+        );
+    }
+
+    /// Adds a `typedef struct packed` to a package; `fields` list the MSB
+    /// first.
+    pub fn add_package_struct_typedef(
+        &mut self,
+        package: VastPackage,
+        name: &str,
+        fields: &[(&str, VastDataType)],
+    ) {
+        assert_simple_identifier(name, "typedef name");
+        assert!(!fields.is_empty(), "a struct typedef requires fields");
+        let fields = fields
+            .iter()
+            .map(|(field, ty)| {
+                assert_simple_identifier(field, "struct field name");
+                self.check(ty.0);
+                ((*field).to_owned(), *ty)
+            })
+            .collect();
+        self.push_package_member(
+            package,
+            MemberData::Typedef {
+                name: name.to_owned(),
+                body: TypedefBody::Struct(fields),
+            },
+        );
+    }
+
+    /// Adds a `typedef enum <base>` with explicit variant values to a package.
+    pub fn add_package_enum_typedef(
+        &mut self,
+        package: VastPackage,
+        name: &str,
+        base: &VastDataType,
+        variants: &[(&str, Expr)],
+    ) {
+        assert_simple_identifier(name, "typedef name");
+        assert!(!variants.is_empty(), "an enum typedef requires variants");
+        self.check(base.0);
+        let variants = variants
+            .iter()
+            .map(|(variant, value)| {
+                assert_simple_identifier(variant, "enum variant name");
+                self.check(value.0);
+                ((*variant).to_owned(), *value)
+            })
+            .collect();
+        self.push_package_member(
+            package,
+            MemberData::Typedef {
+                name: name.to_owned(),
+                body: TypedefBody::Enum {
+                    base: *base,
+                    variants,
+                },
+            },
+        );
+    }
+
+    /// Adds an existing macro statement to a package.
+    pub fn add_package_macro(&mut self, package: VastPackage, statement: MacroStatement) {
+        let (expr, semicolon) = self.macro_statement_data(statement);
+        self.push_package_member(package, MemberData::Macro { expr, semicolon });
     }
 
     /// Returns the name of a module belonging to this file.
@@ -867,6 +971,19 @@ impl VastFile {
     pub fn make_array_assignment_pattern(&mut self, elements: &[&Expr]) -> Expr {
         let elements = self.checked_expressions(elements);
         self.add_expression(ExprData::ArrayAssignmentPattern(elements))
+    }
+
+    /// Creates a named assignment pattern such as `'{A: 1, B: 2}`.
+    pub fn make_named_assignment_pattern(&mut self, fields: &[(&str, Expr)]) -> Expr {
+        let fields = fields
+            .iter()
+            .map(|(name, value)| {
+                assert_simple_identifier(name, "assignment pattern field");
+                self.check(value.0);
+                ((*name).to_owned(), *value)
+            })
+            .collect();
+        self.add_expression(ExprData::NamedAssignmentPattern(fields))
     }
 
     /// Adds a unary expression to the file-owned arena.

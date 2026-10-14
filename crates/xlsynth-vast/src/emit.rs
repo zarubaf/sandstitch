@@ -8,8 +8,8 @@ use crate::VastFile;
 use crate::model::{
     AlwaysKind, BinaryOp, CaseStatement, Conditional, DataKind, Expr, ExprData, FileItem,
     GenerateLoop, Instantiation, IntegerTypeKind, MemberData, ModuleData, ModulePortDirection,
-    StatementData, TypeData, UnaryOp, VastAlwaysBase, VastDataType, VastFileType,
-    VastStatementBlock,
+    PackageData, StatementData, TypeData, TypedefBody, UnaryOp, VastAlwaysBase, VastDataType,
+    VastFileType, VastStatementBlock,
 };
 
 /// Emits all file members in insertion order, with one terminating newline
@@ -20,6 +20,9 @@ pub(crate) fn emit_file(file: &VastFile) -> String {
         match item {
             FileItem::Module(module) => {
                 result.push_str(&emit_module(file, &file.ast.modules[module.0.index]));
+            }
+            FileItem::Package(package) => {
+                result.push_str(&emit_package(file, &file.ast.packages[package.0.index]));
             }
             FileItem::Include(path) => {
                 write!(result, "`include \"{path}\"").expect("writing to String cannot fail");
@@ -121,6 +124,14 @@ pub(crate) fn emit_expr(file: &VastFile, expr: Expr) -> String {
         }
         ExprData::ArrayAssignmentPattern(elements) => {
             format!("'{{{}}}", join_expressions(file, elements))
+        }
+        ExprData::NamedAssignmentPattern(fields) => {
+            let fields = fields
+                .iter()
+                .map(|(name, value)| format!("{name}: {}", emit_expr(file, *value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("'{{{fields}}}")
         }
         ExprData::WidthCast { width, value } => emit_width_cast(file, *width, *value),
         ExprData::TypeCast { data_type, value } => emit_data_type_cast(file, *data_type, *value),
@@ -425,6 +436,59 @@ fn emit_module(file: &VastFile, module: &ModuleData) -> String {
     result
 }
 
+/// Emits a package header and its ordered members.
+fn emit_package(file: &VastFile, package: &PackageData) -> String {
+    let mut result = format!("package {};\n", package.name);
+    for member in &package.members {
+        result.push_str(&indent(&emit_member(file, member)));
+        result.push('\n');
+    }
+    result.push_str("endpackage");
+    result
+}
+
+/// Emits a type as it appears without an identifier, such as an enum base.
+fn emit_anonymous_type(file: &VastFile, data_type: VastDataType) -> String {
+    let kind = parameter_data_kind(file, data_type);
+    emit_declaration_without_semicolon(file, kind, data_type, "")
+        .trim_end()
+        .to_owned()
+}
+
+/// Emits one `typedef` member.
+fn emit_typedef(file: &VastFile, name: &str, body: &TypedefBody) -> String {
+    match body {
+        TypedefBody::Type(data_type) => {
+            let kind = parameter_data_kind(file, *data_type);
+            format!(
+                "typedef {};",
+                emit_declaration_without_semicolon(file, kind, *data_type, name)
+            )
+        }
+        TypedefBody::Struct(fields) => {
+            let mut result = String::from("typedef struct packed {\n");
+            for (field, data_type) in fields {
+                let kind = parameter_data_kind(file, *data_type);
+                let declaration = emit_declaration_without_semicolon(file, kind, *data_type, field);
+                writeln!(result, "  {declaration};").expect("writing to String cannot fail");
+            }
+            write!(result, "}} {name};").expect("writing to String cannot fail");
+            result
+        }
+        TypedefBody::Enum { base, variants } => {
+            let variants = variants
+                .iter()
+                .map(|(variant, value)| format!("  {variant} = {}", emit_expr(file, *value)))
+                .collect::<Vec<_>>()
+                .join(",\n");
+            format!(
+                "typedef enum {} {{\n{variants}\n}} {name};",
+                emit_anonymous_type(file, *base)
+            )
+        }
+    }
+}
+
 /// Chooses the complete declaration kind corresponding to a parameter type.
 fn parameter_data_kind(file: &VastFile, data_type: VastDataType) -> DataKind {
     match &file.ast.data_types[data_type.0.index] {
@@ -488,6 +552,7 @@ fn emit_member(file: &VastFile, member: &MemberData) -> String {
         MemberData::Comment(text) => emit_comment(text),
         MemberData::BlankLine => String::new(),
         MemberData::Inline(text) => text.clone(),
+        MemberData::Typedef { name, body } => emit_typedef(file, name, body),
         MemberData::Macro { expr, semicolon } => {
             let suffix = if *semicolon { ";" } else { "" };
             format!("{}{suffix}", emit_expr(file, *expr))
