@@ -14,7 +14,7 @@ A FlooNoC link is six typed array elements, `floo_{req,rsp,wide}_{o,i}[d]`: each
 1. **Typed members.** A member is a name and a `PortSlice` that keeps its typed selection (`floo_req_o[1]` is the element, not bits `[N:M]`). Whole-port members created by the existing constructors are typed whenever their port is.
 1. **Direction comes from the port.** A member is keyed by `(name, direction)`; a name may appear twice, once per direction. No roles, modports or name-pairing patterns (`_tx`/`_rx` regexes).
 1. **Direction-aware operations** are connect, export and tie-off. The other upstream interface operations keep working on interfaces with unique names and reject the others with a diagnostic.
-1. **Membership is model data.** Recording it in the structural snapshot belongs to #6; the explorer to #8.
+1. **Membership is model data.** Recording it in the structural snapshot belongs to #45; the explorer to #8.
 
 ## Model
 
@@ -104,4 +104,4 @@ Nothing new. Interface operations expand into the same typed connections the han
 
 ## Out of scope
 
-Direction support for the other upstream interface operations (pipelined links, feedthroughs, crossovers); bundles in the snapshot (#6) and explorer (#8); deriving bundles automatically from port names or array dimensions; SystemVerilog interface ports (declined in [typed specialization](typed-specialization.md#systemverilog-interface-ports)).
+Direction support for the other upstream interface operations (pipelined links, feedthroughs, crossovers); bundles in the snapshot (#45) and explorer (#8); deriving bundles automatically from port names or array dimensions; SystemVerilog interface ports (declined in [typed specialization](typed-specialization.md#systemverilog-interface-ports)).

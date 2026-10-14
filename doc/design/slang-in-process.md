@@ -219,6 +219,6 @@ Import time and peak memory of the big FlooNoC 2x2 mesh (`cargo test --release -
 
 - General Rust bindings for Slang.
 - Linking a prebuilt Slang library (decision 6).
-- A command line tool; whether the explorer (#8) needs a small serving binary is open on #9.
+- A command line tool; whether the explorer needs a small serving binary is decided with it (#8).
 - Python bindings; the static, position-independent library is the only preparation.
 - Prebuilt Slang artifacts published by this project.
