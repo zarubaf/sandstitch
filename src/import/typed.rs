@@ -431,6 +431,7 @@ pub(crate) fn elaborate_definition(
         extra_arguments: &extra_arguments,
         ..*cfg
     };
+    crate::import::count_slang_run();
     slang_rs::run_slang_keep_design(&cfg.to_slang_config()).ok()
 }
 

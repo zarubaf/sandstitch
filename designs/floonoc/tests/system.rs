@@ -587,6 +587,12 @@ fn configurations_exercise_routing() {
             .max()
             .unwrap();
         assert!(far >= 2, "{}: farthest core at distance {far}", cfg.name);
+        // Every core has its own seed, so its traffic is distinct.
+        let mut seeds: Vec<u32> = spec.cores().iter().map(|&(_, _, t)| t.seed).collect();
+        let cores = seeds.len();
+        seeds.sort();
+        seeds.dedup();
+        assert_eq!(seeds.len(), cores, "{}: seeds repeat", cfg.name);
         // Every route crosses at least two routers: no core sits at its
         // memory's router.
         assert!(

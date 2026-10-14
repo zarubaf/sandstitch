@@ -212,7 +212,7 @@ pub(crate) fn sys_pkg_name(cfg: &FlooConfig) -> String {
 }
 
 /// The name of the base address constant of the memory at (`x`, `y`).
-pub fn mem_base_name(x: usize, y: usize) -> String {
+pub(crate) fn mem_base_name(x: usize, y: usize) -> String {
     format!("MemBase_x{x}_y{y}")
 }
 
@@ -230,7 +230,7 @@ pub fn window_base(cfg: &FlooConfig, x: usize, y: usize) -> u32 {
 /// The prefix of the core-side AXI types of a tile with `n` cores
 /// (`<prefix>_req_t`, `<prefix>_rsp_t`, `<prefix>_<ch>_chan_t`,
 /// `<prefix>_id_t`).
-pub fn core_axi(n: usize) -> String {
+pub(crate) fn core_axi(n: usize) -> String {
     format!("core{n}")
 }
 

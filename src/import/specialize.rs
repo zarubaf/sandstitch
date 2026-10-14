@@ -582,6 +582,7 @@ fn definition(
 /// Whether Slang parses the sources of `import` without errors.
 fn parses(import: &VerilogImport) -> bool {
     import.with_config(&[], &[], &[], |cfg| {
+        crate::import::count_slang_run();
         slang_rs::check_slang(&cfg.to_slang_config()).is_ok()
     })
 }
@@ -787,6 +788,7 @@ fn elaborate(
     ELABORATIONS.with(|count| count.set(count.get() + 1));
     let output = import
         .with_config(&[&top], &[path], &extra_arguments, |cfg| {
+            crate::import::count_slang_run();
             slang_rs::run_slang(&cfg.to_slang_config())
         })
         .map_err(|e| {

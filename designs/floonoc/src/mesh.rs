@@ -3,6 +3,7 @@
 //! An X×Y mesh of `floo_nw_router` with XY routing and the endpoints at its
 //! local ports.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use topstitch::{IO, ModDef, ModInst};
@@ -80,13 +81,32 @@ pub fn mesh_name(cfg: &FlooConfig, spec: &MeshSpec) -> String {
 /// [`MeshSpec::check`], a package cannot be written or an import fails.
 #[track_caller]
 pub fn mesh(cfg: &FlooConfig, spec: &MeshSpec, out_dir: &Path) -> ModDef {
+    mesh_with_fifo_depths(cfg, spec, out_dir, |_, _| {
+        (cfg.in_fifo_depth, cfg.out_fifo_depth)
+    })
+}
+
+/// [`mesh`] whose router (`x`, `y`) has the input and output FIFO depths
+/// `depths(x, y)` instead of those of `cfg`, so a router with distinct
+/// depths is a distinct specialization. For measurements; a mesh
+/// of one router configuration is [`mesh`].
+///
+/// Panics as [`mesh`] does.
+#[doc(hidden)]
+#[track_caller]
+pub fn mesh_with_fifo_depths(
+    cfg: &FlooConfig,
+    spec: &MeshSpec,
+    out_dir: &Path,
+    depths: impl Fn(usize, usize) -> (u32, u32),
+) -> ModDef {
     if let Err(e) = cfg.validate() {
         panic!("invalid FlooNoC configuration: {e}");
     }
     if let Err(e) = spec.check(cfg) {
         panic!("invalid mesh: {e}");
     }
-    let router = router(cfg, out_dir).unwrap_or_else(|e| panic!("{e}"));
+    let mut routers_by_depth: HashMap<(u32, u32), ModDef> = HashMap::new();
     let sys = (!spec.cores().is_empty()).then(|| sys_pkg(cfg, spec));
     let memory = (!spec.memories().is_empty())
         .then(|| memory_tile(cfg, &format!("{}_memory", cfg.name), out_dir));
@@ -108,7 +128,16 @@ pub fn mesh(cfg: &FlooConfig, spec: &MeshSpec, out_dir: &Path) -> ModDef {
     for x in 0..nx {
         let mut column = Vec::new();
         for y in 0..ny {
-            let r = top.instantiate(&router, Some(&format!("i_router_x{x}_y{y}")), None);
+            let depth = depths(x, y);
+            let def = routers_by_depth.entry(depth).or_insert_with(|| {
+                let cfg = FlooConfig {
+                    in_fifo_depth: depth.0,
+                    out_fifo_depth: depth.1,
+                    ..cfg.clone()
+                };
+                router(&cfg, out_dir).unwrap_or_else(|e| panic!("{e}"))
+            });
+            let r = top.instantiate(def, Some(&format!("i_router_x{x}_y{y}")), None);
             clk.connect(&r.get_port("clk_i"));
             rst.connect(&r.get_port("rst_ni"));
             test.connect(&r.get_port("test_enable_i"));

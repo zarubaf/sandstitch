@@ -14,7 +14,7 @@ use crate::{Endpoint, FlooConfig, LIBDIRS, MeshSpec, cfg_pkg, import, rtl, syste
 pub const TIMEOUT_CYCLES: u32 = 10_000;
 
 /// The name of the harness module of `cfg`: `<name>_harness`.
-pub fn harness_name(cfg: &FlooConfig) -> String {
+pub(crate) fn harness_name(cfg: &FlooConfig) -> String {
     format!("{}_harness", cfg.name)
 }
 
