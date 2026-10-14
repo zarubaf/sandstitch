@@ -144,6 +144,13 @@ Connection resolution (#6, [design](design/connection-contract.md)):
   them. Upstream panicked during emission with plain messages (the
   emitter's "Net name collision" panic is S0407) and reported cycles only
   while tracing. A connection identical to an earlier one is ignored.
+- Definitions are keyed by module name and parameter overrides. Upstream
+  panicked with "Two distinct modules with the same name" when `emit` met two
+  `ModDef`s of one name; equal definitions with one key are now emitted once
+  and different ones are diagnostic S0408 (`emit` panics with it). Designs
+  upstream accepted are now rejected: two definitions of one name with
+  different ports (opaque ones included), or an emitted `foo` next to an
+  opaque `foo` or `foo#<hash>`.
 
 Upstream tests are unchanged except: `tests/syntax/params.rs` (the clippy
 fixes above), the tests that expected connection panics in

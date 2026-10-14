@@ -42,7 +42,6 @@ impl DesignResolution {
     /// The definitions to emit (`EmitDefinitionAndDescend` and
     /// `EmitStubAndStop`), children before parents, in first-seen order, one
     /// per key.
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by the emitter (Task 3)"))]
     pub(crate) fn emitted(&self) -> &[Arc<RwLock<ModDefCore>>] {
         &self.emitted
     }

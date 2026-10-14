@@ -6,6 +6,7 @@ use crate::common::slang::{Driver, Expect, Sources};
 
 mod bit_ranges;
 mod checker;
+mod coexisting;
 mod constants;
 mod fan_out;
 mod hierarchy;
