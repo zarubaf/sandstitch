@@ -13,6 +13,7 @@ fn check_spdx_identifier(file_path: &Path) -> bool {
         || filename.ends_with(".yaml")
         || filename.ends_with(".py")
         || filename.ends_with(".sh")
+        || filename.ends_with(".nix")
     {
         "#"
     } else {
