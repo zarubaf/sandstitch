@@ -4,7 +4,7 @@ Build a reusable library for constructing hardware modules and complete SoCs fro
 
 The baseline is a hard fork of Topstitch, Slang for SystemVerilog import, and xlsynth-vast for structured RTL emission. CIRCT and LLVM are outside the baseline. The first release targets one known router and component family, with a short development loop, distributed as a Rust crate with Slang linked in.
 
-Status: milestone 1 complete (#2); milestones 2 to 5 open (#6, #7, #8, #9). Working name: Topstitch fork. The public product name remains undecided; do not adopt Archstitch, which understates the hardware construction scope. Release dates remain unset.
+Status: milestone 1 complete (#2); milestones 2 to 5 open (#6, #7, #9, #8). Working name: Topstitch fork. The public product name remains undecided; do not adopt Archstitch, which understates the hardware construction scope. Release dates remain unset.
 
 ## Product and first customer
 
@@ -26,11 +26,11 @@ A component can be an opaque RTL leaf or a generated composition. Small hardware
 
 1. Build a configuration. Resolve port widths, expand generated instances, and check connections.
 
-1. Emit integration RTL and a build manifest referencing the original leaf RTL.
+1. Emit integration RTL and a build manifest referencing the original leaf RTL, and use the generated RTL in the existing ASIC flow.
 
-1. Open the explorer, expand a tile, select an interface, and inspect its endpoints, widths, parameters, and source references.
+1. After the pilot release: open the explorer, expand a tile, select an interface, and inspect its endpoints, widths, parameters, and source references.
 
-1. Export the same information as browsable module documentation and use the generated RTL in the existing ASIC flow.
+1. After the pilot release: export the same information as browsable module documentation.
 
 The first example is a small mesh connecting repeated compute tiles and memory endpoints. A second configuration changes mesh dimensions and core count without editing emitted RTL or diagrams. Before implementation begins, select a redistributable representative router and its source configuration, then record the SystemVerilog constructs its real interface requires. Simplified core fixtures are acceptable; a fake scalar-only router interface cannot establish compatibility with the intended family.
 
@@ -40,10 +40,10 @@ The first example is a small mesh connecting repeated compute tiles and memory e
 | --- | --- |
 | Composition library | Define, import, instantiate, connect, expose ports, resolve, validate, and export |
 | Generator package | A mesh and a nested compute tile built around one known component family |
-| Command line interface | Open (#9): designs build with Cargo; whether serving the explorer needs a small binary is undecided |
-| Explorer | Hierarchy navigation, interface selection, connection tracing, search, and an inspector |
-| Documentation | Module descriptions, parameter values, interface tables, hierarchy views, and diagnostics |
-| Release package | The library crate with Slang built from vendored source, and browser assets, for the initial supported platform |
+| Command line interface | Designs build with Cargo (#9) |
+| Explorer | After the pilot release: hierarchy navigation, interface selection, connection tracing, search, and an inspector |
+| Documentation | After the pilot release: module descriptions, parameter values, interface tables, hierarchy views, and diagnostics |
+| Release package | The library crate with Slang built from vendored source, for the initial supported platform |
 
 The first release is Rust-first: designs and generators are authored in Rust against the library API and built with Cargo. Language bindings, including Python, are deferred. When added, a binding is a thin authoring API over native functionality; it must not become a separate model implementation or a broad API-design project before the core workflow works.
 
@@ -57,7 +57,7 @@ The first release is Rust-first: designs and generators are authored in Rust aga
 | Browser UI | React and TypeScript with React Flow | Hardware blocks, interface views, hierarchy navigation, and inspection |
 | Layout | ELK.js; generator-provided mesh coordinates | Layout settings and hardware-specific presentation |
 | Serialization | Serde and JSON | A small versioned structural snapshot |
-| Distribution | Cargo | The library crate with vendored Slang, and explorer assets |
+| Distribution | Cargo | The library crate with vendored Slang; explorer assets after the pilot release |
 | Language bindings (deferred) | PyO3 and Maturin for Python, when needed | A narrow binding surface over the Rust API |
 | Documentation | Existing Markdown and HTML rendering components | Templates driven by the structural snapshot |
 
@@ -80,7 +80,7 @@ flowchart TD
     M --> E["Explorer and documentation"]
 ```
 
-The fork remains the authoritative construction model. Add a read-only resolved snapshot for consumers; do not introduce a second independently mutable graph. Defining resolved connectivity is a core engineering task, not merely serialization. Where connection normalization currently happens inside emission, extract reusable resolution logic so RTL emission and explorer tracing consume the same mappings.
+The fork remains the authoritative construction model. Add a read-only resolved snapshot for consumers; do not introduce a second independently mutable graph. Defining resolved connectivity is a core engineering task, not merely serialization. Where connection normalization currently happens inside emission, extract reusable resolution logic so RTL emission and explorer tracing consume the same mappings. The snapshot and its consumers follow the pilot release (milestone 5); until then RTL emission consumes the resolution directly.
 
 The snapshot contains module definitions, instances, resolved parameters, ports and types, interface membership, connections, source references, descriptions, and stable object keys. Store topology coordinates as optional presentation hints. Keep view state separate from hardware connectivity.
 
@@ -128,7 +128,7 @@ Use the selected router's actual packages, port types, arrays, type parameters, 
 
 Existing-design structural import is a later capability. Importing hierarchy alone is insufficient to establish connectivity. That feature must also resolve instance bindings, aliases, slices, concatenations, and supported wiring expressions, with explicit unknowns outside its scope.
 
-Before writing RTL, check missing required connections, conflicting drivers, incompatible directions or widths, invalid slices, names, and hierarchy boundaries. Return structured diagnostics for ordinary design errors. Generate the RTL and documentation from the same build snapshot and record its identity in the output manifest.
+Before writing RTL, check missing required connections, conflicting drivers, incompatible directions or widths, invalid slices, names, and hierarchy boundaries. Return structured diagnostics for ordinary design errors. Generate the RTL from the resolved build and record its identity in the output manifest; documentation, once it exists, comes from the same build.
 
 Topstitch already has relevant negative validation tests and slice/bit-order emission tests. Preserve these, then add targeted tests for the fork's structural export and representative IP. [Validation tests](https://docs.rs/crate/topstitch/latest/source/tests/checks/validate.rs) · [Emission tests](https://docs.rs/crate/topstitch/latest/source/tests/emit.rs)
 
@@ -160,21 +160,21 @@ Simulation, lint, CDC/RDC, protocol verification, synthesis, and signoff remain 
 
 The proposed first supported target is Linux x86-64. Sandstitch ships as a Rust crate; language bindings follow later. Slang is compiled from pinned vendored source and linked statically, so the import does not depend on a `slang` binary on the user's `PATH`, and its JSON format, but on the exact version the crate was tested with. Pin the fork, the vendored Slang version, the Rust toolchain version, and the build requirements: GCC 11 or Clang 17, CMake 3.28 and Python 3. The C++ standard library is linked dynamically, so the minimum runtime is the libstdc++ of GCC 11 and the glibc of the oldest supported host. See [Slang in-process](design/slang-in-process.md).
 
-The first build of a design compiles Slang once (minutes); Cargo's build cache and, when installed, ccache make later builds reuse it, including across `cargo clean` and other projects. The build never downloads sources. Unsupported compilers fail with a clear message before compiling Slang. Ordinary CI caches the compiler output instead of running a separate native build job. Build browser assets only for relevant changes or releases. Whether serving the explorer needs a small binary is open (#9).
+The first build of a design compiles Slang once (minutes); Cargo's build cache and, when installed, ccache make later builds reuse it, including across `cargo clean` and other projects. The build never downloads sources. Unsupported compilers fail with a clear message before compiling Slang. Ordinary CI caches the compiler output instead of running a separate native build job. Once the explorer exists, build browser assets only for relevant changes or releases, and decide whether serving it needs a small binary.
 
-There is no LLVM/CIRCT build in the baseline. Benchmark both repeated identical specializations and unique per-router configurations. Record Slang invocation count, cold and warm import time, construction/check/export time, peak memory, cold and warm CI duration, package size, and browser loading separately. Establish regression budgets from these representative workloads before expanding scope; do not substitute an unmeasured performance promise.
+There is no LLVM/CIRCT build in the baseline. Benchmark both repeated identical specializations and unique per-router configurations. Record Slang invocation count, cold and warm import time, construction/check/export time, peak memory, cold and warm CI duration, and package size separately; add browser loading once the explorer exists. Establish regression budgets from these representative workloads before expanding scope; do not substitute an unmeasured performance promise.
 
 ## Delivery milestones
 
 | Milestone | Deliverable | Exit condition |
 | --- | --- | --- |
 | 1 Packaged real IP baseline | Pinned hard fork and dependencies, existing emitter, representative router import, and Slang linked in-process | Select the router before implementation; import its required types; emit one design containing two parameter specializations and repeated instances of each; elaborate with original RTL and verify widths, overrides, and names; import with Slang built from pinned vendored source, without an external `slang` binary |
-| 2 Resolved connection contract | Executable connection examples, read-only snapshot, provenance, and structured diagnostics | Bit mappings, fan-out, constants, open ports, and nested exposed ports have precise semantics; emission and tracing share those mappings; independent expected connections or downstream simulation catch shared normalization mistakes; two differently configured generated components coexist correctly |
+| 2 Resolved connection contract | Executable connection examples, provenance, and structured diagnostics | Bit mappings, fan-out, constants, open ports, and nested exposed ports have precise semantics; independent expected connections or downstream simulation catch shared normalization mistakes; two differently configured generated components coexist correctly |
 | 3 Working reference NoC | Mesh, nested compute tile, two system configurations, and required routing/configuration artifacts | Original RTL plus wrappers elaborate; end-to-end traffic crosses multiple routers and reaches the intended memory endpoint in both configurations; routing artifacts are recorded in the manifest; repeated and unique parameter workloads are measured |
-| 4 Explorable specification | Browser explorer and generated module documentation | A reviewer can navigate from mesh to tile with breadcrumbs, expand bundled interfaces, trace selected connections, and inspect concrete properties from the same build; both reference configurations render without per-instance manual layout; UI work starts after the connection contract passes |
-| 5 Pilot release | Packaged CLI/API, examples, compatibility policy, and measured regression budgets | The oldest supported clean environment can build a design with the documented toolchain (Rust, C++ compiler, CMake, Python 3), import, check, emit, and browse (packaging revisited in #9); representative correctness and performance checks pass |
+| 4 Pilot release | Packaged CLI/API, examples, compatibility policy, and measured regression budgets | The oldest supported clean environment can build a design with the documented toolchain (Rust, C++ compiler, CMake, Python 3), import, check, and emit (packaging revisited in #9); representative correctness and performance checks pass |
+| 5 Explorable specification | Read-only structural snapshot with tracing, browser explorer, and generated module documentation | A reviewer can navigate from mesh to tile with breadcrumbs, expand bundled interfaces, trace selected connections (RTL emission and tracing share the resolved mappings), and inspect concrete properties from the same build; both reference configurations render without per-instance manual layout |
 
-Deliver a vertical slice through import, composition, emission, and inspection before broadening component support. Do not make API freeze, general plugin design, or additional output backends prerequisites for that slice.
+Deliver a vertical slice through import, composition, checking, and emission before broadening component support. Do not make API freeze, general plugin design, or additional output backends prerequisites for that slice.
 
 Acceptance includes useful diagnostics for deliberately broken wiring, no silent unsupported-port omissions, simultaneous mixed specializations, and reproducibility from the recorded configuration. For a small design, use an independently specified connection map or distinct bit patterns in a downstream simulator, covering fan-out, a nontrivial slice/concatenation, and an exposed nested port. Agreement between JSON and RTL from the same normalization is insufficient by itself. No general RTL-comparison engine is required for this test. A fixture without implemented routing may demonstrate composition, but cannot satisfy the working-NoC milestone.
 
