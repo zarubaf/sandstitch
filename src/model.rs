@@ -11,6 +11,7 @@ pub(crate) mod io;
 pub(crate) mod metadata;
 pub(crate) mod mod_def;
 pub(crate) mod mod_inst;
+pub(crate) mod package;
 pub(crate) mod parameter;
 pub(crate) mod pipeline;
 pub(crate) mod port;

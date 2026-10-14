@@ -36,6 +36,7 @@ pub use model::io::IO;
 pub use model::metadata::{Metadata, MetadataKey, MetadataValue};
 pub use model::mod_def::{ConvertibleToModDef, ModDef};
 pub use model::mod_inst::ModInst;
+pub use model::package::{PackageDef, PackageType, PackageValue};
 pub use model::parameter::{ParameterType, ParameterValue};
 pub use model::pipeline::PipelineConfig;
 pub use model::port::Port;

@@ -640,3 +640,64 @@ endpackage
     assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
     assert_eq!(diagnostics.0[0].code, codes::S0201);
 }
+
+#[test]
+fn package_types_elaborate_with_slang() {
+    let mut pkg = PackageDef::new("cfg_pkg");
+    pkg.typedef_logic("x_bits_t", 2)
+        .typedef_struct(
+            "xy_t",
+            &[("x", PackageType::Logic(2)), ("y", PackageType::Logic(2))],
+        )
+        .typedef_enum("dir_e", 2, &[("A", 0), ("B", 1)])
+        .localparam("Count", PackageType::IntUnsigned, PackageValue::Int(7))
+        .localparam(
+            "Origin",
+            PackageType::Named("xy_t".into()),
+            PackageValue::Fields(vec![
+                ("x".into(), PackageValue::Int(1)),
+                ("y".into(), PackageValue::Int(0)),
+            ]),
+        )
+        .localparam(
+            "Start",
+            PackageType::Named("dir_e".into()),
+            PackageValue::Name("B".into()),
+        );
+    let dir = tempfile::tempdir().unwrap();
+    let pkg_path = pkg.write(dir.path()).unwrap();
+    let m_path = dir.path().join("m.sv");
+    std::fs::write(
+        &m_path,
+        "module m #(parameter type T = logic) (input T i, output T o); assign o = i; endmodule\n",
+    )
+    .unwrap();
+
+    let sources = [pkg_path.to_str().unwrap(), m_path.to_str().unwrap()];
+    let cfg = ParserConfig {
+        sources: &sources,
+        ..Default::default()
+    };
+    let m = ModDef::from_verilog_with_config("m", &cfg)
+        .try_parameterize(&[("T", pkg.ty("xy_t"))])
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(m.get_port("i").io().width(), 4);
+
+    let top = ModDef::new("top");
+    let inst = top.instantiate(&m, Some("u"), None);
+    for port in inst.get_ports(None) {
+        match port.io() {
+            IO::Input(_) => port.tieoff(0),
+            _ => port.unused(),
+        }
+    }
+    let emitted = top.emit(EmitOptions::default());
+    assert!(emitted.contains(".T(cfg_pkg::xy_t)"), "{emitted}");
+    crate::common::slang::elaborate_manifest(&top.manifest(), &emitted, "top")
+        .unwrap_or_else(|e| panic!("{emitted}\n{e}"));
+
+    let packages = extract_packages_from_verilog_file(&pkg_path, false).unwrap();
+    assert_eq!(packages["cfg_pkg"]["Count"].value, "32'd7");
+    assert_eq!(packages["cfg_pkg"]["Origin"].value, "4'b100");
+    assert_eq!(packages["cfg_pkg"]["Start"].value, "2'b1");
+}
