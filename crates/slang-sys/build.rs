@@ -68,8 +68,10 @@ fn build_vendored(manifest: &Path, out: &Path, abi: Result<support::Abi, String>
         .define("SLANG_INCLUDE_TESTS", "OFF")
         .define("SLANG_INCLUDE_INSTALL", "OFF")
         .define("SLANG_USE_MIMALLOC", "OFF")
-        // Recorded as `pic` in the manifest.
-        .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
+        .define(
+            "CMAKE_POSITION_INDEPENDENT_CODE",
+            if support::PIC { "ON" } else { "OFF" },
+        )
         .define("CMAKE_CXX_SCAN_FOR_MODULES", "OFF")
         // Slang puts its libraries in `build/<libdir>`; some distributions
         // (Nix, Fedora) default to `lib64`, but the link search path is `lib`.
@@ -167,20 +169,13 @@ fn link_svlang(lib: &Path) {
 fn current_abi(out: &Path) -> Result<support::Abi, String> {
     let compiler = cc::Build::new().cpp(true).get_compiler();
     let output = run_version(compiler.path(), "--version");
-    let id = support::identify(&output);
-    match id {
-        Some(id) => support::check_compiler(id, &output).unwrap_or_else(|e| fail(&e)),
-        None => println!(
-            "cargo:warning=unknown C++ compiler {}; Slang needs C++20 (GCC 11 or Clang 17)",
-            compiler.path().display()
-        ),
-    }
-    if id.is_none() {
+    let Some(id) = support::identify(&output) else {
         return Err(format!(
-            "unknown C++ compiler {}",
+            "unknown C++ compiler {}; Slang needs C++20 (GCC 11 or Clang 17)",
             compiler.path().display()
         ));
-    }
+    };
+    support::check_compiler(id, &output).unwrap_or_else(|e| fail(&e));
     let probe = out.join("abi_probe.cc");
     fs::write(&probe, support::PROBE).unwrap_or_else(|e| panic!("writing the probe: {e}"));
     let expanded = cc::Build::new()
@@ -202,7 +197,7 @@ fn current_abi(out: &Path) -> Result<support::Abi, String> {
         compiler_version: support::version(&output).to_string(),
         libraries,
         std: support::CXX_STD.to_string(),
-        pic: true,
+        pic: support::PIC,
         defines: support::SHIM_DEFINES
             .iter()
             .map(|d| d.to_string())

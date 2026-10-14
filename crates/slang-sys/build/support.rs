@@ -141,6 +141,10 @@ pub fn generator(cache: Option<&str>, ninja_present: bool) -> Option<String> {
 /// The C++ standard Slang and the shim are compiled with.
 pub const CXX_STD: &str = "c++20";
 
+/// Whether Slang is built as position-independent code (Python extension
+/// modules later); recorded as `pic` in the manifest.
+pub const PIC: bool = true;
+
 /// Slang's assertion setting, for the library and the shim alike.
 pub const ASSERT_DEFINE: &str = "SLANG_ASSERT_ENABLED=1";
 
@@ -179,12 +183,11 @@ pub fn prebuilt_dir(value: &std::ffi::OsStr) -> Result<PathBuf, String> {
 pub const MANIFEST: &str = "slang-prebuilt.toml";
 
 /// The short name of a compiler family, as the manifest records it.
-pub fn compiler_name(id: Option<CompilerId>) -> &'static str {
+pub fn compiler_name(id: CompilerId) -> &'static str {
     match id {
-        Some(CompilerId::Gcc) => "gcc",
-        Some(CompilerId::Clang) => "clang",
-        Some(CompilerId::AppleClang) => "apple-clang",
-        None => "unknown",
+        CompilerId::Gcc => "gcc",
+        CompilerId::Clang => "clang",
+        CompilerId::AppleClang => "apple-clang",
     }
 }
 
