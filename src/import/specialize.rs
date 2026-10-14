@@ -18,7 +18,7 @@ use std::sync::LazyLock;
 use crate::diagnostic::codes;
 use crate::import::parser::{VerilogImport, parser_param_to_param};
 use crate::import::typed::{self, ImportedPort};
-use crate::model::parameter::{ParameterType, ParameterValue};
+use crate::model::parameter::{ParameterSpec, ParameterType, ParameterValue};
 use crate::{Diagnostics, ImportError, Label, Span};
 use slang_rs::ParameterKind;
 
@@ -151,6 +151,38 @@ fn pre_key(
     }
     hasher.import(import);
     hasher.finish()
+}
+
+/// A short hash of parameter overrides, independent of their order: the
+/// first 12 hex digits of a digest over each override's name, kind, value and
+/// (for integers) signedness and width. Identifies a definition that has
+/// overrides but no specialization key (a plain import with `-G`).
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "read by the design pass (Task 2)")
+)]
+pub(crate) fn overrides_short_hash(parameters: &IndexMap<String, ParameterSpec>) -> String {
+    let mut hasher = KeyHasher::new("sandstitch-overrides");
+    let mut sorted: Vec<_> = parameters.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    hasher.len(sorted.len());
+    for (name, spec) in sorted {
+        let (kind, text) = match spec {
+            ParameterSpec::Integer { value, .. } => ("integer", value.to_string()),
+            ParameterSpec::String(value) => ("string", value.clone()),
+            ParameterSpec::Type(name) => ("type", name.clone()),
+            ParameterSpec::Expr(name) => ("expr", name.clone()),
+        };
+        hasher.str(name);
+        hasher.str(kind);
+        hasher.str(&text);
+        if let ParameterSpec::Integer { ty, .. } = spec {
+            // The emitter prints `bits[{width}]:value`.
+            hasher.bool(ty.signed());
+            hasher.len(ty.width());
+        }
+    }
+    short_hash(&hasher.finish())
 }
 
 /// The files an elaboration read, sorted by path, with their content hashes
