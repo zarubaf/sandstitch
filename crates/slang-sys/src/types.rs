@@ -301,6 +301,10 @@ impl Parameter {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Package {
     pub name: String,
+    /// The absolute path of the top-level file declaring the package: for a
+    /// package in an included file, the file that includes it. Empty if
+    /// Slang reports no location.
+    pub file: String,
     pub parameters: HashMap<String, Parameter>,
 }
 

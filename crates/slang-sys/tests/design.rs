@@ -971,3 +971,68 @@ fn signals_of_child_and_generate_blocks() {
         [signal("o", "logic", 1), signal("t", "logic", 1)]
     );
 }
+
+/// The package files of a design elaborated from `sources` in a fresh
+/// directory holding `files` (name, text), as (package, file name relative
+/// to the directory).
+fn package_files(files: &[(&str, &str)], sources: &[&str]) -> Vec<(String, String)> {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, text) in files {
+        std::fs::write(dir.path().join(name), text).unwrap();
+    }
+    let mut args: Vec<String> = sources
+        .iter()
+        .map(|name| dir.path().join(name).to_str().unwrap().to_string())
+        .collect();
+    args.push("--top".to_string());
+    args.push("m".to_string());
+    let r = run(&Request {
+        args,
+        stage: Stage::Elaborate,
+        design: DesignQuery::Structure,
+    })
+    .unwrap();
+    assert!(r.ok, "{}", r.rendered);
+    let design = r.design.expect("a design");
+    let root = dir.path().to_str().unwrap().to_string();
+    let mut found: Vec<(String, String)> = design
+        .package_files()
+        .map(|(name, file)| {
+            let relative = file
+                .strip_prefix(&root)
+                .unwrap_or_else(|| panic!("{file} is not under {root}"))
+                .trim_start_matches('/');
+            (name.to_string(), relative.to_string())
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn package_reports_its_file() {
+    let found = package_files(
+        &[
+            ("a.sv", "package a; endpackage\n"),
+            ("b.sv", "package b; endpackage\n"),
+            ("m.sv", "module m; endmodule\n"),
+        ],
+        &["a.sv", "b.sv", "m.sv"],
+    );
+    assert_eq!(
+        found,
+        [("a".into(), "a.sv".into()), ("b".into(), "b.sv".into())]
+    );
+}
+
+#[test]
+fn included_package_maps_to_its_source() {
+    let found = package_files(
+        &[
+            ("p.svh", "package p; localparam int X = 1; endpackage\n"),
+            ("top.sv", "`include \"p.svh\"\nmodule m; endmodule\n"),
+        ],
+        &["top.sv"],
+    );
+    assert_eq!(found, [("p".into(), "top.sv".into())]);
+}

@@ -106,6 +106,7 @@ mod tests {
             "mypkg".to_string(),
             Package {
                 name: "mypkg".to_string(),
+                file: verilog.path().to_str().unwrap().to_string(),
                 parameters: HashMap::from([(
                     "myparam".to_string(),
                     Parameter {

@@ -62,9 +62,30 @@ pub(crate) struct VerilogImport {
     /// [`ModDef::from_verilog`]; it is deleted once the import returns, so
     /// the build manifest leaves it out.
     pub(crate) inline: bool,
+    /// The packages the elaboration declares, specializations included, each
+    /// with the absolute top-level file declaring it (a package in an
+    /// included header maps to the file including it), sorted by name.
+    /// Normalized like `sources`.
+    pub(crate) package_files: IndexMap<String, String>,
+}
+
+/// The package files of `design`, sorted by package name.
+pub(crate) fn package_files(design: &slang_rs::Design) -> IndexMap<String, String> {
+    let mut files: Vec<(&str, &str)> = design.package_files().collect();
+    files.sort();
+    files
+        .into_iter()
+        .map(|(name, file)| (name.to_string(), file.to_string()))
+        .collect()
 }
 
 impl VerilogImport {
+    /// These sources, with the package files of `design`.
+    pub(crate) fn with_package_files(mut self, design: &slang_rs::Design) -> Self {
+        self.package_files = package_files(design);
+        self
+    }
+
     /// Calls `f` with a parser configuration for these sources, the given
     /// `tops`, `extra_sources` appended to the sources and `extra_arguments`
     /// appended to the extra arguments.
@@ -129,6 +150,7 @@ impl VerilogImport {
             parameters: owned_pairs(cfg.parameters),
             specialization: None,
             inline: false,
+            package_files: IndexMap::new(),
         }
     }
 }
@@ -173,6 +195,7 @@ impl ModDef {
         imported_ports: &[ImportedPort],
         parameters: IndexMap<String, ParameterSpec>,
         cfg: &ParserConfig,
+        design: &slang_rs::Design,
     ) -> ModDef {
         let mod_def = ModDef {
             core: Arc::new(RwLock::new(ModDefCore {
@@ -185,7 +208,7 @@ impl ModDef {
                 interfaces: IndexMap::new(),
                 instances: IndexMap::new(),
                 usage: Usage::EmitNothingAndStop,
-                verilog_import: Some(VerilogImport::new(cfg)),
+                verilog_import: Some(VerilogImport::new(cfg).with_package_files(design)),
                 parameters,
                 mod_inst_connections: IndexMap::new(),
                 mod_def_connections: IndexMap::new(),
@@ -348,7 +371,13 @@ impl ModDef {
         let parameters =
             plain_import_parameters(name, &owned_pairs(cfg.parameters), &output.design, &caller)?;
 
-        let mod_def = Self::mod_def_from_imported_ports(name, &imported_ports, parameters, cfg);
+        let mod_def = Self::mod_def_from_imported_ports(
+            name,
+            &imported_ports,
+            parameters,
+            cfg,
+            &output.design,
+        );
 
         if cfg.include_hierarchy {
             let mod_def_with_hierarchy = mod_def.stub(name);
@@ -385,7 +414,13 @@ impl ModDef {
                 let parameters =
                     plain_import_parameters(&name, &parameters, &output.design, &caller)
                         .unwrap_or_else(|e| panic!("{e}"));
-                Self::mod_def_from_imported_ports(&name, &imported_ports, parameters, cfg)
+                Self::mod_def_from_imported_ports(
+                    &name,
+                    &imported_ports,
+                    parameters,
+                    cfg,
+                    &output.design,
+                )
             })
             .collect();
 

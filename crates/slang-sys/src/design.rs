@@ -170,6 +170,14 @@ impl Design {
         self.body(path).map(|b| b.signals.as_slice())
     }
 
+    /// The name and absolute top-level file of each package, without cloning
+    /// the packages.
+    pub fn package_files(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.packages
+            .values()
+            .map(|package| (package.name.as_str(), package.file.as_str()))
+    }
+
     /// The packages of the compilation units by name, each with its value
     /// parameters and type aliases.
     pub fn packages(&self) -> HashMap<String, Package> {
@@ -592,6 +600,11 @@ pub(crate) fn from_ffi(tables: ffi::FfiDesign, cwd: &Path) -> Result<Design, Err
             package.name.clone(),
             Package {
                 name: package.name.clone(),
+                file: if package.file.is_empty() || package.file.starts_with('<') {
+                    package.file.clone()
+                } else {
+                    absolute_path(cwd, &package.file)
+                },
                 parameters,
             },
         );
@@ -745,6 +758,7 @@ mod tests {
                     value: "v".into(),
                     ty,
                 }],
+                ..Default::default()
             }],
             ..Default::default()
         }

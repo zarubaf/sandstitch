@@ -241,9 +241,23 @@ public:
     }
 
 private:
+    /// The file of the top-level buffer a symbol is declared in: for a
+    /// declaration in an included file, the file that includes it.
+    rust::String topLevelFile(const Symbol& symbol) const {
+        if (!symbol.location || symbol.location == SourceLocation::NoLocation)
+            return rust::String();
+        auto loc = sourceManager.getFullyOriginalLoc(symbol.location);
+        for (auto included = sourceManager.getIncludedFrom(loc.buffer());
+             included && included != SourceLocation::NoLocation;
+             included = sourceManager.getIncludedFrom(loc.buffer()))
+            loc = sourceManager.getFullyOriginalLoc(included);
+        return str(sourceManager.getRawFileName(loc.buffer()));
+    }
+
     FfiPackage package(const PackageSymbol& symbol) {
         FfiPackage package{};
         package.name = str(symbol.name);
+        package.file = topLevelFile(symbol);
         for (auto& member : symbol.members()) {
             FfiPackageParameter parameter{};
             parameter.name = str(member.name);
