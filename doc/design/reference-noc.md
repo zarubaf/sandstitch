@@ -63,14 +63,32 @@ The working reference NoC of milestone 3 (#7). Rust generators build a mesh of F
     It runs the binary and requires `PASS`. Verilator comes from `PATH`, and `nix develop` provides it. When it is missing, the test fails if `CI` is set and otherwise prints why it skipped.
 11. **Measurements.**
     - `topstitch::slang_invocations()` counts every Slang run in the process. The test-only per-thread elaboration counter stays.
-    - `designs/floonoc/tests/bench.rs` (replacing `import_cost`) has one `#[ignore]` test per configuration and workload, each run in its own process. A test reports:
+    - `designs/floonoc/tests/bench.rs` has one `#[ignore]` test per configuration and workload, each run in its own process. A test reports:
       - Slang runs, as a delta;
       - the first (cold) and second (warm) build;
       - check and emit time;
       - peak RSS;
       - the number of distinct router, chimney and core specializations.
-    - In the repeated workload all routers share one configuration and all cores one seed. In the unique workload every router gets distinct FIFO depths and every core a distinct seed.
+    - In the repeated workload all routers share one configuration and all cores one seed. In the unique workload every router gets distinct FIFO depths (through `mesh_with_fifo_depths`) and every core a distinct seed.
 
 ## Measurements
 
-Recorded from `designs/floonoc/tests/bench.rs` when #7 lands.
+Recorded on 2026-10-14 on 16 hardware threads (`nproc`), AMD Ryzen 7 7700 8-Core Processor, in `--release`, with `cargo test -p floonoc --release --test bench -- --ignored --exact <name> --nocapture`, one process per row.
+
+The mesh is built twice in one process into the same directory. The first build is cold; the second is warm, so every specialization is cached. Check and emit time the finished mesh. Slang runs are counted by `slang_invocations()`. Peak RSS is `VmHWM` at the end of the process.
+
+| Test | Cold build | Slang runs (cold) | Warm build | Slang runs (warm) | Check | Emit | Peak RSS | Router / chimney / core specializations |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `small_repeated` | 178 ms | 10 | 9.5 ms | 0 | 7.5 ms | 28 ms | 38 MiB | 1 / 2 / 1 |
+| `small_unique` | 288 ms | 15 | 13 ms | 0 | 7.4 ms | 28 ms | 40 MiB | 4 / 2 / 3 |
+| `large_repeated` | 212 ms | 14 | 21 ms | 0 | 18 ms | 73 ms | 44 MiB | 1 / 2 / 2 |
+| `large_unique` | 532 ms | 34 | 33 ms | 0 | 19 ms | 74 ms | 49 MiB | 9 / 2 / 14 |
+
+The two chimney specializations are the compute and memory roles. In the repeated workload the large configuration has two core specializations, one per memory window, since every core has the same seed but the cores of a tile target different memories.
+
+Verilator (`small_system_passes_traffic`, `large_system_passes_traffic`, with the flags of decision 10):
+
+| Harness | Build | Run | Result |
+| --- | --- | --- | --- |
+| small (3 cores) | 11.8 s | 10 ms | `PASS` after 42 cycles |
+| large (14 cores) | 23.1 s | 10 ms | `PASS` after 87 cycles |

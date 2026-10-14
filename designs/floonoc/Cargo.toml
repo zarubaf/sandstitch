@@ -10,6 +10,5 @@ description = "FlooNoC router, mesh and tile design package built on the sandsti
 topstitch = { path = "../.." }
 
 [dev-dependencies]
-libc = "0.2"
 slang-rs = { path = "../../crates/slang-rs" }
 tempfile = "3"

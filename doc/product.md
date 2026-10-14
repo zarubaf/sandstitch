@@ -4,7 +4,7 @@ Build a reusable library for constructing hardware modules and complete SoCs fro
 
 The baseline is a hard fork of Topstitch, Slang for SystemVerilog import, and xlsynth-vast for structured RTL emission. CIRCT and LLVM are outside the baseline. The first release targets one known router and component family, with a short development loop, distributed as a Rust crate with Slang linked in.
 
-Status: milestone 1 complete (#2); milestones 2 to 5 open (#6, #7, #9, #8). Working name: Topstitch fork. The public product name remains undecided; do not adopt Archstitch, which understates the hardware construction scope. Release dates remain unset.
+Status: milestones 1 and 3 complete (#2, #7); milestones 2, 4 and 5 open (#6, #9, #8). Working name: Topstitch fork. The public product name remains undecided; do not adopt Archstitch, which understates the hardware construction scope. Release dates remain unset.
 
 ## Product and first customer
 

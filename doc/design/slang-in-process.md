@@ -213,7 +213,7 @@ Every query reads the snapshot. Sandstitch's callers (`src/import/typed.rs`, `sr
 
 ### Measurement
 
-Import time and peak memory of the big FlooNoC 2x2 mesh (`cargo test --release -p floonoc --test bench -- --ignored --nocapture`, median of 3) are recorded on #18, against 457 ms elapsed and 97856 KiB own peak after step 1.
+Import time, Slang runs and peak memory of the reference NoC configurations are in the "Measurements" section of [reference-noc.md](reference-noc.md). Run one row per process: `cargo test -p floonoc --release --test bench -- --ignored --exact <name> --nocapture`.
 
 ## Out of scope
 

@@ -68,7 +68,7 @@ pub fn large() -> (FlooConfig, MeshSpec) {
 }
 
 /// The name of the system module of `cfg`: `<name>_system`.
-pub fn system_name(cfg: &FlooConfig) -> String {
+pub(crate) fn system_name(cfg: &FlooConfig) -> String {
     format!("{}_system", cfg.name)
 }
 

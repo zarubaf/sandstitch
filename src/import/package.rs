@@ -48,6 +48,7 @@ pub fn extract_packages_from_verilog(
 pub fn extract_packages_with_config(
     cfg: &ParserConfig,
 ) -> Result<HashMap<String, Package>, Box<dyn Error>> {
+    crate::import::count_slang_run();
     let pkgs = slang_rs::extract_packages(&cfg.to_slang_config())?;
 
     Ok(pkgs

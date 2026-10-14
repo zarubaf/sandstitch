@@ -50,6 +50,7 @@ pub use import::package::{
     extract_packages_from_verilog_files, extract_packages_with_config,
 };
 pub use import::parser_cfg::ParserConfig;
+pub use import::slang_invocations;
 pub use import::specialize::SpecializationKey;
 
 // Emission.

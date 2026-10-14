@@ -353,6 +353,7 @@ impl ModDef {
         cfg: &ParserConfig,
     ) -> Result<Self, ImportError> {
         let caller = Span::caller();
+        crate::import::count_slang_run();
         let output = match slang_rs::run_slang(&cfg.to_slang_config()) {
             Ok(output) => output,
             Err(e) => {
@@ -397,6 +398,7 @@ impl ModDef {
     pub fn all_from_verilog_with_config(cfg: &ParserConfig) -> Vec<Self> {
         let caller = Span::caller();
         let parameters = owned_pairs(cfg.parameters);
+        crate::import::count_slang_run();
         let output = slang_rs::run_slang(&cfg.to_slang_config()).unwrap();
         // Every top-level module (with or without interface ports), sorted by
         // name for a deterministic order.

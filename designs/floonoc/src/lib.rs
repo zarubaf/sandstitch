@@ -23,13 +23,10 @@ use std::path::{Path, PathBuf};
 use topstitch::{ImportError, ModDef, PackageDef, ParameterValue, ParserConfig};
 
 pub use config::{AxiCfg, FlooConfig, VcImpl, WideRwDecouple, cfg_pkg};
-pub use harness::{TIMEOUT_CYCLES, harness, harness_name, mem_check, tb_driver};
-pub use mesh::{Direction, mesh, mesh_2x2, mesh_name, tie_node_id};
-pub use spec::{
-    Endpoint, MeshSpec, Target, core_axi, core_id_width, mem_base_name, sys_pkg, window_base,
-    window_name,
-};
-pub use system::{large, small, system, system_name};
+pub use harness::{TIMEOUT_CYCLES, harness, mem_check, tb_driver};
+pub use mesh::{Direction, mesh, mesh_2x2, mesh_name, mesh_with_fifo_depths, tie_node_id};
+pub use spec::{Endpoint, MeshSpec, Target, core_id_width, sys_pkg, window_base, window_name};
+pub use system::{large, small, system};
 pub use tile::{ChimneyRole, LINK, chimney, compute_tile, memory_tile};
 
 /// `third_party/` of this repository.
