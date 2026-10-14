@@ -71,7 +71,7 @@ pub fn check_compiler(id: CompilerId, version_output: &str) -> Result<(), String
         Some(found) if found >= minimum => Ok(()),
         _ => Err(format!(
             "slang-sys builds Slang, which needs C++20 with {name} or newer; found `{first}` \
-             (run inside `nix develop`)"
+             (install it, or use `nix develop github:zarubaf/sandstitch`)"
         )),
     }
 }
@@ -86,7 +86,7 @@ pub fn check_cmake(version_output: &str) -> Result<(), String> {
         (Some(major), Some(minor)) if (major, minor) >= (3, 28) => Ok(()),
         _ => Err(format!(
             "slang-sys needs CMake 3.28 or newer to build Slang; found `{first}` \
-             (run inside `nix develop`)"
+             (install it, or use `nix develop github:zarubaf/sandstitch`)"
         )),
     }
 }
@@ -98,7 +98,7 @@ pub fn check_python(found: bool) -> Result<(), String> {
     } else {
         Err(
             "slang-sys needs Python 3 to build Slang (it generates sources); \
-             none found on PATH (run inside `nix develop`)"
+             none found on PATH (install it, or use `nix develop github:zarubaf/sandstitch`)"
                 .to_string(),
         )
     }

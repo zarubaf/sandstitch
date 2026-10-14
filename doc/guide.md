@@ -1,10 +1,12 @@
 # Getting started
 
-Sandstitch is a Rust library: a design is a Rust program that imports SystemVerilog modules, instantiates and connects them, checks the result and emits SystemVerilog. The library crate is named `topstitch`. The supported environment is `nix develop`; see the [compatibility policy](compatibility.md).
+Sandstitch is a Rust library: a design is a Rust program that imports SystemVerilog modules, instantiates and connects them, checks the result and emits SystemVerilog. The library crate is named `topstitch`. See the [compatibility policy](compatibility.md) for what is tested.
 
 ## Environment
 
-From your own project, enter the environment pinned by the release:
+Sandstitch imports SystemVerilog with [Slang](https://github.com/MikePopoloski/slang), a C++ compiler that is vendored and built from source on the first build (minutes). Building the library therefore needs stable Rust (each release is tested with the pinned toolchain; v0.1.0 with 1.98.1), a C++20 compiler (GCC 11+ or Clang 17+), CMake 3.28+ and Python 3; `build.rs` checks the C++ compiler, CMake and Python and names what is missing. ccache, if installed, makes later builds instant.
+
+To use exactly the toolchain a release was tested with, enter its pinned Nix environment from your own project:
 
 ```sh
 nix develop github:zarubaf/sandstitch/v0.1.0
@@ -12,7 +14,7 @@ nix develop github:zarubaf/sandstitch/v0.1.0
 
 Flakes must be enabled: either pass `--extra-experimental-features 'nix-command flakes'` to `nix`, or set `experimental-features = nix-command flakes` in `nix.conf`.
 
-To work on Sandstitch itself, clone the repository:
+To work on Sandstitch itself, clone the repository and use its development environment:
 
 ```sh
 git clone https://github.com/zarubaf/sandstitch
@@ -20,18 +22,18 @@ cd sandstitch
 nix develop
 ```
 
-The shell provides Rust, a C++ compiler, CMake, Python 3, ccache and Verilator, pinned by `flake.lock`. Slang is vendored and linked in-process. The first build compiles it (minutes); ccache makes later builds instant.
+The shell provides Rust, a C++ compiler, CMake, Python 3, ccache and Verilator, pinned by `flake.lock`; CI uses the same shell.
 
 ## Depending on the library
 
-The crates are not published to crates.io. Depend on a tag through Cargo's git source, inside `nix develop`:
+The crates are not published to crates.io. Depend on a tag through Cargo's git source:
 
 ```toml
 [dependencies]
 topstitch = { git = "https://github.com/zarubaf/sandstitch", tag = "v0.1.0" }
 ```
 
-Use the package name `topstitch`; the repository is named Sandstitch. Pin the Nix environment of the same tag (its `flake.lock`) for your own builds.
+Use the package name `topstitch`; the repository is named Sandstitch.
 
 ## Walk-through
 

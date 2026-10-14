@@ -7,15 +7,17 @@ Sandstitch is a Rust library for building hardware modules and complete SoCs fro
 - **Hand-written integration RTL.** Top levels, wrappers and meshes, and the SystemVerilog packages they configure (`PackageDef`), are generated from the model. Only the imported IP is hand-written.
 - **Wiring mistakes found late.** Undriven, unconnected or multiply driven bits, type mismatches and net name clashes are reported as coded diagnostics that point at the Rust line that made the connection. Width mismatches are rejected at the `connect` call itself.
 - **Parameterized IP.** Slang runs in-process and elaborates each configuration, so ports keep their real widths and struct, union and enum types, and several specializations of one module coexist in one design.
-- **Reproducible builds.** The manifest lists exactly the sources, include directories and packages the emitted RTL needs. The toolchain is pinned with Nix.
+- **Reproducible builds.** The manifest lists exactly the sources, include directories and packages the emitted RTL needs. Development and CI use a toolchain pinned with Nix.
 
 ## Using it
 
-Add the library as a git dependency (the package is named `topstitch`) and build inside the pinned environment, `nix develop github:zarubaf/sandstitch/v0.1.0`:
+Add the library as a git dependency (the package is named `topstitch`):
 
 ```toml
 topstitch = { git = "https://github.com/zarubaf/sandstitch", tag = "v0.1.0" }
 ```
+
+Sandstitch uses [Slang](https://github.com/MikePopoloski/slang), a C++ SystemVerilog compiler, to import IP. Slang is vendored and compiled from source on the first build (minutes). Building therefore needs stable Rust (each release is tested with the pinned toolchain; v0.1.0 with 1.98.1), a C++20 compiler (GCC 11+ or Clang 17+), CMake 3.28+ and Python 3. `build.rs` checks the C++ compiler, CMake and Python and says what is missing. `nix develop github:zarubaf/sandstitch/v0.1.0` is one way to get exactly the toolchain the release was tested with.
 
 ```rust
 use topstitch::{EmitOptions, ModDef};
@@ -40,6 +42,15 @@ Where to go next:
 
 ## Building
 
-`nix develop` enters the pinned environment (`flake.nix`, `flake.lock`) on x86-64 Linux. It provides Rust, a C++ compiler, CMake, Python 3, ccache and Verilator, and CI uses the same environment. Slang is vendored and runs in-process. The first build compiles it (minutes); ccache makes rebuilds instant. `cargo xtask ci` runs the repository checks.
+To work on Sandstitch itself, `nix develop` enters the pinned development environment (`flake.nix`, `flake.lock`) on x86-64 Linux. It provides Rust, a C++ compiler, CMake, Python 3, ccache and Verilator, and CI uses the same environment. Slang is vendored and runs in-process. The first build compiles it (minutes); ccache makes rebuilds instant. `cargo xtask ci` runs the repository checks.
 
-Forked from [Topstitch](https://github.com/xlsynth/topstitch) v0.100.0 (Apache-2.0), copyright its authors.
+## Relation to Topstitch
+
+Sandstitch is a hard fork of [Topstitch](https://github.com/xlsynth/topstitch) v0.100.0 (Apache-2.0, copyright its authors), taken on 2026-10-12. Topstitch's composition model and physical-design API, and its VAST emitter, are the base and are kept. The fork exists because the product needs changes that go deeper than upstream patches:
+- Slang runs in-process from vendored source, instead of an external `slang` binary and its JSON output.
+- Imported ports keep their struct, union and enum types, and specializations of one module coexist.
+- Connections go through one resolver shared by checking and emission, and errors are structured, coded diagnostics (`check`, `try_*`) instead of plain panic messages.
+- The emitted RTL comes with packages built from the model and a build manifest.
+- The public API is a smaller, explicit surface.
+
+`src/` is reorganised by concern, so upstream merges no longer apply. Upstream fixes are ported by hand. [doc/fork.md](doc/fork.md) records the base, the policy and every divergence.
