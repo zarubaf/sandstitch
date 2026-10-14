@@ -191,7 +191,6 @@ dependencies = [
  "cargo-platform",
  "semver",
  "serde",
- "serde_json",
  "thiserror",
 ]
 
@@ -1332,6 +1331,7 @@ dependencies = [
  "libc",
  "num-bigint",
  "tempfile",
+ "toml",
  "which",
 ]
 
@@ -1521,7 +1521,6 @@ dependencies = [
  "rstar",
  "rstest",
  "serde",
- "serde_json",
  "sha2",
  "slang-rs",
  "tempfile",
