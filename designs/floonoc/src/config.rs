@@ -10,6 +10,11 @@ use topstitch::{PackageDef, PackageType, PackageValue};
 const MIN_ROUTES: u32 = 5;
 const MAX_ROUTES: u32 = 6;
 
+/// The lowest coordinate address bit: each endpoint's window spans at least
+/// the 64 KiB its traffic cores address (`Seed * 64 + 64` with
+/// `Seed < 1024`).
+const MIN_ADDR_OFFSET: u32 = 16;
+
 /// `floo_pkg::wide_rw_decouple_e`: how wide reads and writes share links.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WideRwDecouple {
@@ -81,6 +86,13 @@ pub struct FlooConfig {
     pub out_fifo_depth: u32,
     pub wide_rw_decouple: WideRwDecouple,
     pub vc_impl: VcImpl,
+    /// The address bit of a destination's X coordinate (`XYAddrOffsetX`):
+    /// the network interface routes a request to the router whose
+    /// coordinates equal the address bits `[addr_offset_x +: x_bits]` and
+    /// `[addr_offset_y +: y_bits]`.
+    pub addr_offset_x: u32,
+    /// The address bit of a destination's Y coordinate (`XYAddrOffsetY`).
+    pub addr_offset_y: u32,
 }
 
 impl FlooConfig {
@@ -111,6 +123,8 @@ impl FlooConfig {
             out_fifo_depth: 2,
             wide_rw_decouple: WideRwDecouple::Phys,
             vc_impl: VcImpl::VcNaive,
+            addr_offset_x: 16,
+            addr_offset_y: 20,
         }
     }
 
@@ -119,9 +133,16 @@ impl FlooConfig {
         format!("{}_pkg", self.name)
     }
 
-    /// Checks what the package and the router need: an identifier name,
-    /// non-zero widths, byte-multiple data widths and a route count XY
-    /// routing can address.
+    /// Checks what the package, the router and the network interface need:
+    /// an identifier name, non-zero widths, byte-multiple data widths, equal
+    /// narrow and wide address widths, a route count XY routing can
+    /// address, coordinate address bits that start at bit 16 or above (so
+    /// that a traffic core's `Seed * 64` offset stays below them), do not
+    /// overlap and fit both the narrow address and 32 bits (so each
+    /// endpoint's base address is a 32-bit constant), and a virtual channel
+    /// implementation other than
+    /// [`VcImpl::VcCredit`] (FlooNoC v0.9.0's `floo_vc_arbiter` connects a
+    /// pin its `cc_credit_counter` no longer has).
     pub fn validate(&self) -> Result<(), String> {
         let mut chars = self.name.chars();
         let ident = chars
@@ -165,6 +186,51 @@ impl FlooConfig {
                 self.name, self.num_routes
             ));
         }
+        if self.narrow.addr_width != self.wide.addr_width {
+            return Err(format!(
+                "{}: narrow.addr_width {} differs from wide.addr_width {}",
+                self.name, self.narrow.addr_width, self.wide.addr_width
+            ));
+        }
+        // A traffic core writes 64 bytes at `Seed * 64` with `Seed < 1024`:
+        // the low 16 address bits belong to the window.
+        if self.addr_offset_x < MIN_ADDR_OFFSET {
+            return Err(format!(
+                "{}: addr_offset_x {} is below {MIN_ADDR_OFFSET} \
+                 (a 64 KiB window per endpoint)",
+                self.name, self.addr_offset_x
+            ));
+        }
+        if self.addr_offset_x + self.x_bits > self.addr_offset_y {
+            return Err(format!(
+                "{}: X coordinate bits {}..{} overlap the Y coordinate at bit {}",
+                self.name,
+                self.addr_offset_x,
+                self.addr_offset_x + self.x_bits,
+                self.addr_offset_y
+            ));
+        }
+        let y_end = self.addr_offset_y + self.y_bits;
+        if y_end > self.narrow.addr_width {
+            return Err(format!(
+                "{}: Y coordinate bits end at {y_end}, above narrow.addr_width {}",
+                self.name, self.narrow.addr_width
+            ));
+        }
+        if y_end > 32 {
+            return Err(format!(
+                "{}: Y coordinate bits end at {y_end}, above 32 \
+                 (endpoint base addresses are 32-bit constants)",
+                self.name
+            ));
+        }
+        if self.vc_impl == VcImpl::VcCredit {
+            return Err(format!(
+                "{}: VcCredit is unsupported: FlooNoC v0.9.0's floo_vc_arbiter \
+                 connects cc_credit_counter's former credit_init_i pin",
+                self.name
+            ));
+        }
         Ok(())
     }
 }
@@ -180,10 +246,85 @@ fn axi_cfg(axi: &AxiCfg) -> PackageValue {
     ])
 }
 
+/// `floo_pkg::route_cfg_t` for address-based XY routing without tables: the
+/// network interface reads the destination coordinates from the address
+/// bits at `addr_offset_x` and `addr_offset_y`. Every field is spelled out.
+fn route_cfg(cfg: &FlooConfig) -> PackageValue {
+    let int = |name: &str, v: u32| (name.to_string(), PackageValue::Int(v));
+    let name = |field: &str, v: &str| (field.to_string(), PackageValue::Name(v.to_string()));
+    PackageValue::Fields(vec![
+        name("RouteAlgo", "floo_pkg::XYRouting"),
+        int("UseIdTable", 0),
+        int("XYAddrOffsetX", cfg.addr_offset_x),
+        int("XYAddrOffsetY", cfg.addr_offset_y),
+        int("IdAddrOffset", 0),
+        int("NumSamRules", 0),
+        int("NumRoutes", 0),
+        name("CollectiveCfg", "floo_pkg::CollectiveDefaultCfg"),
+    ])
+}
+
+/// A narrow `floo_pkg::chimney_cfg_t`: `floo_pkg::ChimneyDefaultCfg` with
+/// the subordinate (`EnSbrPort`) and manager (`EnMgrPort`) ports chosen.
+/// `CutRsp` equals the default's, which the wide side uses.
+fn chimney_cfg(en_sbr: bool, en_mgr: bool) -> PackageValue {
+    let int = |name: &str, v: u32| (name.to_string(), PackageValue::Int(v));
+    let no_rob = |name: &str| {
+        (
+            name.to_string(),
+            PackageValue::Name("floo_pkg::NoRoB".into()),
+        )
+    };
+    PackageValue::Fields(vec![
+        int("EnSbrPort", en_sbr.into()),
+        int("EnMgrPort", en_mgr.into()),
+        int("MaxTxns", 32),
+        int("MaxUniqueIds", 1),
+        int("MaxTxnsPerId", 32),
+        no_rob("BRoBType"),
+        int("BRoBSize", 0),
+        no_rob("RRoBType"),
+        int("RRoBSize", 0),
+        int("CutAx", 0),
+        int("CutRsp", 0),
+        int("CutOup", 0),
+    ])
+}
+
+/// The names `FLOO_TYPEDEF_AXI_FROM_CFG(name, cfg)` declares: the address,
+/// ID, user, data and strobe types, and for the `in` (manager) and `out`
+/// (subordinate) sides the names of `AXI_TYPEDEF_ALL_CT`.
+fn axi_from_cfg_names(name: &str) -> Vec<String> {
+    let mut names: Vec<String> = ["addr", "in_id", "out_id", "user", "data", "strb"]
+        .iter()
+        .map(|t| format!("{name}_{t}_t"))
+        .collect();
+    for side in ["in", "out"] {
+        names.extend(axi_all_ct_names(&format!("{name}_{side}")));
+    }
+    names
+}
+
+/// The names `AXI_TYPEDEF_ALL_CT(name, name_req_t, name_rsp_t, ...)`
+/// declares: five channel types, the request and the response.
+pub(crate) fn axi_all_ct_names(name: &str) -> Vec<String> {
+    [
+        "aw_chan", "w_chan", "b_chan", "ar_chan", "r_chan", "req", "rsp",
+    ]
+    .iter()
+    .map(|t| format!("{name}_{t}_t"))
+    .collect()
+}
+
 /// The configuration package `<name>_pkg` of `cfg`: the node ID, header and
 /// narrow/wide link types built with FlooNoC's typedef macros, as
 /// `floo_synth_nw_pkg` does, and the constants the router is parameterized
-/// with (`AxiCfgN`, `AxiCfgW`, `RouteAlgo`, `WideRwDecouple`, `VcImpl`).
+/// with (`AxiCfgN`, `AxiCfgW`, `RouteAlgo`, `WideRwDecouple`, `VcImpl`), and
+/// what the network interface needs: the AXI types of both sides,
+/// `RouteCfg`, the narrow chimney configurations of compute
+/// (`ChimneyCfgNCompute`, manager port only) and memory (`ChimneyCfgNMem`,
+/// subordinate port only) endpoints, the wide `ChimneyCfgW`, and
+/// `sam_rule_t`. Nothing in it depends on a system's address map.
 /// Needs `floo_pkg`, `cc_pkg` and the `axi`/`floo_noc` include directories.
 ///
 /// Panics if `cfg` is invalid ([`FlooConfig::validate`]).
@@ -203,6 +344,10 @@ pub fn cfg_pkg(cfg: &FlooConfig) -> PackageDef {
     } else {
         1
     };
+    let axi_narrow = axi_from_cfg_names("axi_narrow");
+    let axi_narrow: Vec<&str> = axi_narrow.iter().map(String::as_str).collect();
+    let axi_wide = axi_from_cfg_names("axi_wide");
+    let axi_wide: Vec<&str> = axi_wide.iter().map(String::as_str).collect();
     let mut pkg = PackageDef::new(&cfg.pkg_name());
     pkg.include("axi/typedef.svh")
         .include("floo_noc/typedef.svh")
@@ -237,6 +382,23 @@ pub fn cfg_pkg(cfg: &FlooConfig) -> PackageDef {
             PackageType::IntUnsigned,
             PackageValue::Int(wide_phys_channels),
         )
+        .localparam("RouteCfg", named("floo_pkg::route_cfg_t"), route_cfg(cfg))
+        .localparam(
+            "ChimneyCfgNCompute",
+            named("floo_pkg::chimney_cfg_t"),
+            chimney_cfg(false, true),
+        )
+        .localparam(
+            "ChimneyCfgNMem",
+            named("floo_pkg::chimney_cfg_t"),
+            chimney_cfg(true, false),
+        )
+        .localparam(
+            "ChimneyCfgW",
+            named("floo_pkg::chimney_cfg_t"),
+            name("floo_pkg::ChimneyDefaultCfg"),
+        )
+        .typedef_logic("sam_rule_t", 1)
         .typedef_logic("x_bits_t", cfg.x_bits as usize)
         .typedef_logic("y_bits_t", cfg.y_bits as usize)
         .macro_call(
@@ -249,8 +411,16 @@ pub fn cfg_pkg(cfg: &FlooConfig) -> PackageDef {
             &["hdr_t", "id_t", "id_t", "floo_pkg::nw_ch_e", "logic"],
             &["hdr_t"],
         )
-        .macro_call("FLOO_TYPEDEF_AXI_FROM_CFG", &["axi_narrow", "AxiCfgN"], &[])
-        .macro_call("FLOO_TYPEDEF_AXI_FROM_CFG", &["axi_wide", "AxiCfgW"], &[])
+        .macro_call(
+            "FLOO_TYPEDEF_AXI_FROM_CFG",
+            &["axi_narrow", "AxiCfgN"],
+            &axi_narrow,
+        )
+        .macro_call(
+            "FLOO_TYPEDEF_AXI_FROM_CFG",
+            &["axi_wide", "AxiCfgW"],
+            &axi_wide,
+        )
         .macro_call(
             "FLOO_TYPEDEF_NW_CHAN_ALL",
             &[
