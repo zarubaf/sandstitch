@@ -37,11 +37,13 @@ impl ModDef {
     /// on the wrong direction), S0406 (inout conflict), S0407 (net name
     /// collision) and S0409 (connection cycle).
     ///
+    /// Reports S0408 for two different definitions with one key (module name
+    /// and parameter overrides), and for an emitted definition whose module
+    /// name a definition with another key also has. Equal definitions with
+    /// one key are one definition, checked once.
+    ///
     /// Only instantiated definitions whose internals are emitted
     /// (`EmitDefinitionAndDescend`) are descended into.
-    ///
-    /// Panics if two distinct definitions that emission would emit share a
-    /// name.
     pub fn check(&self) -> Diagnostics {
         self.check_design().0
     }
@@ -49,6 +51,7 @@ impl ModDef {
     /// The diagnostics of [`ModDef::check`] and the resolution of the
     /// design, from one pass.
     pub(crate) fn check_design(&self) -> (Diagnostics, DesignResolution) {
+        let design = resolve_design(self);
         let mut diagnostics = Vec::new();
         let mut visited = HashSet::new();
         let mut stack = vec![self.core.clone()];
@@ -81,12 +84,15 @@ impl ModDef {
                     .collect();
                 (records, all, instances)
             };
+            stack.extend(instances);
+            // An equal duplicate's errors are its first definition's.
+            if design.collapsed(&core) {
+                continue;
+            }
             diagnostics.extend(records.iter().filter_map(check_record));
             let is_root = Arc::ptr_eq(&core, &self.core);
             diagnostics.extend(super::unpacked::check_connections(&connections, is_root));
-            stack.extend(instances);
         }
-        let design = resolve_design(self);
         diagnostics.extend(design.diagnostics.iter().cloned());
         // Report in the order of the call sites.
         diagnostics.sort_by(|a: &Diagnostic, b: &Diagnostic| {

@@ -7,6 +7,7 @@
 //! marker supplies the bits of one slice of the end. Segments carry the
 //! original [`PortSlice`], including its typed selection.
 
+pub(crate) mod coexist;
 pub(crate) mod component;
 pub(crate) mod def;
 pub(crate) mod design;

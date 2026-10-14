@@ -35,4 +35,5 @@ quotes must be in the example (S0206, S0301 and S0302: the whole output).
 | [S0405](S0405.md) | tieoff or unused on the wrong direction |
 | [S0406](S0406.md) | inout conflict |
 | [S0407](S0407.md) | net name collision |
+| [S0408](S0408.md) | different definitions with one key |
 | [S0409](S0409.md) | connection cycle |

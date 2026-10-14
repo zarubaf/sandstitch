@@ -157,10 +157,6 @@ fn pre_key(
 /// first 12 hex digits of a digest over each override's name, kind, value and
 /// (for integers) signedness and width. Identifies a definition that has
 /// overrides but no specialization key (a plain import with `-G`).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the design pass (Task 2)")
-)]
 pub(crate) fn overrides_short_hash(parameters: &IndexMap<String, ParameterSpec>) -> String {
     let mut hasher = KeyHasher::new("sandstitch-overrides");
     let mut sorted: Vec<_> = parameters.iter().collect();

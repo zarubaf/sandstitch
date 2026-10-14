@@ -12,10 +12,6 @@ use crate::import::specialize::overrides_short_hash;
 /// The identity of a definition: `name`, or `name#<short hash>` when it has
 /// parameter overrides.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the design pass (Task 2)")
-)]
 pub(crate) struct DefKey(String);
 
 impl fmt::Display for DefKey {
@@ -27,10 +23,6 @@ impl fmt::Display for DefKey {
 /// The key of a definition: its specialization's short hash if it is one, a
 /// hash of its overrides if it has any (a plain import with `-G`), else its
 /// name.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the design pass (Task 2)")
-)]
 pub(crate) fn def_key(core: &ModDefCore) -> DefKey {
     let specialization = core
         .verilog_import
@@ -127,6 +119,22 @@ mod tests {
         assert_ne!(
             overrides_short_hash(&overrides(&[("A", int(1, 8))])),
             overrides_short_hash(&overrides(&[("A", int(1, 16))]))
+        );
+    }
+
+    #[test]
+    fn override_hash_includes_signedness_and_kind() {
+        let signed = ParameterSpec::Integer {
+            value: BigInt::from(1),
+            ty: ParameterType::Signed(8),
+        };
+        assert_ne!(
+            overrides_short_hash(&overrides(&[("A", signed)])),
+            overrides_short_hash(&overrides(&[("A", int(1, 8))]))
+        );
+        assert_ne!(
+            overrides_short_hash(&overrides(&[("A", ParameterSpec::String("x".into()))])),
+            overrides_short_hash(&overrides(&[("A", ParameterSpec::Expr("x".into()))]))
         );
     }
 }

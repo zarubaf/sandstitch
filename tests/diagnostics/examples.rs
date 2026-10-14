@@ -653,6 +653,26 @@ fn s0407() {
 }
 
 #[test]
+fn s0408() {
+    let entry = Entry::load(diagnostic::codes::S0408);
+    documented! { entry;
+        let first = ModDef::new("leaf");
+        first.add_port("i", IO::Input(1)).unused();
+        let second = ModDef::new("leaf");
+        second.add_port("i", IO::Input(2)).unused();
+        let top = ModDef::new("top");
+        top.instantiate(&first, Some("a"), None).get_port("i").tieoff(0);
+        top.instantiate(&second, Some("b"), None).get_port("i").tieoff(0);
+        let diagnostics = top.check();
+    }
+    entry.finish();
+    assert_eq!(diagnostics.0.len(), 1, "{}", diagnostics.render());
+    assert_eq!(diagnostics.0[0].code, entry.code);
+    assert_eq!(diagnostics.0[0].object, None);
+    entry.assert_summary(&diagnostics.render());
+}
+
+#[test]
 fn s0409() {
     let entry = Entry::load(diagnostic::codes::S0409);
     documented! { entry;
