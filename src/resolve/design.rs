@@ -250,7 +250,9 @@ impl Walk {
                     (core, &path),
                 );
                 diagnostic.helps =
-                    vec!["emit a renamed copy of one with `ModDef::stub(name)`".to_string()];
+                    vec![
+                        "give one a distinct name, e.g. emit a renamed copy of a specialization with `ModDef::stub(name)`".to_string(),
+                    ];
                 self.design.diagnostics.push(diagnostic);
             }
             Some(_) => {}

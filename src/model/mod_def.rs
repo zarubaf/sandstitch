@@ -42,6 +42,7 @@ impl ModDef {
                 instances: IndexMap::new(),
                 usage: Default::default(),
                 verilog_import: None,
+                stub_sources: None,
                 parameters: IndexMap::new(),
                 mod_inst_connections: IndexMap::new(),
                 mod_def_connections: IndexMap::new(),

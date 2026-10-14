@@ -14,6 +14,7 @@ use xlsynth_vast::{
 use super::net_types::{End, NetTypes, declarable, typed_path};
 use crate::model::connection::connected_item::ConnectedItem;
 use crate::model::parameter::ParameterSpec;
+use crate::resolve::coexist::is_emitted;
 use crate::resolve::design::DesignResolution;
 use crate::resolve::{EndResolution, Resolution, Segment, Source};
 use crate::{Dim, IO, ModDef, ModDefCore, Port, PortSlice, PortType, Select, Span, Usage};
@@ -548,10 +549,7 @@ pub(crate) struct TypeUse {
 /// for an opaque definition. An emitted one (stub or definition) is already
 /// specialized and declares no parameters.
 fn overrides_emitted(def: &ModDefCore) -> bool {
-    !matches!(
-        def.usage,
-        Usage::EmitStubAndStop | Usage::EmitDefinitionAndDescend
-    )
+    !is_emitted(&def.usage)
 }
 
 /// What emission with `options` of definition `this` (whose locked core is

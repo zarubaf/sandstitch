@@ -7,12 +7,16 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use regex::Regex;
 
+use super::core::StubSources;
 use crate::{ModDef, ModDefCore, Span, Usage};
 
 impl ModDef {
     /// Returns a new module definition with the given name, using the same
     /// ports and interfaces as the original module. The new module has no
-    /// instantiations or internal connections.
+    /// instantiations, internal connections or parameter overrides, so a
+    /// parent instantiates it without overrides. It is an ordinary definition
+    /// that can be modified and connected; the build manifest still lists the
+    /// sources of the import it was made from for the packages its ports use.
     #[track_caller]
     pub fn stub(&self, name: impl AsRef<str>) -> ModDef {
         let core = self.core.read();
@@ -32,6 +36,7 @@ impl ModDef {
                 instances: IndexMap::new(),
                 usage: Default::default(),
                 verilog_import: None,
+                stub_sources: stub_sources(&core, name.as_ref()),
                 parameters: IndexMap::new(),
                 mod_inst_connections: IndexMap::new(),
                 mod_def_connections: IndexMap::new(),
@@ -78,4 +83,23 @@ impl ModDef {
             }
         }
     }
+}
+
+/// The sources a stub named `name` of `core` lists in the manifest: those of
+/// its import, or of the import its own original is a stub of.
+fn stub_sources(core: &ModDefCore, name: &str) -> Option<StubSources> {
+    let (import, module) = match (&core.verilog_import, &core.stub_sources) {
+        (Some(import), _) => {
+            let mut import = import.clone();
+            import.specialization = None;
+            (import, core.name.clone())
+        }
+        (None, Some(sources)) => (sources.import.clone(), sources.module.clone()),
+        (None, None) => return None,
+    };
+    Some(StubSources {
+        import,
+        defines_module: name == module,
+        module,
+    })
 }

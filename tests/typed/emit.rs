@@ -1066,6 +1066,125 @@ fn renamed_stubs_of_two_specializations_coexist() {
 }
 
 #[test]
+fn renamed_stubs_of_package_typed_specializations_build_from_the_manifest() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let (base, cfg, generic) = generic_m(dir.path());
+    let top = ModDef::new("top");
+    for (name, ty_name) in [("m_a", "cfg_pkg::t"), ("m_b", "base_pkg::nib_t")] {
+        let m = generic.try_parameterize(&[("T", ty(ty_name))]).unwrap();
+        let m = m.stub(name);
+        m.set_usage(Usage::EmitStubAndStop);
+        let u = top.instantiate(&m, Some(&format!("u_{name}")), None);
+        u.get_port("i").tieoff(0);
+        u.get_port("o").export_as(format!("o_{name}"));
+    }
+    let manifest = top.manifest();
+    // m.sv defines `m`, which is not emitted (the stubs are renamed), so it is
+    // listed with the packages.
+    assert_eq!(manifest.sources.len(), 3);
+    assert_eq!(manifest.sources[..2], [base, cfg]);
+    assert!(manifest.specializations.is_empty());
+    let emitted = top.emit(EmitOptions::default());
+    assert!(!emitted.contains("#("), "{emitted}");
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn renamed_stub_beside_an_opaque_specialization_of_the_same_sources() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let (_, _, generic) = generic_m(dir.path());
+    let opaque = generic
+        .try_parameterize(&[("T", ty("base_pkg::nib_t"))])
+        .unwrap();
+    let stub = generic
+        .try_parameterize(&[("T", ty("cfg_pkg::t"))])
+        .unwrap()
+        .stub("m_b");
+    stub.set_usage(Usage::EmitStubAndStop);
+    let top = ModDef::new("top");
+    for (name, m) in [("ua", &opaque), ("ub", &stub)] {
+        let u = top.instantiate(m, Some(name), None);
+        u.get_port("i").tieoff(0);
+        u.get_port("o").export_as(format!("o_{name}"));
+    }
+    let manifest = top.manifest();
+    assert_eq!(manifest.specializations.len(), 1);
+    let emitted = top.emit(EmitOptions::default());
+    elaborate_manifest(&manifest, &emitted, "top").unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A top instantiating `stub(&m)` beside `other`, an opaque import whose
+/// sources list `m.sv`, which defines the imported module `m`.
+fn stub_beside_importer_of_its_file(
+    stub: impl Fn(&ModDef) -> ModDef,
+) -> (tempfile::TempDir, ModDef) {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let m_sv = write(
+        dir.path(),
+        "m.sv",
+        "module m (input logic i, output logic o);\nendmodule\n",
+    );
+    let other_sv = write(
+        dir.path(),
+        "other.sv",
+        "module other (input logic i);\nendmodule\n",
+    );
+    let m = import_files(&[&m_sv], "m");
+    let other = import_files(&[&m_sv, &other_sv], "other");
+    let top = ModDef::new("top");
+    let u = top.instantiate(&stub(&m), Some("u"), None);
+    u.get_port("i").tieoff(0);
+    u.get_port("o").export_as("o");
+    top.instantiate(&other, Some("v"), None)
+        .get_port("i")
+        .tieoff(0);
+    (dir, top)
+}
+
+fn assert_defined_twice(top: &ModDef) {
+    let err = top.try_manifest().unwrap_err();
+    assert_eq!(err.0.len(), 1, "{}", err.render());
+    assert_eq!(err.0[0].code, diagnostic::codes::S0301, "{}", err.render());
+    assert!(
+        err.0[0]
+            .message
+            .starts_with("module `m` would be defined twice"),
+        "{}",
+        err.render()
+    );
+}
+
+#[test]
+fn same_name_stub_beside_an_importer_of_its_file_is_s0301() {
+    assert_defined_twice(&stub_beside_importer_of_its_file(|m| m.stub("m")).1);
+    // A differently named stub does not define `m`.
+    stub_beside_importer_of_its_file(|m| m.stub("x"))
+        .1
+        .manifest();
+}
+
+#[test]
+fn stub_of_a_stub_compares_with_the_imported_module() {
+    assert_defined_twice(&stub_beside_importer_of_its_file(|m| m.stub("x").stub("m")).1);
+    stub_beside_importer_of_its_file(|m| m.stub("m").stub("y"))
+        .1
+        .manifest();
+}
+
+#[test]
+fn a_stub_of_an_import_stays_modifiable() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let (_, _, generic) = generic_m(dir.path());
+    let stub = generic
+        .try_parameterize(&[("T", ty("cfg_pkg::t"))])
+        .unwrap()
+        .stub("m_a");
+    stub.add_port("extra", IO::Input(1)).unused();
+    stub.feedthrough("ft_i", "ft_o", 2);
+    assert!(stub.has_port("extra") && stub.has_port("ft_o"));
+}
+
+#[test]
 fn two_stubs_share_a_package() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let base = write(dir.path(), "base_pkg.sv", BASE_PKG);
