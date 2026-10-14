@@ -16,7 +16,7 @@ Sandstitch is an executable hardware specification library. `doc/product.md` is 
 - Keep changes small and coherent. Refactor the affected area first, with behavior-preserving tests, when structure blocks a change. No unrelated cleanup.
 - Fail explicitly: unsupported SystemVerilog constructs produce diagnostics; never silently drop ports.
 - Designs and generators never build SystemVerilog text by hand; extend the model and the emitter instead.
-- Run `cargo xtask ci` from the repository root before finishing (fmt, workspace-wide clippy `-D warnings`, hygiene, library boundary, tests). The first build compiles the vendored Slang (minutes); install ccache to make rebuilds instant. Requires GCC 11+ or Clang 17+, CMake 3.28+ and Python 3. `cargo xtask explain <CODE>` shows a diagnostic's documentation.
+- Run `cargo xtask ci` from the repository root before finishing (fmt, workspace-wide clippy `-D warnings`, hygiene, library boundary, tests). Run it inside `nix develop`, the pinned environment that CI also uses; tools come from `flake.nix`, never from distribution packages. The first build compiles the vendored Slang (minutes); ccache makes rebuilds instant. `cargo xtask explain <CODE>` shows a diagnostic's documentation.
 - Ask before adding new tooling or CI.
 
 ## Commits
