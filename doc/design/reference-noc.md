@@ -92,3 +92,5 @@ Verilator (`small_system_passes_traffic`, `large_system_passes_traffic`, with th
 | --- | --- | --- | --- |
 | small (3 cores) | 11.8 s | 10 ms | `PASS` after 42 cycles |
 | large (14 cores) | 23.1 s | 10 ms | `PASS` after 87 cycles |
+
+**Budgets.** The Slang run counts of the cold builds, the zero Slang runs of the warm builds and the specialization counts in the table are enforced in CI by `designs/floonoc/tests/budgets.rs`, which runs the four workloads in one process in a fixed order and asserts the exact values. Time and memory budgets are checked only by the ignored bench, which prints `PASS` or `FAIL` for each run: the cold build must take at most twice, and the peak RSS at most 1.5 times, the recorded values. They hold on the recorded machine only.
