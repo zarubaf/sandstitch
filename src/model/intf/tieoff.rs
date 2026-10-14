@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::PortKind;
 use num_bigint::BigInt;
 
 use crate::{IO, Intf, Port, PortSlice};
@@ -14,7 +15,10 @@ impl Intf {
         for (_, port_slice) in self.members() {
             match port_slice {
                 PortSlice {
-                    port: Port::ModDef { .. },
+                    port:
+                        Port {
+                            kind: PortKind::ModDef { .. },
+                        },
                     ..
                 } => {
                     if let IO::Output(_) = port_slice.port.io() {
@@ -22,7 +26,10 @@ impl Intf {
                     }
                 }
                 PortSlice {
-                    port: Port::ModInst { .. },
+                    port:
+                        Port {
+                            kind: PortKind::ModInst { .. },
+                        },
                     ..
                 } => {
                     if let IO::Input(_) = port_slice.port.io() {
@@ -42,7 +49,10 @@ impl Intf {
         for (_, port_slice) in self.members() {
             match port_slice {
                 PortSlice {
-                    port: Port::ModDef { .. },
+                    port:
+                        Port {
+                            kind: PortKind::ModDef { .. },
+                        },
                     ..
                 } => {
                     if let IO::Input(_) | IO::InOut(_) = port_slice.port.io() {
@@ -50,7 +60,10 @@ impl Intf {
                     }
                 }
                 PortSlice {
-                    port: Port::ModInst { .. },
+                    port:
+                        Port {
+                            kind: PortKind::ModInst { .. },
+                        },
                     ..
                 } => {
                     if let IO::Output(_) | IO::InOut(_) = port_slice.port.io() {

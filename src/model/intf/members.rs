@@ -3,6 +3,7 @@
 //! Interface members: a name and a reference to a port slice, with its
 //! typed selection, so that slices built with `field` and `index` stay typed.
 
+use crate::IntfKind;
 use std::sync::Arc;
 
 use crate::diagnostic::codes;
@@ -104,8 +105,8 @@ impl Intf {
     /// `(name, slice)` pairs. A name appears twice when the interface has it
     /// in both directions. Slices keep their typed selection.
     pub fn members(&self) -> Vec<(String, PortSlice)> {
-        match self {
-            Intf::ModDef {
+        match &self.kind {
+            IntfKind::ModDef {
                 mod_def_core, name, ..
             } => {
                 let core = mod_def_core.upgrade().unwrap();
@@ -116,7 +117,7 @@ impl Intf {
                     .map(|m| (m.name.clone(), m.slice_of(mod_def.get_port(&m.port))))
                     .collect()
             }
-            Intf::ModInst {
+            IntfKind::ModInst {
                 intf_name,
                 hierarchy,
                 ..

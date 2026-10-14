@@ -23,7 +23,12 @@ pub(crate) use members::IntfMember;
 /// Represents an interface on a module definition or module instance.
 /// Interfaces are used to connect modules together by function name.
 #[derive(Clone)]
-pub enum Intf {
+pub struct Intf {
+    pub(crate) kind: IntfKind,
+}
+
+#[derive(Clone)]
+pub(crate) enum IntfKind {
     ModDef {
         name: String,
         mod_def_core: Weak<RwLock<ModDefCore>>,
@@ -37,18 +42,18 @@ pub enum Intf {
 impl Intf {
     /// Returns the name this interface has in its (parent) module definition.
     pub fn name(&self) -> &str {
-        match self {
-            Intf::ModDef { name, .. } => name,
-            Intf::ModInst { intf_name, .. } => intf_name,
+        match &self.kind {
+            IntfKind::ModDef { name, .. } => name,
+            IntfKind::ModInst { intf_name, .. } => intf_name,
         }
     }
 
     pub(crate) fn get_mod_def_core(&self) -> Arc<RwLock<ModDefCore>> {
-        match self {
-            Intf::ModDef { mod_def_core, .. } => mod_def_core.upgrade().unwrap(),
-            Intf::ModInst { hierarchy, .. } => hierarchy
+        match &self.kind {
+            IntfKind::ModDef { mod_def_core, .. } => mod_def_core.upgrade().unwrap(),
+            IntfKind::ModInst { hierarchy, .. } => hierarchy
                 .last()
-                .expect("Intf::ModInst hierarchy cannot be empty")
+                .expect("instance interface hierarchy cannot be empty")
                 .mod_def_core
                 .upgrade()
                 .expect("Containing ModDefCore has been dropped"),
@@ -70,9 +75,9 @@ impl Intf {
     #[track_caller]
     pub fn remove(&self, func_name: impl AsRef<str>) -> Option<PortSlice> {
         let slice = self.get(func_name.as_ref())?;
-        let core = match self {
-            Intf::ModDef { .. } => self.get_mod_def_core(),
-            Intf::ModInst { hierarchy, .. } => ModInst {
+        let core = match &self.kind {
+            IntfKind::ModDef { .. } => self.get_mod_def_core(),
+            IntfKind::ModInst { hierarchy, .. } => ModInst {
                 hierarchy: hierarchy.clone(),
             }
             .mod_def_core_of_instance(),
@@ -103,9 +108,9 @@ impl Intf {
     }
 
     pub(crate) fn get_intf_name(&self) -> String {
-        match self {
-            Intf::ModDef { name, .. } => name.clone(),
-            Intf::ModInst { intf_name, .. } => intf_name.clone(),
+        match &self.kind {
+            IntfKind::ModDef { name, .. } => name.clone(),
+            IntfKind::ModInst { intf_name, .. } => intf_name.clone(),
         }
     }
 
@@ -116,8 +121,8 @@ impl Intf {
     ) -> Self {
         let key = key.into();
         let value = value.into();
-        match self {
-            Intf::ModDef { .. } => {
+        match &self.kind {
+            IntfKind::ModDef { .. } => {
                 let core_rc = self.get_mod_def_core();
                 let mut core = core_rc.write();
                 core.mod_def_intf_metadata
@@ -125,10 +130,10 @@ impl Intf {
                     .or_default()
                     .insert(key, value);
             }
-            Intf::ModInst { hierarchy, .. } => {
+            IntfKind::ModInst { hierarchy, .. } => {
                 let inst_name = hierarchy
                     .last()
-                    .expect("Intf::ModInst hierarchy cannot be empty")
+                    .expect("instance interface hierarchy cannot be empty")
                     .inst_name
                     .to_string();
                 let core_rc = self.get_mod_def_core();
@@ -145,18 +150,18 @@ impl Intf {
     }
 
     pub fn get_metadata(&self, key: impl AsRef<str>) -> Option<MetadataValue> {
-        match self {
-            Intf::ModDef { .. } => {
+        match &self.kind {
+            IntfKind::ModDef { .. } => {
                 let core_rc = self.get_mod_def_core();
                 let core = core_rc.read();
                 core.mod_def_intf_metadata
                     .get(&self.get_intf_name())
                     .and_then(|metadata| metadata.get(key.as_ref()).cloned())
             }
-            Intf::ModInst { hierarchy, .. } => {
+            IntfKind::ModInst { hierarchy, .. } => {
                 let inst_name = hierarchy
                     .last()
-                    .expect("Intf::ModInst hierarchy cannot be empty")
+                    .expect("instance interface hierarchy cannot be empty")
                     .inst_name
                     .as_str();
                 let core_rc = self.get_mod_def_core();
@@ -170,8 +175,8 @@ impl Intf {
     }
 
     pub fn clear_metadata(&self, key: impl AsRef<str>) -> Self {
-        match self {
-            Intf::ModDef { .. } => {
+        match &self.kind {
+            IntfKind::ModDef { .. } => {
                 let core_rc = self.get_mod_def_core();
                 let mut core = core_rc.write();
                 if let Some(metadata) = core.mod_def_intf_metadata.get_mut(&self.get_intf_name()) {
@@ -181,10 +186,10 @@ impl Intf {
                     }
                 }
             }
-            Intf::ModInst { hierarchy, .. } => {
+            IntfKind::ModInst { hierarchy, .. } => {
                 let inst_name = hierarchy
                     .last()
-                    .expect("Intf::ModInst hierarchy cannot be empty")
+                    .expect("instance interface hierarchy cannot be empty")
                     .inst_name
                     .as_str();
                 let core_rc = self.get_mod_def_core();

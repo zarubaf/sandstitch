@@ -27,7 +27,9 @@ mod physical;
 mod resolve;
 mod util;
 
+use model::intf::IntfKind;
 use model::mod_def::ModDefCore;
+use model::port::PortKind;
 
 // Structural model.
 pub use model::funnel::Funnel;

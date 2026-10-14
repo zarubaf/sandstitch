@@ -11,6 +11,7 @@
 //! Unpacked types are also nominal: an end of another named type with the
 //! same layout does not connect either.
 
+use crate::PortKind;
 use std::collections::HashSet;
 
 use crate::diagnostic::codes;
@@ -104,8 +105,17 @@ pub(super) fn check_connections(
     let carries_instance_value: HashSet<String> = connections
         .iter()
         .filter_map(|c| match (&c.this.port, &c.other) {
-            (Port::ModDef { name, .. }, ConnectedItem::PortSlice(other))
-                if matches!(other.port, Port::ModInst { .. }) =>
+            (
+                Port {
+                    kind: PortKind::ModDef { name, .. },
+                },
+                ConnectedItem::PortSlice(other),
+            ) if matches!(
+                other.port,
+                Port {
+                    kind: PortKind::ModInst { .. }
+                }
+            ) =>
             {
                 Some(name.clone())
             }
@@ -116,7 +126,9 @@ pub(super) fn check_connections(
     let mut diagnostics = Vec::new();
     for connection in connections {
         let port = &connection.this.port;
-        if let Port::ModDef { name, .. } = port
+        if let Port {
+            kind: PortKind::ModDef { name, .. },
+        } = port
             && is_root
             && !carries_instance_value.contains(name)
         {

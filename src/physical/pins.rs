@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::PortKind;
 use indexmap::{IndexMap, map::Entry};
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
@@ -385,9 +386,11 @@ impl ModDef {
                 continue;
             }
 
-            let port = Port::ModDef {
-                name: port_name.clone(),
-                mod_def_core: Arc::downgrade(&self.core),
+            let port = Port {
+                kind: PortKind::ModDef {
+                    name: port_name.clone(),
+                    mod_def_core: Arc::downgrade(&self.core),
+                },
             };
 
             let pins = if let Some(pins) = core.physical_pins.get(port_name) {
@@ -928,7 +931,7 @@ impl PortSlice {
         );
         // Only allowed on ModDef ports (not instance ports)
         assert!(
-            matches!(self.port, crate::Port::ModDef { .. }),
+            matches!(self.port.kind, crate::PortKind::ModDef { .. }),
             "define_physical_pin must be called on a ModDef port"
         );
 
@@ -949,7 +952,7 @@ impl PortSlice {
     /// Returns an error for instance ports, missing pins, or missing track setup.
     /// If any bit fails, no reservations are changed.
     pub fn block_tracks(&self) -> Result<(), PinPlacementError> {
-        if !matches!(self.port, Port::ModDef { .. }) {
+        if !matches!(self.port.kind, PortKind::ModDef { .. }) {
             return Err(PinPlacementError::RequiresModDef);
         }
         self.check_validity();

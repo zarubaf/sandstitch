@@ -4,6 +4,7 @@
 //! definition, different ones are S0408. Spans and metadata are provenance
 //! and are not compared.
 
+use crate::PortKind;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
@@ -16,7 +17,7 @@ use crate::model::connection::connected_item::Wire;
 use crate::model::intf::IntfMember;
 use crate::model::parameter::ParameterSpec;
 use crate::model::port_slice::path_string;
-use crate::{IO, ModDefCore, Port, PortSlice, PortType, Select, Usage};
+use crate::{IO, ModDefCore, PortSlice, PortType, Select, Usage};
 
 /// A span-free view of a definition, for comparison only.
 pub(crate) struct DefView {
@@ -228,9 +229,9 @@ impl SliceView {
     }
 
     fn new(slice: &PortSlice) -> Self {
-        let end = match &slice.port {
-            Port::ModDef { name, .. } => EndName::Def(name.clone()),
-            Port::ModInst {
+        let end = match &slice.port.kind {
+            PortKind::ModDef { name, .. } => EndName::Def(name.clone()),
+            PortKind::ModInst {
                 hierarchy,
                 port_name,
             } => EndName::Inst(

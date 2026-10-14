@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::IntfKind;
+use crate::PortKind;
 use crate::model::intf::IntfMember;
-use crate::{ConvertibleToPortSlice, IO, Intf, ModDef, Port};
+use crate::{ConvertibleToPortSlice, IO, Intf, ModDef};
 
 impl Intf {
     /// Creates a new interface on the parent module and connects it to this
@@ -27,9 +29,9 @@ impl Intf {
         for (member, slice) in &members {
             let port_name = if repeated(member) {
                 // Exporting a port of the module itself flips it.
-                let io = match slice.port {
-                    Port::ModDef { .. } => slice.port.io().flip(),
-                    Port::ModInst { .. } => slice.port.io(),
+                let io = match &slice.port.kind {
+                    PortKind::ModDef { .. } => slice.port.io().flip(),
+                    PortKind::ModInst { .. } => slice.port.io(),
                 };
                 let suffix = match io {
                     IO::Input(_) => "i",
@@ -71,7 +73,12 @@ impl Intf {
     /// "a_data" and "a_valid".
     #[track_caller]
     pub fn export(&self) -> Intf {
-        if matches!(self, Intf::ModDef { .. }) {
+        if matches!(
+            self,
+            Intf {
+                kind: IntfKind::ModDef { .. }
+            }
+        ) {
             panic!(
                 "Cannot export() {}; must use export_with_prefix() or export_with_name_underscore() instead.",
                 self.debug_string()
